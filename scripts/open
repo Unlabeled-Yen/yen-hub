@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Yen Hub — quick relaunch script for dev mode.
+# Usage:  cd ~/Desktop/Yen/Develop/yen-hub && ./scripts/open
+#   or:   bash ~/Desktop/Yen/Develop/yen-hub/scripts/open
+#
+# Kills any stale tauri / next dev processes, then launches `tauri dev`
+# in the background so the terminal frees up.
+
+set -e
+cd "$(dirname "$0")/.."
+
+echo "→ cleaning stale procs"
+pkill -9 -f "target/debug/app" 2>/dev/null || true
+pkill -9 -f "next-server"     2>/dev/null || true
+pkill -9 -f "tauri.js dev"    2>/dev/null || true
+sleep 1
+
+echo "→ launching tauri dev"
+export PATH="$HOME/.cargo/bin:$PATH"
+nohup pnpm tauri dev > /tmp/yen-hub-tauri.log 2>&1 &
+echo "PID: $!"
+echo "log: /tmp/yen-hub-tauri.log"
+echo "→ window should appear in ~5–15 seconds"

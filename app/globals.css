@@ -8,11 +8,16 @@
 
 :root {
   /* Backgrounds (5 階, deep cool near-black) */
-  --bg-0: #0a0b0e;   /* page floor */
+  --bg-0: #0a0b0e;   /* page floor (solid fallback) */
   --bg-1: #101218;   /* panel surface */
   --bg-2: #161922;   /* elevated panel */
   --bg-3: #1e222d;   /* hover / interactive */
   --bg-4: #2a2f3d;   /* selected / focused */
+
+  /* Page background alpha — used in body so the Tauri window can be
+     semi-transparent (and adjustable via window-controls). 1 = opaque.
+     User-controlled at runtime via localStorage `yen-hub:bg-alpha`. */
+  --bg-alpha: 0.85;
 
   /* Foregrounds (4 階) — bumped for higher dark-mode contrast */
   --fg-0: #f0f2f8;   /* primary text */
@@ -74,14 +79,14 @@ html, body {
 }
 
 /* Ambient background — multi-stop radial wash with cool accent.
-   Cheap stand-in for the WebGL particle haze in Fuselab refs;
-   will upgrade to shader background in a later slice. */
+   Bottom layer uses --bg-alpha so the page is partially see-through inside
+   the Tauri frameless window. */
 body {
   background:
     radial-gradient(ellipse 60% 40% at 15% 0%,   rgba(0, 229, 180, 0.10), transparent 65%),
     radial-gradient(ellipse 70% 50% at 85% 100%, rgba(77, 163, 255, 0.07), transparent 65%),
     radial-gradient(ellipse 50% 40% at 50% 50%,  rgba(255, 255, 255, 0.02), transparent 70%),
-    var(--bg-0);
+    rgba(10, 11, 14, var(--bg-alpha));
   min-height: 100vh;
 }
 

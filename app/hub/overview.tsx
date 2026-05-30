@@ -41,37 +41,37 @@ const MODULES: ModuleDef[] = [
     title: "Vault Health",
     hint: "筆記總數 / 草稿堆積 / 健康分數",
     span: { cols: 2, rows: 2 },
-    flip: { rotateY: -78, delay: 0.06, originX: "0%" },
+    flip: { rotateY: -78, delay: 0.15, originX: "0%" },
   },
   {
     title: "Pipelines",
     hint: "寫作 / 投資 / 學習 / 專案 進度與停滯",
     span: { cols: 2, rows: 3 },
-    flip: { rotateX: -58, delay: 0.22, originY: "0%" },
+    flip: { rotateX: -58, delay: 0.55, originY: "0%" },
   },
   {
     title: "Mirror",
     hint: "AI 對 Yen 的假設檔 · 可 ✓ / ✗",
     span: { cols: 2, rows: 2 },
-    flip: { rotateX: 62, delay: 0.04, originY: "100%" },
+    flip: { rotateX: 62, delay: 0.10, originY: "100%" },
   },
   {
     title: "Signals",
     hint: "地緣政治 / 訂閱 / 過濾後的外部訊號",
     span: { cols: 2, rows: 1 },
-    flip: { rotateY: 84, delay: 0.34, originX: "100%" },
+    flip: { rotateY: 84, delay: 0.85, originX: "100%" },
   },
   {
     title: "Open Loops",
     hint: "未完成承諾 · 從 Vault / 對話抓出",
     span: { cols: 2, rows: 1 },
-    flip: { rotateX: -48, delay: 0.16, originY: "0%" },
+    flip: { rotateX: -48, delay: 0.40, originY: "0%" },
   },
   {
     title: "Attention Map",
     hint: "本週時間實際花在哪 vs. 自評",
     span: { cols: 6, rows: 1 },
-    flip: { rotateY: -90, delay: 0.28, originX: "0%" },
+    flip: { rotateY: -90, delay: 0.70, originX: "0%" },
   },
 ];
 
@@ -131,13 +131,18 @@ function spanCls(span: Span): string {
 
 export function Overview() {
   return (
-    <div className="flex flex-1 flex-col">
+    <motion.div
+      className="flex flex-1 flex-col"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.9, ease: "easeOut" }}
+    >
       {/* top-left wordmark */}
       <motion.div
         className="px-8 sm:px-12 pt-8"
         initial={{ opacity: 0, y: -8 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1], delay: 0.05 }}
+        transition={{ duration: 1.0, ease: [0.16, 1, 0.3, 1], delay: 0.15 }}
       >
         <h1
           className="text-[26px] leading-none text-[var(--fg-0)] select-none"
@@ -152,7 +157,7 @@ export function Overview() {
           className="mb-8 flex items-center gap-2 text-[11px] font-mono tracking-[0.30em] text-[var(--fg-1)] uppercase select-none"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          transition={{ duration: 0.6, delay: 0.5 }}
+          transition={{ duration: 0.9, delay: 1.0 }}
         >
           <span className="inline-block h-1 w-1 rounded-full bg-[var(--fg-2)] hairline-pulse" />
           type anywhere to talk · ⌘k to summon
@@ -179,7 +184,7 @@ export function Overview() {
                 scale: 1,
               }}
               transition={{
-                duration: 0.85,
+                duration: 1.4,
                 ease: [0.16, 1, 0.3, 1],
                 delay: m.flip.delay,
               }}
@@ -195,6 +200,6 @@ export function Overview() {
       </main>
 
       <CommandPalette />
-    </div>
+    </motion.div>
   );
 }

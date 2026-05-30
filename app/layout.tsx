@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import localFont from "next/font/local";
+import { WindowControls } from "@/components/window-controls";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -44,6 +45,7 @@ export default function RootLayout({
           className="fixed inset-x-0 top-0 z-50 h-6 pointer-events-auto"
           aria-hidden
         />
+        <WindowControls />
         {children}
       </body>
     </html>

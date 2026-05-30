@@ -80,10 +80,26 @@ export default function Home() {
     // Warm /hub bundle so it's ready the moment we navigate.
     router.prefetch("/hub");
 
-    // Dev bypass — skip Touch ID and go straight in. Disable via env.
+    // Dev bypass — skip Touch ID, but still require a deliberate gesture
+    // so the entry page is dwelt on (you can watch the warm breathing).
+    //
+    // The 800ms grace prevents the initial window-focus click (which fires
+    // pointerdown immediately on Tauri window open) from instantly jumping
+    // to /hub. Only gestures AFTER this delay count.
     if (process.env.NEXT_PUBLIC_DEV_BYPASS_AUTH === "1") {
-      transitionToConsole();
-      return;
+      let armed = false;
+      const armT = setTimeout(() => { armed = true; }, 800);
+      const enter = () => {
+        if (!armed) return;
+        transitionToConsole();
+      };
+      window.addEventListener("pointerdown", enter);
+      window.addEventListener("keydown", enter);
+      return () => {
+        clearTimeout(armT);
+        window.removeEventListener("pointerdown", enter);
+        window.removeEventListener("keydown", enter);
+      };
     }
     // Auto-fire on load.
     tryAuth();
@@ -111,12 +127,12 @@ export default function Home() {
       <div className="relative flex flex-col items-center">
         <div className="aura-warm" />
         <h1
-          className="breathe-text-warm relative text-[120px] leading-[0.85] tracking-tight text-[var(--fg-0)] select-none"
+          className="breathe-text-warm relative text-[96px] leading-[0.85] tracking-tight text-[var(--fg-0)] select-none"
           style={{ fontFamily: "var(--font-display)" }}
         >
           Yen
         </h1>
-        <p className="breathe-text-warm-soft relative mt-16 text-[10px] font-mono tracking-[0.32em] text-[var(--fg-1)] uppercase select-none">
+        <p className="breathe-text-warm-soft relative mt-8 text-[10px] font-mono tracking-[0.32em] text-[var(--fg-1)] uppercase select-none">
           welcome back my lovely friend
         </p>
       </div>
