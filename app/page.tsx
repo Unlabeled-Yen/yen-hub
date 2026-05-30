@@ -3,14 +3,24 @@
 /**
  * Yen — entry page (silent gate)
  *
- * On load:
- *   - Fire WebAuthn auth silently.
- *   - macOS shows its own Touch ID prompt — we don't add any UI for it.
- *   - Success → fade → /hub.
- *   - Failure / cancel → nothing visible happens. Click anywhere to retry silently.
+ * Three runtime modes, selected at mount:
  *
- * First-time registration is intentionally not exposed here. If no passkey
- * exists, the user is stuck at this page — by design. Go to /setup to register.
+ *   1. Dev bypass (NEXT_PUBLIC_DEV_BYPASS_AUTH=1)
+ *      Watch the breathing for a moment, click or press a key → /hub.
+ *      No auth call. Used during UI development.
+ *
+ *   2. Tauri (native macOS app)
+ *      Auto-fires `invoke('authenticate')` after a 1.4s delay so the entry
+ *      is dwelt on. macOS shows only the Touch ID sensor / Touch Bar prompt
+ *      (no fullscreen modal). Press finger → success → /hub.
+ *      Failure / cancel → silent; click or key to retry.
+ *
+ *   3. Browser (PWA / fallback)
+ *      WebAuthn `navigator.credentials.get()` — system passkey UI appears.
+ *      Same silent-gate semantics.
+ *
+ * First-time registration is intentionally not exposed here. Hidden at
+ * /setup — see ADR 0002 §Implementation Plan.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -19,6 +29,7 @@ import {
   startAuthentication,
   browserSupportsWebAuthn,
 } from "@simplewebauthn/browser";
+import { isTauri } from "@/lib/env/runtime";
 
 export default function Home() {
   const router = useRouter();
@@ -28,67 +39,77 @@ export default function Home() {
   const transitionToConsole = () => {
     if (leaving) return;
     setLeaving(true);
-    // Push BEFORE the fade-out finishes so /hub's flip-in starts while the
-    // entry is still ~half-visible — they overlap visually.
-    // Entry transition-opacity is 700ms; we push at 280ms (≈ 60% opacity left).
-    if (typeof document !== "undefined" && "startViewTransition" in document) {
-      // Native crossfade where supported (Chrome / Edge / Safari 18+)
-      (document as Document & { startViewTransition: (cb: () => void) => void })
-        .startViewTransition(() => router.push("/hub"));
-    } else {
-      setTimeout(() => router.push("/hub"), 280);
-    }
+    // NOTE: previously used document.startViewTransition() for a native
+    // crossfade. Removed because in Tauri the document.visibilityState
+    // becomes "hidden" while a native Touch ID prompt is open, causing
+    // startViewTransition to throw InvalidStateError — which silently
+    // skipped router.push and left the page stuck (then re-triggered auth
+    // on the next render). Plain setTimeout+push is robust everywhere.
+    setTimeout(() => router.push("/hub"), 280);
   };
 
-  const tryAuth = async () => {
+  /** Browser path — WebAuthn silent gate. */
+  const tryWebAuth = async () => {
     if (inFlightRef.current || leaving) return;
     inFlightRef.current = true;
     try {
-      // If we already have a valid session, skip straight to console.
       const status = await fetch("/api/auth/status").then((r) => r.json());
       if (status.authenticated) {
         transitionToConsole();
         return;
       }
-      if (!status.registered || !browserSupportsWebAuthn()) {
-        // Silent dead-end. Nothing to do.
-        return;
-      }
+      if (!status.registered || !browserSupportsWebAuthn()) return;
 
       const opts = await fetch("/api/auth/authenticate/options", {
         method: "POST",
       }).then((r) => r.json());
-
       const assertResp = await startAuthentication({ optionsJSON: opts });
-
       const verifyData = await fetch("/api/auth/authenticate/verify", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(assertResp),
       }).then((r) => r.json());
-
       if (verifyData.ok) transitionToConsole();
-      // else: stay silent on failure.
     } catch {
-      // Swallow — silent gate.
+      // Silent.
+    } finally {
+      inFlightRef.current = false;
+    }
+  };
+
+  /** Tauri path — native LocalAuthentication via Rust command. */
+  const tryNativeAuth = async () => {
+    if (inFlightRef.current || leaving) return;
+    inFlightRef.current = true;
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const ok = await invoke<boolean>("authenticate", {
+        reason: "welcome back",
+      });
+      if (!ok) return;
+      // Touch ID succeeded — now mint the session cookie so /hub's
+      // server-side gate lets us through.
+      const confirm = await fetch("/api/auth/native-confirm", {
+        method: "POST",
+      });
+      if (!confirm.ok) return;
+      transitionToConsole();
+    } catch {
+      // Silent — user cancelled or biometrics unavailable.
     } finally {
       inFlightRef.current = false;
     }
   };
 
   useEffect(() => {
-    // Warm /hub bundle so it's ready the moment we navigate.
     router.prefetch("/hub");
 
-    // Dev bypass — skip Touch ID, but still require a deliberate gesture
-    // so the entry page is dwelt on (you can watch the warm breathing).
-    //
-    // The 800ms grace prevents the initial window-focus click (which fires
-    // pointerdown immediately on Tauri window open) from instantly jumping
-    // to /hub. Only gestures AFTER this delay count.
+    // Mode 1 — dev bypass
     if (process.env.NEXT_PUBLIC_DEV_BYPASS_AUTH === "1") {
       let armed = false;
-      const armT = setTimeout(() => { armed = true; }, 800);
+      const armT = setTimeout(() => {
+        armed = true;
+      }, 800);
       const enter = () => {
         if (!armed) return;
         transitionToConsole();
@@ -101,11 +122,23 @@ export default function Home() {
         window.removeEventListener("keydown", enter);
       };
     }
-    // Auto-fire on load.
-    tryAuth();
 
-    // Any user gesture silently retries.
-    const onGesture = () => tryAuth();
+    // Mode 2 — Tauri native
+    if (isTauri()) {
+      const initial = setTimeout(tryNativeAuth, 1400); // dwell on the breath
+      const onGesture = () => tryNativeAuth();
+      window.addEventListener("pointerdown", onGesture);
+      window.addEventListener("keydown", onGesture);
+      return () => {
+        clearTimeout(initial);
+        window.removeEventListener("pointerdown", onGesture);
+        window.removeEventListener("keydown", onGesture);
+      };
+    }
+
+    // Mode 3 — browser WebAuthn
+    tryWebAuth();
+    const onGesture = () => tryWebAuth();
     window.addEventListener("pointerdown", onGesture);
     window.addEventListener("keydown", onGesture);
     return () => {
@@ -121,9 +154,6 @@ export default function Home() {
         leaving ? "opacity-0" : "opacity-100"
       }`}
     >
-      {/* Single relative wrapper around both lines, with one shared aura
-          centered slightly below YEN. Text stays at full opacity — only
-          the light around it breathes. */}
       <div className="relative flex flex-col items-center">
         <div className="aura-warm" />
         <h1
