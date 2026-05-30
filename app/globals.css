@@ -1,0 +1,222 @@
+@import "tailwindcss";
+
+/* ===========================================================
+   Yen Hub — Design Tokens (Dark, deep operator console)
+   Pivoted from cream → near-black per Yen's call (2026-05-30 evening).
+   Aligns with Fuselab/Stardog references the project is modeled on.
+   =========================================================== */
+
+:root {
+  /* Backgrounds (5 階, deep cool near-black) */
+  --bg-0: #0a0b0e;   /* page floor */
+  --bg-1: #101218;   /* panel surface */
+  --bg-2: #161922;   /* elevated panel */
+  --bg-3: #1e222d;   /* hover / interactive */
+  --bg-4: #2a2f3d;   /* selected / focused */
+
+  /* Foregrounds (4 階) — bumped for higher dark-mode contrast */
+  --fg-0: #f0f2f8;   /* primary text */
+  --fg-1: #c4c9d6;   /* secondary */
+  --fg-2: #8a91a4;   /* tertiary / labels */
+  --fg-3: #545a6b;   /* disabled / hairline */
+
+  /* Entry breathing glow — warm honey */
+  --glow-warm: #f8c673;
+
+  /* Accent + semantic — cool primary, warm semantics for emphasis */
+  --accent:  #00e5b4;   /* mint-cyan, main signal */
+  --info:    #4da3ff;
+  --warn:    #ffb547;
+  --danger:  #ff5c6e;
+  --success: #00e5b4;
+
+  /* Borders (rgba on dark) */
+  --border-subtle:  rgba(255, 255, 255, 0.06);
+  --border-default: rgba(255, 255, 255, 0.10);
+  --border-strong:  rgba(255, 255, 255, 0.18);
+
+  /* Motion */
+  --ease:     cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-fast: 120ms;
+  --dur-base: 200ms;
+  --dur-slow: 400ms;
+}
+
+@theme inline {
+  --color-bg-0: var(--bg-0);
+  --color-bg-1: var(--bg-1);
+  --color-bg-2: var(--bg-2);
+  --color-bg-3: var(--bg-3);
+  --color-bg-4: var(--bg-4);
+
+  --color-fg-0: var(--fg-0);
+  --color-fg-1: var(--fg-1);
+  --color-fg-2: var(--fg-2);
+  --color-fg-3: var(--fg-3);
+
+  --color-accent:  var(--accent);
+  --color-info:    var(--info);
+  --color-warn:    var(--warn);
+  --color-danger:  var(--danger);
+  --color-success: var(--success);
+
+  --font-sans:    var(--font-geist-sans);
+  --font-mono:    var(--font-geist-mono);
+  --font-display: var(--font-canopee);
+}
+
+html, body {
+  background: var(--bg-0);
+  color: var(--fg-0);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Ambient background — multi-stop radial wash with cool accent.
+   Cheap stand-in for the WebGL particle haze in Fuselab refs;
+   will upgrade to shader background in a later slice. */
+body {
+  background:
+    radial-gradient(ellipse 60% 40% at 15% 0%,   rgba(0, 229, 180, 0.10), transparent 65%),
+    radial-gradient(ellipse 70% 50% at 85% 100%, rgba(77, 163, 255, 0.07), transparent 65%),
+    radial-gradient(ellipse 50% 40% at 50% 50%,  rgba(255, 255, 255, 0.02), transparent 70%),
+    var(--bg-0);
+  min-height: 100vh;
+}
+
+/* Tabular numerals */
+.tabular {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* Glass panel — layered: subtle tint + blur + edge highlight + drop shadow */
+.glass {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.01));
+  backdrop-filter: blur(24px) saturate(140%);
+  -webkit-backdrop-filter: blur(24px) saturate(140%);
+  border: 1px solid var(--border-default);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 0 0 1px rgba(0, 0, 0, 0.4),
+    0 24px 64px -24px rgba(0, 0, 0, 0.7);
+}
+
+/* Module card — like glass but lighter, hover-responsive */
+.module-card {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.025), rgba(255, 255, 255, 0.005));
+  backdrop-filter: blur(20px) saturate(130%);
+  -webkit-backdrop-filter: blur(20px) saturate(130%);
+  border: 1px solid var(--border-default);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.03) inset,
+    0 8px 32px -12px rgba(0, 0, 0, 0.5);
+  transition: border-color var(--dur-base) var(--ease), box-shadow var(--dur-base) var(--ease);
+}
+.module-card:hover {
+  border-color: var(--border-strong);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.06) inset,
+    0 8px 32px -12px rgba(0, 0, 0, 0.6),
+    0 0 0 1px rgba(0, 229, 180, 0.08);
+}
+
+/* Floating animation for hero entry */
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-4px); }
+}
+.float { animation: float 6s ease-in-out infinite; }
+
+/* Hairline pulse — "agent thinking" / "live signal" */
+@keyframes hairline {
+  0%, 100% { opacity: 0.3; }
+  50%      { opacity: 0.95; }
+}
+.hairline-pulse { animation: hairline 2.4s ease-in-out infinite; }
+
+/* Subtle inner glow for active accents */
+@keyframes glow-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(0, 229, 180, 0); }
+  50%      { box-shadow: 0 0 12px 2px rgba(0, 229, 180, 0.35); }
+}
+.glow-pulse { animation: glow-pulse 2.4s ease-in-out infinite; }
+
+/* ===========================================================
+   Entry breathing — 3 elements synced to the same 4.2s cycle:
+     1. .aura-warm        — large radial light "lamp" behind YEN
+     2. .breathe-warm     — text-shadow on YEN itself
+     3. .breathe-sub-warm — subtitle (matches frequency, has 2 flicker dips)
+   =========================================================== */
+
+/* Big radial "lamp" — placed absolute behind the wordmark.
+   Massive (~900px) so it actually feels like ambient light.
+   Uses mix-blend-mode screen so it lights up against dark bg without
+   being clipped by stacking contexts. */
+/* Single warm aura — center offset slightly BELOW the YEN wordmark so
+   the wordmark feels like it's haloed from underneath. The text itself
+   never changes opacity — the breath lives entirely in the aura.
+   This avoids the flickering perception. */
+.aura-warm {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 980px;
+  height: 980px;
+  pointer-events: none;
+  background: radial-gradient(
+    circle at center,
+    rgba(248, 198, 115, 0.50) 0%,
+    rgba(248, 198, 115, 0.32) 10%,
+    rgba(248, 198, 115, 0.18) 22%,
+    rgba(248, 198, 115, 0.08) 40%,
+    rgba(248, 198, 115, 0.03) 60%,
+    rgba(248, 198, 115, 0.00) 78%
+  );
+  mix-blend-mode: screen;
+  filter: blur(4px);
+  animation: aura-breathe 8.5s ease-in-out infinite;
+  will-change: opacity, transform;
+}
+
+/* Center offset: small lift above earlier position — sits just on the
+   YEN baseline. Brightness range boosted for more visible inhale. */
+@keyframes aura-breathe {
+  0%, 100% {
+    opacity: 0.42;
+    transform: translate(-50%, calc(-50% + 5px)) scale(0.92);
+  }
+  50% {
+    opacity: 1.00;
+    transform: translate(-50%, calc(-50% + 5px)) scale(1.15);
+  }
+}
+
+/* Text breathes via filter: brightness — text-shadow on warm-on-warm gets
+   eaten by the aura, but brightness modulates the actual rendered pixels
+   without changing opacity (= no flicker). White text rendered at
+   brightness(0.7) looks like warm-tan/dimmed; at brightness(1.15) it
+   pops a bit brighter than baseline. Add a small drop-shadow glow that
+   grows with peak for extra "lit" sensation. */
+@keyframes breathe-text-warm {
+  0%, 100% {
+    filter: brightness(0.72) drop-shadow(0 0 6px rgba(255, 215, 150, 0.08));
+  }
+  50% {
+    filter: brightness(1.30) drop-shadow(0 0 36px rgba(255, 215, 150, 0.60));
+  }
+}
+.breathe-text-warm { animation: breathe-text-warm 8.5s ease-in-out infinite; }
+
+@keyframes breathe-text-warm-soft {
+  0%, 100% {
+    filter: brightness(0.65) drop-shadow(0 0 4px rgba(255, 215, 150, 0.06));
+  }
+  50% {
+    filter: brightness(1.22) drop-shadow(0 0 22px rgba(255, 215, 150, 0.40));
+  }
+}
+.breathe-text-warm-soft { animation: breathe-text-warm-soft 8.5s ease-in-out infinite; }

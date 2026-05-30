@@ -1,0 +1,11 @@
+import puppeteer from 'puppeteer';
+const url = process.argv[2] || 'http://localhost:3000';
+const out = process.argv[3] || '/tmp/yen-glow-peak.png';
+const browser = await puppeteer.launch({ headless: 'shell' });
+const page = await browser.newPage();
+await page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 2 });
+await page.goto(url, { waitUntil: 'networkidle0' });
+await new Promise(r => setTimeout(r, 2100));
+await page.screenshot({ path: out });
+await browser.close();
+console.log('peak shot →', out);
