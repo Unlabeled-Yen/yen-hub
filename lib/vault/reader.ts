@@ -180,3 +180,7 @@ export async function cached<T>(key: string, fn: () => Promise<T>): Promise<T> {
   cache.set(key, { at: Date.now(), data });
   return data;
 }
+
+export function bustCache(prefix: string): void {
+  for (const k of cache.keys()) if (k.startsWith(prefix)) cache.delete(k);
+}

@@ -7,11 +7,13 @@
  *   - 種類：按 zone 分組（Yen Hub / AI建造 / 寫作草稿 / 佇列 / …）
  *   - 急迫：按 file mtime 分三級（< 3 天=急、3-14=中、> 14=低）
  *
- * Tab 切換不重新 fetch，所有資料前端 group。
+ * 點 item → SVG 手寫筆跡橫劃過文字 → 高度塌陷消失。完成狀態存到
+ * local overlay（done-store），下次 GET 自動過濾。Header 右側「同步」
+ * 鈕把完成項寫回 vault .md。
  */
 
 import { motion, AnimatePresence } from "motion/react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type Todo = {
   file: string;
@@ -23,12 +25,10 @@ type Todo = {
   mtimeMs: number;
 };
 
-type TodosResponse = { items: Todo[] };
+type TodosResponse = { items: Todo[]; doneCount: number };
 
 const EASE: [number, number, number, number] = [0.075, 0.82, 0.165, 1];
 
-// Zone → 中文標籤（內聯複製；reader.ts 的 ZONE_LABEL 是 server-side 字串
-// 帶 emoji，這裡要乾淨無 emoji 的純標籤）
 const ZONE_LABEL: Record<string, string> = {
   yenhub: "Yen Hub",
   workshop: "AI 建造",
@@ -53,18 +53,6 @@ function urgencyOf(mtimeMs: number): Urgency {
   return "low";
 }
 
-const URGENCY_LABEL: Record<Urgency, string> = {
-  high: "急",
-  med: "中",
-  low: "低",
-};
-
-const URGENCY_COLOR: Record<Urgency, string> = {
-  high: "rgba(255,150,90,0.95)",
-  med: "rgba(255,210,150,0.85)",
-  low: "rgba(180,190,200,0.75)",
-};
-
 function dayLabel(ms: number): string {
   const days = Math.floor((Date.now() - ms) / 86_400_000);
   if (days <= 0) return "今天";
@@ -83,18 +71,115 @@ function trunc(text: string, max = 60): string {
   return text.slice(0, max - 1).trimEnd() + "…";
 }
 
-function TodoItem({ t, index }: { t: Todo; index: number }) {
+function todoId(t: Todo): string {
+  return `${t.file}:${t.lineNum}:${t.text}`;
+}
+
+type LineRect = { x: number; y: number; width: number; height: number };
+
+function buildStrikePath(rects: LineRect[]): string {
+  return rects
+    .map((r) => {
+      const y = r.y + r.height / 2 + 0.5;
+      const x0 = r.x;
+      const x1 = r.x + r.width;
+      const mid = r.x + r.width / 2;
+      // Q curve gives a slight wobble — hand-drawn feel instead of a CAD line.
+      return `M ${x0} ${y} Q ${mid} ${y - 1.6} ${x1} ${y}`;
+    })
+    .join(" ");
+}
+
+function TodoItem({
+  t,
+  index,
+  onComplete,
+}: {
+  t: Todo;
+  index: number;
+  onComplete: (t: Todo) => void;
+}) {
+  const [phase, setPhase] = useState<"idle" | "striking" | "done">("idle");
+  const [rects, setRects] = useState<LineRect[]>([]);
+  const [size, setSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
+  const textRef = useRef<HTMLSpanElement>(null);
+  const firedRef = useRef(false);
+
+  function handleClick() {
+    if (phase !== "idle" || firedRef.current) return;
+    const el = textRef.current;
+    if (!el) return;
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const cRect = el.getBoundingClientRect();
+    const lineRects = Array.from(range.getClientRects()).map((r) => ({
+      x: r.left - cRect.left,
+      y: r.top - cRect.top,
+      width: r.width,
+      height: r.height,
+    }));
+    setRects(lineRects);
+    setSize({ w: cRect.width, h: cRect.height });
+    setPhase("striking");
+    firedRef.current = true;
+    // Let the SVG render + animate. Total: ~600ms stroke + ~50ms breath.
+    window.setTimeout(() => setPhase("done"), 680);
+    window.setTimeout(() => onComplete(t), 980);
+  }
+
+  const strikePath = useMemo(() => buildStrikePath(rects), [rects]);
+
   return (
     <motion.div
-      initial={{ opacity: 0, x: -4 }}
-      animate={{ opacity: 1, x: 0 }}
-      transition={{ duration: 0.45, delay: index * 0.025, ease: EASE }}
-      className="font-mono min-w-0"
+      initial={{ opacity: 0, x: -4, height: "auto" }}
+      animate={
+        phase === "done"
+          ? { opacity: 0, height: 0, marginTop: 0, marginBottom: 0 }
+          : { opacity: phase === "striking" ? 0.55 : 1, x: 0 }
+      }
+      transition={
+        phase === "done"
+          ? { duration: 0.3, ease: EASE }
+          : { duration: 0.45, delay: index * 0.025, ease: EASE }
+      }
+      onClick={handleClick}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          handleClick();
+        }
+      }}
+      className="font-mono min-w-0 cursor-pointer select-none group"
+      style={{ overflow: "hidden" }}
     >
-      {/* break-words handles long unbroken strings like inline file paths
-          (`LLM Wiki 知識庫/...`); won't blow out the column. */}
-      <div className="text-[12px] text-[var(--fg-0)] leading-snug break-words">
-        {trunc(t.text, 90)}
+      <div className="relative text-[12px] text-[var(--fg-0)] leading-snug break-words transition-colors group-hover:text-[var(--fg-1)]">
+        <span ref={textRef}>{trunc(t.text, 90)}</span>
+        {phase === "striking" && rects.length > 0 ? (
+          <svg
+            className="absolute inset-0 pointer-events-none"
+            width={size.w}
+            height={size.h}
+            viewBox={`0 0 ${size.w} ${size.h}`}
+            style={{ overflow: "visible" }}
+            aria-hidden
+          >
+            <motion.path
+              d={strikePath}
+              stroke="rgba(255,160,90,0.95)"
+              strokeWidth={1.6}
+              strokeLinecap="round"
+              fill="none"
+              initial={{ pathLength: 0, opacity: 0.9 }}
+              animate={{ pathLength: 1, opacity: 1 }}
+              transition={{ duration: 0.6, ease: [0.22, 0.9, 0.36, 1] }}
+              style={{
+                filter: "drop-shadow(0 0 4px rgba(255,160,90,0.45))",
+              }}
+            />
+          </svg>
+        ) : null}
       </div>
       <div className="text-[10px] text-[var(--fg-2)] mt-1 flex items-center gap-2 min-w-0">
         <span className="truncate flex-1 min-w-0">{fileName(t.file)}</span>
@@ -113,12 +198,14 @@ function GroupBlock({
   color,
   todos,
   startIndex,
+  onComplete,
 }: {
   title: string;
   count: number;
   color: string;
   todos: Todo[];
   startIndex: number;
+  onComplete: (t: Todo) => void;
 }) {
   return (
     <div className="space-y-2.5">
@@ -134,9 +221,16 @@ function GroupBlock({
         </span>
       </div>
       <div className="space-y-2.5 pl-3 border-l border-white/[0.06]">
-        {todos.map((t, i) => (
-          <TodoItem key={`${t.file}:${t.lineNum}`} t={t} index={startIndex + i} />
-        ))}
+        <AnimatePresence initial={false}>
+          {todos.map((t, i) => (
+            <TodoItem
+              key={todoId(t)}
+              t={t}
+              index={startIndex + i}
+              onComplete={onComplete}
+            />
+          ))}
+        </AnimatePresence>
       </div>
     </div>
   );
@@ -146,34 +240,88 @@ export function TodoList() {
   const [data, setData] = useState<TodosResponse | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("category");
+  const [completedKeys, setCompletedKeys] = useState<Set<string>>(new Set());
+  const [doneCount, setDoneCount] = useState(0);
+  const [syncBusy, setSyncBusy] = useState(false);
+  const [syncFlash, setSyncFlash] = useState<string | null>(null);
+
+  async function fetchTodos() {
+    try {
+      const r = await fetch("/api/vault/todos", { credentials: "same-origin" });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error(body.error ?? `HTTP ${r.status}`);
+      }
+      const json = (await r.json()) as TodosResponse;
+      setData(json);
+      setDoneCount(json.doneCount ?? 0);
+      setCompletedKeys(new Set());
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  }
 
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const r = await fetch("/api/vault/todos", {
-          credentials: "same-origin",
-        });
-        if (!r.ok) {
-          const body = await r.json().catch(() => ({}));
-          throw new Error(body.error ?? `HTTP ${r.status}`);
-        }
-        const json = (await r.json()) as TodosResponse;
-        if (!cancelled) setData(json);
-      } catch (e) {
-        if (!cancelled) setErr(e instanceof Error ? e.message : String(e));
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
+    fetchTodos();
   }, []);
+
+  function onComplete(t: Todo) {
+    const id = todoId(t);
+    setCompletedKeys((prev) => {
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+    setDoneCount((c) => c + 1);
+    fetch("/api/vault/todos/complete", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        file: t.file,
+        lineNum: t.lineNum,
+        text: t.text,
+      }),
+    }).catch(() => {
+      /* swallow — overlay write is best-effort; next reload will rescan */
+    });
+  }
+
+  async function syncToVault() {
+    if (syncBusy || doneCount === 0) return;
+    if (!window.confirm(`同步 ${doneCount} 條完成項寫回 vault .md？`)) return;
+    setSyncBusy(true);
+    setSyncFlash(null);
+    try {
+      const r = await fetch("/api/vault/todos/sync", {
+        method: "POST",
+        credentials: "same-origin",
+      });
+      const body = (await r.json()) as {
+        written?: number;
+        skipped?: number;
+        remaining?: number;
+        error?: string;
+      };
+      if (!r.ok || body.error) throw new Error(body.error ?? `HTTP ${r.status}`);
+      setSyncFlash(
+        `寫回 ${body.written ?? 0}，略過 ${body.skipped ?? 0}`,
+      );
+      setDoneCount(body.remaining ?? 0);
+      window.setTimeout(() => setSyncFlash(null), 2400);
+      await fetchTodos();
+    } catch (e) {
+      setSyncFlash(e instanceof Error ? e.message : String(e));
+      window.setTimeout(() => setSyncFlash(null), 3500);
+    } finally {
+      setSyncBusy(false);
+    }
+  }
 
   const grouped = useMemo(() => {
     if (!data) return null;
-    const items = data.items;
+    const items = data.items.filter((t) => !completedKeys.has(todoId(t)));
 
-    // By category — use classify.ts result, not raw zone
     const byCategory = new Map<string, Todo[]>();
     for (const t of items) {
       const arr = byCategory.get(t.category) ?? [];
@@ -183,18 +331,16 @@ export function TodoList() {
     const categories = Array.from(byCategory.entries())
       .map(([cat, ts]) => ({ category: cat, todos: ts }))
       .sort((a, b) => {
-        // "AI 待分類" sinks to bottom regardless of count
         if (a.category === "AI 待分類") return 1;
         if (b.category === "AI 待分類") return -1;
         return b.todos.length - a.todos.length;
       });
 
-    // By urgency
     const byUrgency: Record<Urgency, Todo[]> = { high: [], med: [], low: [] };
     for (const t of items) byUrgency[urgencyOf(t.mtimeMs)].push(t);
 
-    return { categories, byUrgency };
-  }, [data]);
+    return { categories, byUrgency, visibleCount: items.length };
+  }, [data, completedKeys]);
 
   if (err) {
     return (
@@ -221,8 +367,6 @@ export function TodoList() {
       aria-label="vault todos"
       data-tauri-drag-region
     >
-      {/* Left accent stripe — warm vertical line giving the panel a slight
-          visual weight without breaking the transparent aesthetic. */}
       <span
         aria-hidden
         style={{
@@ -239,9 +383,6 @@ export function TodoList() {
           pointerEvents: "none",
         }}
       />
-      {/* Header — title itself is the toggle. Click to flip between
-          待辦事項 (category groups) ↔ 重要 (flat urgency view).
-          Right slot reserved for the next round of tabs (TBD). */}
       <header className="flex items-center justify-between gap-4 font-mono flex-shrink-0 pb-4 mb-1">
         <button
           type="button"
@@ -259,96 +400,99 @@ export function TodoList() {
         >
           <span>{titleText}</span>
           <span style={{ opacity: 0.4 }}>—</span>
-          <span className="tabular-nums">{data.items.length}</span>
+          <span className="tabular-nums">{grouped.visibleCount}</span>
         </button>
-        {/* Right slot — future tabs */}
-        <nav className="flex items-center gap-1" />
+        {/* Sync chip — appears only when there are completed items in the
+            overlay waiting to be written back to vault .md. */}
+        <nav className="flex items-center gap-2">
+          {syncFlash ? (
+            <span
+              className="text-[10px] tracking-[0.18em] uppercase"
+              style={{ color: "rgba(180,200,180,0.85)" }}
+            >
+              {syncFlash}
+            </span>
+          ) : null}
+          {doneCount > 0 ? (
+            <button
+              type="button"
+              onClick={syncToVault}
+              disabled={syncBusy}
+              className="text-[10px] tracking-[0.20em] uppercase font-mono px-2 py-1"
+              style={{
+                color: syncBusy
+                  ? "var(--fg-2)"
+                  : "rgba(255,184,120,0.95)",
+                border: "1px solid rgba(255,184,120,0.35)",
+                borderRadius: 2,
+                background: "rgba(255,184,120,0.04)",
+                cursor: syncBusy ? "wait" : "pointer",
+                transition: "color 200ms, border-color 200ms, background 200ms",
+              }}
+              title={`寫回 ${doneCount} 條完成 TODO 到 vault`}
+            >
+              ⇪ sync · {doneCount}
+            </button>
+          ) : null}
+        </nav>
       </header>
 
-      {/* Scrollable body */}
       <div className="flex-1 overflow-y-auto overflow-x-hidden min-w-0 pr-2 -mr-2 hub-scrollbar">
-      <AnimatePresence mode="wait">
-        {tab === "category" ? (
-          <motion.div
-            key="category"
-            initial={{ opacity: 0, y: 4 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -4 }}
-            transition={{ duration: 0.3, ease: EASE }}
-            className="space-y-6 pb-6"
-          >
-            {grouped.categories.slice(0, 12).map((g, gi) => {
-              const startIdx = grouped.categories
-                .slice(0, gi)
-                .reduce((acc, x) => acc + Math.min(x.todos.length, 4), 0);
-              const isAiBucket = g.category === "AI 待分類";
-              return (
-                <GroupBlock
-                  key={g.category}
-                  title={g.category}
-                  count={g.todos.length}
-                  color={isAiBucket ? "rgba(160,200,255,0.85)" : "var(--fg-1)"}
-                  todos={g.todos.slice(0, 4)}
-                  startIndex={startIdx}
-                />
-              );
-            })}
-          </motion.div>
-        ) : (
-          <motion.div
-            key="urgency"
-            initial={{ opacity: 0, y: 4 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -4 }}
-            transition={{ duration: 0.3, ease: EASE }}
-            className="space-y-2.5 pb-6"
-          >
-            {/* Flat list sorted by urgency — no sub-labels per user request */}
-            {(["high", "med", "low"] as Urgency[])
-              .flatMap((u) => grouped.byUrgency[u].slice(0, 8))
-              .map((t, i) => (
-                <TodoItem key={`${t.file}:${t.lineNum}`} t={t} index={i} />
-              ))}
-          </motion.div>
-        )}
-      </AnimatePresence>
+        <AnimatePresence mode="wait">
+          {tab === "category" ? (
+            <motion.div
+              key="category"
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -4 }}
+              transition={{ duration: 0.3, ease: EASE }}
+              className="space-y-6 pb-6"
+            >
+              {grouped.categories.slice(0, 12).map((g, gi) => {
+                const startIdx = grouped.categories
+                  .slice(0, gi)
+                  .reduce((acc, x) => acc + Math.min(x.todos.length, 4), 0);
+                const isAiBucket = g.category === "AI 待分類";
+                return (
+                  <GroupBlock
+                    key={g.category}
+                    title={g.category}
+                    count={g.todos.length}
+                    color={
+                      isAiBucket ? "rgba(160,200,255,0.85)" : "var(--fg-1)"
+                    }
+                    todos={g.todos.slice(0, 4)}
+                    startIndex={startIdx}
+                    onComplete={onComplete}
+                  />
+                );
+              })}
+            </motion.div>
+          ) : (
+            <motion.div
+              key="urgency"
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -4 }}
+              transition={{ duration: 0.3, ease: EASE }}
+              className="space-y-2.5 pb-6"
+            >
+              <AnimatePresence initial={false}>
+                {(["high", "med", "low"] as Urgency[])
+                  .flatMap((u) => grouped.byUrgency[u].slice(0, 8))
+                  .map((t, i) => (
+                    <TodoItem
+                      key={todoId(t)}
+                      t={t}
+                      index={i}
+                      onComplete={onComplete}
+                    />
+                  ))}
+              </AnimatePresence>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </section>
-  );
-}
-
-function TabButton({
-  label,
-  active,
-  onClick,
-}: {
-  label: string;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="relative font-mono text-[11px] tracking-[0.22em] uppercase px-3 py-1 transition-colors"
-      style={{
-        color: active ? "var(--fg-0)" : "var(--fg-2)",
-        background: "transparent",
-        border: "none",
-        cursor: "pointer",
-      }}
-    >
-      {label}
-      {active ? (
-        <motion.span
-          layoutId="todo-tab-underline"
-          className="absolute bottom-0 left-0 right-0"
-          style={{
-            height: 1,
-            background: "rgba(255,255,255,0.5)",
-          }}
-        />
-      ) : null}
-    </button>
   );
 }
