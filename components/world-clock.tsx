@@ -21,6 +21,14 @@ const NY_FMT = new Intl.DateTimeFormat("en-US", {
   hour12: true,
 });
 
+// Date display: e.g. "FRI MAY 31" — same intelligence-agency vibe as the time.
+const NY_DATE_FMT = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/New_York",
+  weekday: "short",
+  month: "short",
+  day: "2-digit",
+});
+
 function nySession(now: Date): "PRE" | "OPEN" | "AFTER" | "CLOSE" {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/New_York",
@@ -54,6 +62,8 @@ export function WorldClock() {
   const mm = parts.find((p) => p.type === "minute")?.value ?? "00";
   const ss = parts.find((p) => p.type === "second")?.value ?? "00";
   const ampm = parts.find((p) => p.type === "dayPeriod")?.value ?? "AM";
+  // NY_DATE_FMT.format() returns e.g. "Fri, May 31" — strip comma + upper.
+  const dateLabel = NY_DATE_FMT.format(now).replace(",", "").toUpperCase();
   const session = nySession(now);
 
   return (
@@ -71,7 +81,8 @@ export function WorldClock() {
       }}
     >
       <span>NY</span>
-      <span style={{ marginLeft: "0.5em" }}>
+      <span style={{ marginLeft: "0.6em", opacity: 0.88 }}>{dateLabel}</span>
+      <span style={{ marginLeft: "0.6em" }}>
         {hh}:{mm}:{ss}
       </span>
       <span style={{ marginLeft: "0.45em", fontSize: 10, opacity: 0.85 }}>
