@@ -32,11 +32,16 @@ export const SESSION_PASSWORD =
   // Dev fallback — replace via env in production. Must be ≥32 chars.
   "dev-only-fallback-session-key-please-change-me-32chars";
 
+// Tauri sidecar serves over plain http://127.0.0.1:<port> — WKWebView drops
+// Secure-flagged cookies on non-https origins, which silently breaks login.
+// PWA-on-Vercel (future) opts back in by setting YEN_REQUIRE_SECURE=1.
+const requireSecure = isProd && process.env.YEN_REQUIRE_SECURE === "1";
+
 export const SESSION_OPTIONS = {
   password: SESSION_PASSWORD,
   cookieName: SESSION_COOKIE,
   cookieOptions: {
-    secure: isProd,
+    secure: requireSecure,
     httpOnly: true,
     sameSite: "lax" as const,
     maxAge: 60 * 60 * 24 * 30, // 30 days

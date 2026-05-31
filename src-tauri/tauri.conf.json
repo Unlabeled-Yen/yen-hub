@@ -4,10 +4,10 @@
   "version": "0.1.0",
   "identifier": "com.yen.hub",
   "build": {
-    "frontendDist": "../out",
+    "frontendDist": "splash",
     "devUrl": "http://localhost:3000",
     "beforeDevCommand": "pnpm dev",
-    "beforeBuildCommand": "pnpm build"
+    "beforeBuildCommand": "pnpm build && bash scripts/prep-sidecar.sh"
   },
   "app": {
     "windows": [
@@ -42,6 +42,8 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "externalBin": ["binaries/node"],
+    "resources": ["sidecar/**/*"],
     "android": {
       "debugApplicationIdSuffix": ".debug"
     }

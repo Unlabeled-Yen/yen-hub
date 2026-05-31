@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <title>Yen</title>
+    <style>
+      html, body {
+        margin: 0;
+        height: 100%;
+        background: transparent;
+        font-family: -apple-system, system-ui, sans-serif;
+        color: rgba(255, 220, 180, 0.55);
+        -webkit-user-select: none;
+        user-select: none;
+        overflow: hidden;
+      }
+      .stage {
+        height: 100%;
+        display: grid;
+        place-items: center;
+        letter-spacing: 0.08em;
+        font-size: 12px;
+        text-transform: uppercase;
+        animation: pulse 2.2s ease-in-out infinite;
+      }
+      @keyframes pulse {
+        0%, 100% { opacity: 0.35; }
+        50%      { opacity: 0.75; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="stage">Yen</div>
+  </body>
+</html>

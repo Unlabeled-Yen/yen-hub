@@ -7,9 +7,10 @@
  */
 
 import { promises as fs } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 
-const STORE_PATH = process.env.PASSKEY_STORE ?? "./data/passkeys.json";
+const STORE_PATH =
+  process.env.PASSKEY_STORE ?? join(process.cwd(), "data", "passkeys.json");
 
 export type StoredPasskey = {
   credentialID: string;          // base64url

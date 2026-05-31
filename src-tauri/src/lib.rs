@@ -1,4 +1,7 @@
 mod auth;
+mod sidecar;
+
+use tauri::Manager;
 
 /// Tauri command — native Touch ID prompt on macOS.
 ///
@@ -23,14 +26,29 @@ async fn authenticate(reason: Option<String>) -> Result<bool, String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_shell::init())
+        .plugin(
+            tauri_plugin_log::Builder::default()
+                .level(log::LevelFilter::Info)
+                .build(),
+        )
         .setup(|app| {
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
+            // In production the webview boots into splash/index.html; spawn
+            // the Node sidecar and re-navigate once it's ready. In dev,
+            // tauri.conf.json's devUrl handles loading and we do nothing.
+            #[cfg(not(debug_assertions))]
+            {
+                let handle = app.handle().clone();
+                if let Some(window) = app.get_webview_window("main") {
+                    tauri::async_runtime::spawn(async move {
+                        if let Err(e) = sidecar::launch(&handle, window) {
+                            log::error!("sidecar launch failed: {e}");
+                            eprintln!("sidecar launch failed: {e}");
+                        }
+                    });
+                }
             }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![authenticate])

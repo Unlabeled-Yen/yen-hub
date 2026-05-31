@@ -1,3 +1,8 @@
+# pnpm 10+ moved many .npmrc settings into pnpm-workspace.yaml.
+# Flat node_modules — Next standalone trace can't follow pnpm's symlinked
+# .pnpm/ layout, so deps like @swc/helpers go missing inside the Tauri sidecar.
+nodeLinker: hoisted
+
 allowBuilds:
   sharp: true
   unrs-resolver: true
