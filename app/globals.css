@@ -115,6 +115,13 @@ textarea,
   cursor: text;
 }
 
+/* Subtle selection highlight when text DOES get selected (textarea etc.)
+   — replaces the default jarring system blue. */
+::selection {
+  background: rgba(255, 255, 255, 0.16);
+  color: inherit;
+}
+
 /* Tabular numerals */
 .tabular {
   font-variant-numeric: tabular-nums;
