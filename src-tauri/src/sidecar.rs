@@ -90,7 +90,16 @@ pub fn launch(app: &AppHandle, window: WebviewWindow) -> Result<(), String> {
 
     let session_password = ensure_session_secret(app)?;
 
-    let sidecar = app
+    // Resolve the Obsidian vault path:
+    //   1. YEN_VAULT_PATH from the launching environment (if user exported it)
+    //   2. Hardcoded fallback to Yen's actual vault location
+    // Same shape for ANTHROPIC_API_KEY — pass it through if set, otherwise
+    // the book-translation AI fallback degrades gracefully to bare-parse.
+    let vault_path = std::env::var("YEN_VAULT_PATH")
+        .unwrap_or_else(|_| "/Users/yen/Desktop/Yen/Yen_Vault".to_string());
+    let anthropic_key = std::env::var("ANTHROPIC_API_KEY").unwrap_or_default();
+
+    let mut sidecar = app
         .shell()
         .sidecar("node")
         .map_err(|e| format!("sidecar(node): {e}"))?
@@ -98,7 +107,12 @@ pub fn launch(app: &AppHandle, window: WebviewWindow) -> Result<(), String> {
         .env("PORT", port.to_string())
         .env("HOSTNAME", "127.0.0.1")
         .env("NODE_ENV", "production")
-        .env("SESSION_PASSWORD", session_password);
+        .env("SESSION_PASSWORD", session_password)
+        .env("YEN_VAULT_PATH", vault_path);
+
+    if !anthropic_key.is_empty() {
+        sidecar = sidecar.env("ANTHROPIC_API_KEY", anthropic_key);
+    }
 
     let (mut rx, _child) = sidecar.spawn().map_err(|e| format!("spawn: {e}"))?;
 

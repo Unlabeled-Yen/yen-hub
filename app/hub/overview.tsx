@@ -13,8 +13,12 @@
  */
 
 import { motion } from "motion/react";
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CommandPalette } from "@/components/command-palette";
+import { AttentionGrid } from "@/components/attention-grid";
+import { TodoList } from "@/components/todo-list";
+import { ReadingProgress } from "@/components/reading-progress";
+import { MarketMonitor } from "@/components/market-monitor";
 
 type Span = { cols?: number; rows?: number };
 type ModuleDef = {
@@ -150,6 +154,23 @@ const RISE_EASE: [number, number, number, number] = [0.075, 0.82, 0.165, 1];
 
 export function Overview() {
   const delays = useShuffledDelays(MODULES.length);
+  // Measure Reading's height so TODO can match it (CSS Grid can't align
+  // bottoms when items have wildly different natural heights). Reading sits
+  // at its content's natural size; TODO's `height` is mirrored from JS.
+  const readingRef = useRef<HTMLDivElement | null>(null);
+  const [readingH, setReadingH] = useState<number | null>(null);
+  useEffect(() => {
+    const node = readingRef.current;
+    if (!node) return;
+    const update = () => {
+      const r = node.getBoundingClientRect();
+      if (r.height > 0) setReadingH(r.height);
+    };
+    update();
+    const obs = new ResizeObserver(update);
+    obs.observe(node);
+    return () => obs.disconnect();
+  }, []);
   return (
     <motion.div
       className="flex flex-1 flex-col"
@@ -161,19 +182,70 @@ export function Overview() {
           since the Tauri window uses titleBarStyle: "Overlay". */}
       <div className="h-12" data-tauri-drag-region />
 
-      <main className="flex-1 px-8 sm:px-12 py-6">
-        <motion.div
-          className="mb-8 flex items-center gap-2 text-[11px] font-mono tracking-[0.30em] text-[var(--fg-1)] uppercase select-none"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.9, delay: 1.0 }}
-        >
-          <span className="inline-block h-1 w-1 rounded-full bg-[var(--fg-2)] hairline-pulse" />
-          type anywhere to talk · ⌘k to summon
-        </motion.div>
+      <main className="flex-1 px-8 sm:px-12 py-4">
+        {/* Natural-flow stack — each row sizes to its content, page scrolls
+            if total height exceeds viewport. Reading is naturally sized;
+            TODO's height is mirrored from Reading via JS measurement so
+            the two bottoms always align. */}
+        <div className="flex flex-col gap-10 pt-6">
+          {/* Upper row: chart at max-content, market fills the rest */}
+          <div className="grid grid-cols-1 lg:grid-cols-[max-content_1fr] gap-x-10 items-stretch flex-shrink-0">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.4, ease: "linear", delay: 0 }}
+              className="min-w-0"
+            >
+              <AttentionGrid />
+            </motion.div>
+            <motion.div
+              initial={{ opacity: 0, y: 14 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 1.0, ease: [0.075, 0.82, 0.165, 1], delay: 0.3 }}
+              className="min-w-0 h-full"
+            >
+              <MarketMonitor />
+            </motion.div>
+          </div>
+          {/* Lower row: Reading natural-sized, TODO mirrors via JS.
+              Wrapped in a subtle vertical-gradient panel so the whole
+              attention-pair gets a quiet visual frame. */}
+          <div
+            className="grid grid-cols-1 lg:grid-cols-2 gap-x-10 items-start py-8 -mx-8 sm:-mx-12 px-8 sm:px-12"
+            style={{
+              // Solid dark slab, bleeding to the page edges horizontally
+              // and fading top/bottom only.
+              background:
+                "linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0.65) 10%, rgba(0,0,0,0.65) 90%, rgba(0,0,0,0) 100%)",
+            }}
+          >
+            <motion.div
+              ref={readingRef}
+              initial={{ opacity: 0, y: 14 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 1.0, ease: [0.075, 0.82, 0.165, 1], delay: 0.4 }}
+              className="min-w-0"
+            >
+              <ReadingProgress />
+            </motion.div>
+            <motion.div
+              initial={{ opacity: 0, y: 14 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 1.0, ease: [0.075, 0.82, 0.165, 1], delay: 0.5 }}
+              className="min-w-0"
+              style={{
+                height: readingH ? `${readingH}px` : undefined,
+              }}
+            >
+              <TodoList />
+            </motion.div>
+          </div>
+        </div>
 
+        {/* Bento module placeholders — sit below the fixed-height outer.
+            Scroll the page to reveal them. */}
         <div
-          className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 auto-rows-[140px] gap-4"
+          className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 auto-rows-[140px] gap-4 mt-6"
           style={{ perspective: "1600px", perspectiveOrigin: "50% 30%" }}
         >
           {MODULES.map((m, i) => (

@@ -259,3 +259,24 @@ textarea,
   }
 }
 .breathe-text-warm-soft { animation: breathe-text-warm-soft 8.5s ease-in-out infinite; }
+
+/* Hub scrollbar — slim, warm-translucent. Used by scrollable inner panels
+   (TODO list) so the chrome stays subtle but always usable. */
+.hub-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 184, 120, 0.20) transparent;
+}
+.hub-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.hub-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.hub-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 184, 120, 0.20);
+  border-radius: 3px;
+}
+.hub-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 184, 120, 0.35);
+}
