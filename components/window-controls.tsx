@@ -26,6 +26,15 @@ function readStored(): number {
   return Number.isFinite(n) && n >= 0 && n <= 1 ? n : 0.85;
 }
 
+/** Cards always 20% MORE opaque than the bg (clamped to <= 1). */
+function applyAlphas(a: number) {
+  document.documentElement.style.setProperty("--bg-alpha", String(a));
+  document.documentElement.style.setProperty(
+    "--card-alpha",
+    String(Math.min(1, a + 0.2)),
+  );
+}
+
 export function WindowControls() {
   const [alpha, setAlpha] = useState<number>(0.85);
 
@@ -33,14 +42,14 @@ export function WindowControls() {
   useEffect(() => {
     const a = readStored();
     setAlpha(a);
-    document.documentElement.style.setProperty("--bg-alpha", String(a));
+    applyAlphas(a);
   }, []);
 
   const cycle = () => {
     const idx = ALPHA_STEPS.findIndex((v) => Math.abs(v - alpha) < 0.01);
     const next = ALPHA_STEPS[(idx + 1) % ALPHA_STEPS.length];
     setAlpha(next);
-    document.documentElement.style.setProperty("--bg-alpha", String(next));
+    applyAlphas(next);
     localStorage.setItem(STORAGE_KEY, String(next));
   };
 

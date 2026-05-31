@@ -13,6 +13,7 @@
  */
 
 import { motion } from "motion/react";
+import { useMemo } from "react";
 import { CommandPalette } from "@/components/command-palette";
 
 type Span = { cols?: number; rows?: number };
@@ -36,42 +37,45 @@ type ModuleDef = {
  *   |  Attention Map         |    (row 4 - wide)
  *   +-------------------------+
  */
+// "Door swing" entry angles — close to ±90° so each card opens like a
+// hinged panel from its respective edge. Delays are randomized on mount
+// (see useState initializer below) so the order shuffles each load.
 const MODULES: ModuleDef[] = [
   {
     title: "Vault Health",
     hint: "筆記總數 / 草稿堆積 / 健康分數",
     span: { cols: 2, rows: 2 },
-    flip: { rotateY: -78, delay: 0.15, originX: "0%" },
+    flip: { rotateY: -88, delay: 0, originX: "0%" }, // hinge LEFT
   },
   {
     title: "Pipelines",
     hint: "寫作 / 投資 / 學習 / 專案 進度與停滯",
     span: { cols: 2, rows: 3 },
-    flip: { rotateX: -58, delay: 0.55, originY: "0%" },
+    flip: { rotateX: -85, delay: 0, originY: "0%" }, // hinge TOP
   },
   {
     title: "Mirror",
     hint: "AI 對 Yen 的假設檔 · 可 ✓ / ✗",
     span: { cols: 2, rows: 2 },
-    flip: { rotateX: 62, delay: 0.10, originY: "100%" },
+    flip: { rotateX: 85, delay: 0, originY: "100%" }, // hinge BOTTOM
   },
   {
     title: "Signals",
     hint: "地緣政治 / 訂閱 / 過濾後的外部訊號",
     span: { cols: 2, rows: 1 },
-    flip: { rotateY: 84, delay: 0.85, originX: "100%" },
+    flip: { rotateY: 88, delay: 0, originX: "100%" }, // hinge RIGHT
   },
   {
     title: "Open Loops",
     hint: "未完成承諾 · 從 Vault / 對話抓出",
     span: { cols: 2, rows: 1 },
-    flip: { rotateX: -48, delay: 0.40, originY: "0%" },
+    flip: { rotateX: -85, delay: 0, originY: "0%" }, // hinge TOP
   },
   {
     title: "Attention Map",
     hint: "本週時間實際花在哪 vs. 自評",
     span: { cols: 6, rows: 1 },
-    flip: { rotateY: -90, delay: 0.70, originX: "0%" },
+    flip: { rotateY: -88, delay: 0, originX: "0%" }, // hinge LEFT
   },
 ];
 
@@ -129,28 +133,33 @@ function spanCls(span: Span): string {
   return `${colMap[c] ?? ""} ${rowMap[r] ?? ""}`.trim();
 }
 
+/** Random delay 0–0.9s per card, regenerated on every page mount.
+ *  useMemo with empty deps = runs once on mount, deterministic for the
+ *  lifetime of this Overview instance. */
+function useShuffledDelays(count: number): number[] {
+  return useMemo(
+    () => Array.from({ length: count }, () => Math.random() * 0.3),
+    [count],
+  );
+}
+
+/** Shared timing — page fade and card rise both ride this curve. */
+const RISE_DURATION = 1.1;
+// Strong ease-out: fast initial acceleration, long quiet settle.
+const RISE_EASE: [number, number, number, number] = [0.075, 0.82, 0.165, 1];
+
 export function Overview() {
+  const delays = useShuffledDelays(MODULES.length);
   return (
     <motion.div
       className="flex flex-1 flex-col"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
-      transition={{ duration: 0.9, ease: "easeOut" }}
+      transition={{ duration: RISE_DURATION, ease: "linear" }}
     >
-      {/* top-left wordmark */}
-      <motion.div
-        className="px-8 sm:px-12 pt-8"
-        initial={{ opacity: 0, y: -8 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 1.0, ease: [0.16, 1, 0.3, 1], delay: 0.15 }}
-      >
-        <h1
-          className="text-[26px] leading-none text-[var(--fg-0)] select-none"
-          style={{ fontFamily: "var(--font-display)" }}
-        >
-          Yen
-        </h1>
-      </motion.div>
+      {/* Top spacer — leaves room for the overlay traffic lights (~28px)
+          since the Tauri window uses titleBarStyle: "Overlay". */}
+      <div className="h-12" data-tauri-drag-region />
 
       <main className="flex-1 px-8 sm:px-12 py-6">
         <motion.div
@@ -167,31 +176,21 @@ export function Overview() {
           className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 auto-rows-[140px] gap-4"
           style={{ perspective: "1600px", perspectiveOrigin: "50% 30%" }}
         >
-          {MODULES.map((m) => (
+          {MODULES.map((m, i) => (
             <motion.div
               key={m.title}
               className={spanCls(m.span)}
-              initial={{
-                opacity: 0,
-                rotateX: m.flip.rotateX ?? 0,
-                rotateY: m.flip.rotateY ?? 0,
-                scale: 0.92,
-              }}
-              animate={{
-                opacity: 1,
-                rotateX: 0,
-                rotateY: 0,
-                scale: 1,
-              }}
+              // Rise only — opacity is driven by the page-level fade so
+              // both end together at RISE_DURATION. Strong ease-out:
+              // cards launch upward quickly then settle long and slow.
+              initial={{ y: 75 }}
+              animate={{ y: 0 }}
               transition={{
-                duration: 1.4,
-                ease: [0.16, 1, 0.3, 1],
-                delay: m.flip.delay,
+                duration: RISE_DURATION,
+                ease: RISE_EASE,
+                delay: delays[i],
               }}
-              style={{
-                transformStyle: "preserve-3d",
-                transformOrigin: `${m.flip.originX ?? "50%"} ${m.flip.originY ?? "50%"}`,
-              }}
+              style={{ willChange: "transform" }}
             >
               <ModuleCard title={m.title} hint={m.hint} />
             </motion.div>

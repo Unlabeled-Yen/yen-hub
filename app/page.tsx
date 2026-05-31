@@ -25,6 +25,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { motion } from "motion/react";
 import {
   startAuthentication,
   browserSupportsWebAuthn,
@@ -77,25 +78,28 @@ export default function Home() {
     }
   };
 
-  /** Tauri path — native LocalAuthentication via Rust command. */
+  /**
+   * Tauri path — frictionless (no Touch ID prompt).
+   *
+   * macOS LocalAuthentication is uncircumventable — every call shows the
+   * system prompt. Per Yen's preference we skip it entirely. Security
+   * boundary = the Mac itself being unlocked.
+   *
+   * The Rust authenticate command is still wired (src-tauri/src/auth.rs)
+   * so we can re-enable Touch ID at any time by restoring the invoke()
+   * call (see commit 35bbb8c for the original implementation).
+   */
   const tryNativeAuth = async () => {
     if (inFlightRef.current || leaving) return;
     inFlightRef.current = true;
     try {
-      const { invoke } = await import("@tauri-apps/api/core");
-      const ok = await invoke<boolean>("authenticate", {
-        reason: "welcome back",
-      });
-      if (!ok) return;
-      // Touch ID succeeded — now mint the session cookie so /hub's
-      // server-side gate lets us through.
       const confirm = await fetch("/api/auth/native-confirm", {
         method: "POST",
       });
       if (!confirm.ok) return;
       transitionToConsole();
     } catch {
-      // Silent — user cancelled or biometrics unavailable.
+      // Silent.
     } finally {
       inFlightRef.current = false;
     }
@@ -123,16 +127,23 @@ export default function Home() {
       };
     }
 
-    // Mode 2 — Tauri native
+    // Mode 2 — Tauri: gesture-to-enter (frictionless, no system prompt).
+    // 800ms grace avoids the window-open focus click jumping in immediately.
     if (isTauri()) {
-      const initial = setTimeout(tryNativeAuth, 1400); // dwell on the breath
-      const onGesture = () => tryNativeAuth();
-      window.addEventListener("pointerdown", onGesture);
-      window.addEventListener("keydown", onGesture);
+      let armed = false;
+      const armT = setTimeout(() => {
+        armed = true;
+      }, 800);
+      const enter = () => {
+        if (!armed) return;
+        tryNativeAuth();
+      };
+      window.addEventListener("pointerdown", enter);
+      window.addEventListener("keydown", enter);
       return () => {
-        clearTimeout(initial);
-        window.removeEventListener("pointerdown", onGesture);
-        window.removeEventListener("keydown", onGesture);
+        clearTimeout(armT);
+        window.removeEventListener("pointerdown", enter);
+        window.removeEventListener("keydown", enter);
       };
     }
 
@@ -150,11 +161,20 @@ export default function Home() {
 
   return (
     <main
-      className={`flex flex-1 items-center justify-center px-6 transition-opacity duration-700 ease-out ${
+      className={`flex flex-1 items-center justify-center px-6 transition-opacity duration-1000 ease-out ${
         leaving ? "opacity-0" : "opacity-100"
       }`}
+      style={{ perspective: "1600px", perspectiveOrigin: "50% 50%" }}
     >
-      <div className="relative flex flex-col items-center">
+      {/* Wrapper flips in from edge-on Y rotation — like a panel turning
+          to face you. Aura sits inside so it flips with the wordmark. */}
+      <motion.div
+        className="relative flex flex-col items-center"
+        initial={{ rotateY: -88, scale: 0.94 }}
+        animate={{ rotateY: 0, scale: 1 }}
+        transition={{ duration: 1.1, ease: [0.16, 1, 0.3, 1] }}
+        style={{ transformStyle: "preserve-3d", transformOrigin: "50% 50%" }}
+      >
         <div className="aura-warm" />
         <h1
           className="breathe-text-warm relative text-[96px] leading-[0.85] tracking-tight text-[var(--fg-0)] select-none"
@@ -165,7 +185,7 @@ export default function Home() {
         <p className="breathe-text-warm-soft relative mt-8 text-[10px] font-mono tracking-[0.32em] text-[var(--fg-1)] uppercase select-none">
           welcome back my lovely friend
         </p>
-      </div>
+      </motion.div>
     </main>
   );
 }

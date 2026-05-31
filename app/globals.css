@@ -17,7 +17,9 @@
   /* Page background alpha — used in body so the Tauri window can be
      semi-transparent (and adjustable via window-controls). 1 = opaque.
      User-controlled at runtime via localStorage `yen-hub:bg-alpha`. */
-  --bg-alpha: 0.85;
+  /* Fixed transparency — locked per Yen's call. No runtime adjuster. */
+  --bg-alpha: 0.60;
+  --card-alpha: 0.75;
 
   /* Foregrounds (4 階) — bumped for higher dark-mode contrast */
   --fg-0: #f0f2f8;   /* primary text */
@@ -71,23 +73,46 @@
   --font-display: var(--font-canopee);
 }
 
-html, body {
-  background: var(--bg-0);
+/* html must be TRANSPARENT for the Tauri window's --bg-alpha to actually
+   let the desktop show through. If we paint html opaque the alpha layer
+   below is irrelevant. */
+html {
+  background: transparent;
   color: var(--fg-0);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
 }
 
-/* Ambient background — multi-stop radial wash with cool accent.
-   Bottom layer uses --bg-alpha so the page is partially see-through inside
-   the Tauri frameless window. */
+/* Body — black frosted glass. backdrop-filter is applied HERE once
+   for the whole window (frosts any desktop / app showing through),
+   so cards can stay filter-free and animate smoothly. */
 body {
   background:
-    radial-gradient(ellipse 60% 40% at 15% 0%,   rgba(0, 229, 180, 0.10), transparent 65%),
-    radial-gradient(ellipse 70% 50% at 85% 100%, rgba(77, 163, 255, 0.07), transparent 65%),
-    radial-gradient(ellipse 50% 40% at 50% 50%,  rgba(255, 255, 255, 0.02), transparent 70%),
-    rgba(10, 11, 14, var(--bg-alpha));
+    radial-gradient(ellipse 60% 40% at 15% 0%,   rgba(255, 255, 255, 0.04), transparent 65%),
+    radial-gradient(ellipse 70% 50% at 85% 100%, rgba(255, 255, 255, 0.025), transparent 65%),
+    rgba(0, 0, 0, var(--bg-alpha));
+  backdrop-filter: blur(28px) saturate(0.55);
+  -webkit-backdrop-filter: blur(28px) saturate(0.55);
+  color: var(--fg-0);
   min-height: 100vh;
+}
+
+/* No text selection globally — feels app-like, not webby. */
+html, body {
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: default;
+}
+
+/* Re-enable selection only where it matters: typed input + AI chat. */
+input,
+textarea,
+[contenteditable="true"],
+.selectable,
+.selectable * {
+  -webkit-user-select: text;
+  user-select: text;
+  cursor: text;
 }
 
 /* Tabular numerals */
@@ -109,16 +134,18 @@ body {
     0 24px 64px -24px rgba(0, 0, 0, 0.7);
 }
 
-/* Module card — like glass but lighter, hover-responsive */
+/* Module card — solid rgba only, NO backdrop-filter.
+   The body already handles the frosted-glass effect for the whole
+   window, so cards can rotate/scale without per-frame blur recompute
+   (which was making the door-swing janky on multiple cards). */
 .module-card {
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.025), rgba(255, 255, 255, 0.005));
-  backdrop-filter: blur(20px) saturate(130%);
-  -webkit-backdrop-filter: blur(20px) saturate(130%);
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.01)),
+    rgba(14, 14, 14, var(--card-alpha));
   border: 1px solid var(--border-default);
   box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.03) inset,
-    0 8px 32px -12px rgba(0, 0, 0, 0.5);
+    0 1px 0 rgba(255, 255, 255, 0.05) inset,
+    0 8px 32px -12px rgba(0, 0, 0, 0.55);
   transition: border-color var(--dur-base) var(--ease), box-shadow var(--dur-base) var(--ease);
 }
 .module-card:hover {
