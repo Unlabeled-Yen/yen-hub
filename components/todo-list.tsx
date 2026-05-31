@@ -7,9 +7,8 @@
  *   - 種類：按 zone 分組（Yen Hub / AI建造 / 寫作草稿 / 佇列 / …）
  *   - 急迫：按 file mtime 分三級（< 3 天=急、3-14=中、> 14=低）
  *
- * 點 item → SVG 手寫筆跡橫劃過文字 → 高度塌陷消失。完成狀態存到
- * local overlay（done-store），下次 GET 自動過濾。Header 右側「同步」
- * 鈕把完成項寫回 vault .md。
+ * 點 TODO → SVG 手寫筆跡劃過文字（toggle，再點一次取消）。劃記狀態存到
+ * local overlay（done-store），重啟後還在。vault .md 永遠不被動到。
  */
 
 import { motion, AnimatePresence } from "motion/react";
@@ -25,7 +24,7 @@ type Todo = {
   mtimeMs: number;
 };
 
-type TodosResponse = { items: Todo[]; doneCount: number };
+type TodosResponse = { items: Todo[]; doneKeys: string[] };
 
 const EASE: [number, number, number, number] = [0.075, 0.82, 0.165, 1];
 
@@ -75,6 +74,16 @@ function todoId(t: Todo): string {
   return `${t.file}:${t.lineNum}:${t.text}`;
 }
 
+// Mirror of lib/vault/done-store.ts → todoKey().
+// Browser-side sha1 needed because we want optimistic isDone before API roundtrip.
+async function sha1Hex(input: string): Promise<string> {
+  const buf = new TextEncoder().encode(input);
+  const hash = await crypto.subtle.digest("SHA-1", buf);
+  return Array.from(new Uint8Array(hash))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 type LineRect = { x: number; y: number; width: number; height: number };
 
 function buildStrikePath(rects: LineRect[]): string {
@@ -93,20 +102,20 @@ function buildStrikePath(rects: LineRect[]): string {
 function TodoItem({
   t,
   index,
-  onComplete,
+  isDone,
+  onToggle,
 }: {
   t: Todo;
   index: number;
-  onComplete: (t: Todo) => void;
+  isDone: boolean;
+  onToggle: (t: Todo, next: boolean) => void;
 }) {
-  const [phase, setPhase] = useState<"idle" | "striking" | "done">("idle");
   const [rects, setRects] = useState<LineRect[]>([]);
   const [size, setSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
+  const [busy, setBusy] = useState(false);
   const textRef = useRef<HTMLSpanElement>(null);
-  const firedRef = useRef(false);
 
-  function handleClick() {
-    if (phase !== "idle" || firedRef.current) return;
+  function measure() {
     const el = textRef.current;
     if (!el) return;
     const range = document.createRange();
@@ -120,28 +129,33 @@ function TodoItem({
     }));
     setRects(lineRects);
     setSize({ w: cRect.width, h: cRect.height });
-    setPhase("striking");
-    firedRef.current = true;
-    // Let the SVG render + animate. Total: ~600ms stroke + ~50ms breath.
-    window.setTimeout(() => setPhase("done"), 680);
-    window.setTimeout(() => onComplete(t), 980);
+  }
+
+  // Measure once after mount so the strike SVG is ready whether the item
+  // loads already-done or gets clicked later. Re-measure on window resize.
+  useEffect(() => {
+    measure();
+    const ro = new ResizeObserver(() => measure());
+    if (textRef.current) ro.observe(textRef.current);
+    return () => ro.disconnect();
+  }, []);
+
+  function handleClick() {
+    if (busy) return;
+    setBusy(true);
+    onToggle(t, !isDone);
+    // Lockout until the strike anim finishes so rapid double-click doesn't
+    // toggle mid-stroke.
+    window.setTimeout(() => setBusy(false), 600);
   }
 
   const strikePath = useMemo(() => buildStrikePath(rects), [rects]);
 
   return (
     <motion.div
-      initial={{ opacity: 0, x: -4, height: "auto" }}
-      animate={
-        phase === "done"
-          ? { opacity: 0, height: 0, marginTop: 0, marginBottom: 0 }
-          : { opacity: phase === "striking" ? 0.55 : 1, x: 0 }
-      }
-      transition={
-        phase === "done"
-          ? { duration: 0.3, ease: EASE }
-          : { duration: 0.45, delay: index * 0.025, ease: EASE }
-      }
+      initial={{ opacity: 0, x: -4 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ duration: 0.45, delay: index * 0.025, ease: EASE }}
       onClick={handleClick}
       role="button"
       tabIndex={0}
@@ -152,11 +166,22 @@ function TodoItem({
         }
       }}
       className="font-mono min-w-0 cursor-pointer select-none group"
-      style={{ overflow: "hidden" }}
     >
-      <div className="relative text-[12px] text-[var(--fg-0)] leading-snug break-words transition-colors group-hover:text-[var(--fg-1)]">
-        <span ref={textRef}>{trunc(t.text, 90)}</span>
-        {phase === "striking" && rects.length > 0 ? (
+      <div className="relative text-[12px] leading-snug break-words">
+        <motion.span
+          ref={textRef}
+          animate={{
+            color: isDone
+              ? "var(--fg-2)"
+              : "var(--fg-0)",
+            opacity: isDone ? 0.55 : 1,
+          }}
+          transition={{ duration: 0.35, ease: EASE }}
+          style={{ display: "inline" }}
+        >
+          {trunc(t.text, 90)}
+        </motion.span>
+        {rects.length > 0 ? (
           <svg
             className="absolute inset-0 pointer-events-none"
             width={size.w}
@@ -171,9 +196,15 @@ function TodoItem({
               strokeWidth={1.6}
               strokeLinecap="round"
               fill="none"
-              initial={{ pathLength: 0, opacity: 0.9 }}
-              animate={{ pathLength: 1, opacity: 1 }}
-              transition={{ duration: 0.6, ease: [0.22, 0.9, 0.36, 1] }}
+              initial={{ pathLength: 0, opacity: 0 }}
+              animate={{
+                pathLength: isDone ? 1 : 0,
+                opacity: isDone ? 1 : 0,
+              }}
+              transition={{
+                pathLength: { duration: 0.55, ease: [0.22, 0.9, 0.36, 1] },
+                opacity: { duration: 0.25, ease: EASE },
+              }}
               style={{
                 filter: "drop-shadow(0 0 4px rgba(255,160,90,0.45))",
               }}
@@ -198,14 +229,16 @@ function GroupBlock({
   color,
   todos,
   startIndex,
-  onComplete,
+  doneKeys,
+  onToggle,
 }: {
   title: string;
   count: number;
   color: string;
   todos: Todo[];
   startIndex: number;
-  onComplete: (t: Todo) => void;
+  doneKeys: Map<string, string>; // todoId → keyHash
+  onToggle: (t: Todo, next: boolean) => void;
 }) {
   return (
     <div className="space-y-2.5">
@@ -221,16 +254,15 @@ function GroupBlock({
         </span>
       </div>
       <div className="space-y-2.5 pl-3 border-l border-white/[0.06]">
-        <AnimatePresence initial={false}>
-          {todos.map((t, i) => (
-            <TodoItem
-              key={todoId(t)}
-              t={t}
-              index={startIndex + i}
-              onComplete={onComplete}
-            />
-          ))}
-        </AnimatePresence>
+        {todos.map((t, i) => (
+          <TodoItem
+            key={todoId(t)}
+            t={t}
+            index={startIndex + i}
+            isDone={doneKeys.has(todoId(t))}
+            onToggle={onToggle}
+          />
+        ))}
       </div>
     </div>
   );
@@ -240,87 +272,79 @@ export function TodoList() {
   const [data, setData] = useState<TodosResponse | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("category");
-  const [completedKeys, setCompletedKeys] = useState<Set<string>>(new Set());
-  const [doneCount, setDoneCount] = useState(0);
-  const [syncBusy, setSyncBusy] = useState(false);
-  const [syncFlash, setSyncFlash] = useState<string | null>(null);
-
-  async function fetchTodos() {
-    try {
-      const r = await fetch("/api/vault/todos", { credentials: "same-origin" });
-      if (!r.ok) {
-        const body = await r.json().catch(() => ({}));
-        throw new Error(body.error ?? `HTTP ${r.status}`);
-      }
-      const json = (await r.json()) as TodosResponse;
-      setData(json);
-      setDoneCount(json.doneCount ?? 0);
-      setCompletedKeys(new Set());
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    }
-  }
+  // todoId → keyHash. Membership = "currently struck through".
+  const [doneMap, setDoneMap] = useState<Map<string, string>>(new Map());
 
   useEffect(() => {
-    fetchTodos();
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch("/api/vault/todos", {
+          credentials: "same-origin",
+        });
+        if (!r.ok) {
+          const body = await r.json().catch(() => ({}));
+          throw new Error(body.error ?? `HTTP ${r.status}`);
+        }
+        const json = (await r.json()) as TodosResponse;
+        if (cancelled) return;
+        setData(json);
+
+        // Restore strike state: for each visible item, compute its sha1 and
+        // check membership in doneKeys.
+        const keySet = new Set(json.doneKeys ?? []);
+        const next = new Map<string, string>();
+        await Promise.all(
+          json.items.map(async (t) => {
+            const full = await sha1Hex(`${t.file}\n${t.text}`);
+            const k = full.slice(0, 16);
+            if (keySet.has(k)) next.set(todoId(t), k);
+          }),
+        );
+        if (!cancelled) setDoneMap(next);
+      } catch (e) {
+        if (!cancelled) setErr(e instanceof Error ? e.message : String(e));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  function onComplete(t: Todo) {
+  async function onToggle(t: Todo, next: boolean) {
     const id = todoId(t);
-    setCompletedKeys((prev) => {
-      const next = new Set(prev);
-      next.add(id);
-      return next;
+    // Optimistic: flip local state immediately so the SVG animates.
+    setDoneMap((prev) => {
+      const m = new Map(prev);
+      if (next) {
+        // Will be filled with the actual key once sha1 resolves (just below),
+        // but for UI purposes any non-empty value triggers the strike.
+        m.set(id, m.get(id) ?? "pending");
+      } else {
+        m.delete(id);
+      }
+      return m;
     });
-    setDoneCount((c) => c + 1);
-    fetch("/api/vault/todos/complete", {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        file: t.file,
-        lineNum: t.lineNum,
-        text: t.text,
-      }),
-    }).catch(() => {
-      /* swallow — overlay write is best-effort; next reload will rescan */
-    });
-  }
 
-  async function syncToVault() {
-    if (syncBusy || doneCount === 0) return;
-    if (!window.confirm(`同步 ${doneCount} 條完成項寫回 vault .md？`)) return;
-    setSyncBusy(true);
-    setSyncFlash(null);
     try {
-      const r = await fetch("/api/vault/todos/sync", {
-        method: "POST",
+      await fetch("/api/vault/todos/complete", {
+        method: next ? "POST" : "DELETE",
         credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          file: t.file,
+          lineNum: t.lineNum,
+          text: t.text,
+        }),
       });
-      const body = (await r.json()) as {
-        written?: number;
-        skipped?: number;
-        remaining?: number;
-        error?: string;
-      };
-      if (!r.ok || body.error) throw new Error(body.error ?? `HTTP ${r.status}`);
-      setSyncFlash(
-        `寫回 ${body.written ?? 0}，略過 ${body.skipped ?? 0}`,
-      );
-      setDoneCount(body.remaining ?? 0);
-      window.setTimeout(() => setSyncFlash(null), 2400);
-      await fetchTodos();
-    } catch (e) {
-      setSyncFlash(e instanceof Error ? e.message : String(e));
-      window.setTimeout(() => setSyncFlash(null), 3500);
-    } finally {
-      setSyncBusy(false);
+    } catch {
+      /* swallow — visual state already updated; next reload will reconcile */
     }
   }
 
   const grouped = useMemo(() => {
     if (!data) return null;
-    const items = data.items.filter((t) => !completedKeys.has(todoId(t)));
+    const items = data.items;
 
     const byCategory = new Map<string, Todo[]>();
     for (const t of items) {
@@ -339,8 +363,8 @@ export function TodoList() {
     const byUrgency: Record<Urgency, Todo[]> = { high: [], med: [], low: [] };
     for (const t of items) byUrgency[urgencyOf(t.mtimeMs)].push(t);
 
-    return { categories, byUrgency, visibleCount: items.length };
-  }, [data, completedKeys]);
+    return { categories, byUrgency };
+  }, [data]);
 
   if (err) {
     return (
@@ -400,41 +424,9 @@ export function TodoList() {
         >
           <span>{titleText}</span>
           <span style={{ opacity: 0.4 }}>—</span>
-          <span className="tabular-nums">{grouped.visibleCount}</span>
+          <span className="tabular-nums">{data.items.length}</span>
         </button>
-        {/* Sync chip — appears only when there are completed items in the
-            overlay waiting to be written back to vault .md. */}
-        <nav className="flex items-center gap-2">
-          {syncFlash ? (
-            <span
-              className="text-[10px] tracking-[0.18em] uppercase"
-              style={{ color: "rgba(180,200,180,0.85)" }}
-            >
-              {syncFlash}
-            </span>
-          ) : null}
-          {doneCount > 0 ? (
-            <button
-              type="button"
-              onClick={syncToVault}
-              disabled={syncBusy}
-              className="text-[10px] tracking-[0.20em] uppercase font-mono px-2 py-1"
-              style={{
-                color: syncBusy
-                  ? "var(--fg-2)"
-                  : "rgba(255,184,120,0.95)",
-                border: "1px solid rgba(255,184,120,0.35)",
-                borderRadius: 2,
-                background: "rgba(255,184,120,0.04)",
-                cursor: syncBusy ? "wait" : "pointer",
-                transition: "color 200ms, border-color 200ms, background 200ms",
-              }}
-              title={`寫回 ${doneCount} 條完成 TODO 到 vault`}
-            >
-              ⇪ sync · {doneCount}
-            </button>
-          ) : null}
-        </nav>
+        <nav className="flex items-center gap-1" />
       </header>
 
       <div className="flex-1 overflow-y-auto overflow-x-hidden min-w-0 pr-2 -mr-2 hub-scrollbar">
@@ -463,7 +455,8 @@ export function TodoList() {
                     }
                     todos={g.todos.slice(0, 4)}
                     startIndex={startIdx}
-                    onComplete={onComplete}
+                    doneKeys={doneMap}
+                    onToggle={onToggle}
                   />
                 );
               })}
@@ -477,18 +470,17 @@ export function TodoList() {
               transition={{ duration: 0.3, ease: EASE }}
               className="space-y-2.5 pb-6"
             >
-              <AnimatePresence initial={false}>
-                {(["high", "med", "low"] as Urgency[])
-                  .flatMap((u) => grouped.byUrgency[u].slice(0, 8))
-                  .map((t, i) => (
-                    <TodoItem
-                      key={todoId(t)}
-                      t={t}
-                      index={i}
-                      onComplete={onComplete}
-                    />
-                  ))}
-              </AnimatePresence>
+              {(["high", "med", "low"] as Urgency[])
+                .flatMap((u) => grouped.byUrgency[u].slice(0, 8))
+                .map((t, i) => (
+                  <TodoItem
+                    key={todoId(t)}
+                    t={t}
+                    index={i}
+                    isDone={doneMap.has(todoId(t))}
+                    onToggle={onToggle}
+                  />
+                ))}
             </motion.div>
           )}
         </AnimatePresence>
