@@ -406,6 +406,12 @@ export function CandleChart({
   const accent = lastUp ? UP_COLOR : DOWN_COLOR;
   const tickIdxs = pickTickIndices(visible.length, 5);
 
+  // Entry-animation key: changes only when the underlying series is
+  // structurally new (different tf or different start). Live 60s polling
+  // keeps the same length + first-timestamp, so this stays stable and the
+  // candles don't re-animate on every refetch.
+  const seriesKey = `${timeframe}-${candles.length}-${candles[0]?.t ?? 0}`;
+
   return (
     <div
       ref={wrapRef}
@@ -458,6 +464,9 @@ export function CandleChart({
           </text>
         ))}
 
+        {/* Candles — entry-animated via key change on tf/series swap. The
+            seriesKey embeds first-timestamp + length, so live 60s refetches
+            (same range) don't re-trigger the animation, but tf switches do. */}
         {visible.map((c, i) => {
           const up = c.c >= c.o;
           const color = up ? UP_COLOR : DOWN_COLOR;
@@ -469,8 +478,22 @@ export function CandleChart({
           const yClose = yOf(c.c);
           const bodyY = Math.min(yOpen, yClose);
           const bodyH = Math.max(0.8, Math.abs(yOpen - yClose));
+          const delay = (i / Math.max(1, visible.length - 1)) * 0.85;
           return (
-            <g key={`${c.t}-${i}`}>
+            <motion.g
+              key={`${seriesKey}-${c.t}-${i}`}
+              initial={{ opacity: 0, scale: 0.6 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{
+                duration: 0.45,
+                delay,
+                ease: [0.22, 0.9, 0.36, 1],
+              }}
+              style={{
+                transformOrigin: `${x}px ${(yHigh + yLow) / 2}px`,
+                transformBox: "fill-box" as "fill-box",
+              }}
+            >
               <line
                 x1={x}
                 x2={x}
@@ -488,9 +511,53 @@ export function CandleChart({
                 stroke={color}
                 strokeWidth={0.6}
               />
-            </g>
+            </motion.g>
           );
         })}
+
+        {/* Entry scan line — sweeps left→right, glows in the up/down accent.
+            Re-mounts whenever seriesKey changes (initial load + tf switch). */}
+        <motion.g key={`scan-${seriesKey}`} pointerEvents="none">
+          <motion.line
+            initial={{
+              x1: PAD_L,
+              x2: PAD_L,
+              opacity: 0,
+            }}
+            animate={{
+              x1: [PAD_L, PAD_L, width - PAD_R],
+              x2: [PAD_L, PAD_L, width - PAD_R],
+              opacity: [0, 1, 0],
+            }}
+            transition={{
+              duration: 1.2,
+              ease: [0.22, 0.9, 0.36, 1],
+              times: [0, 0.08, 1],
+            }}
+            y1={PAD_T}
+            y2={height - PAD_B}
+            stroke={accent}
+            strokeWidth={1.6}
+            style={{
+              filter: `drop-shadow(0 0 10px ${accent}) drop-shadow(0 0 22px ${accent.replace("0.95", "0.45")})`,
+            }}
+          />
+          {/* Bottom horizon flash — short pulse along the time axis */}
+          <motion.line
+            initial={{ opacity: 0 }}
+            animate={{ opacity: [0, 0.6, 0] }}
+            transition={{ duration: 1.0, times: [0, 0.35, 1], ease: "easeOut" }}
+            x1={PAD_L}
+            x2={width - PAD_R}
+            y1={height - PAD_B + 1}
+            y2={height - PAD_B + 1}
+            stroke={accent}
+            strokeWidth={0.8}
+            style={{
+              filter: `drop-shadow(0 0 6px ${accent.replace("0.95", "0.55")})`,
+            }}
+          />
+        </motion.g>
 
         {tickIdxs.map((idx, i) => {
           const c = visible[idx];

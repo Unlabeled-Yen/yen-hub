@@ -49,24 +49,10 @@ const fmtPct = new Intl.NumberFormat("en-US", {
   signDisplay: "always",
 });
 
-function stateLabel(s: string): string {
-  switch (s) {
-    case "PRE":
-      return "PRE";
-    case "REGULAR":
-      return "OPEN";
-    case "POST":
-    case "POSTPOST":
-      return "AFTER";
-    default:
-      return "CLOSE";
-  }
-}
-
 const TIMEFRAMES: Timeframe[] = ["15m", "2h", "1d"];
 
 export function MarketMonitor() {
-  const [tf, setTf] = useState<Timeframe>("15m");
+  const [tf, setTf] = useState<Timeframe>("1d");
   const [quote, setQuote] = useState<Quote | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -175,26 +161,21 @@ export function MarketMonitor() {
                 );
               })}
             </div>
-            {quote ? (
+            {/* Market state chip removed per user request — CLOSE label was
+                noisy and PRE/OPEN/AFTER add little vs the price itself.
+                Keep just the stale indicator dot when upstream is degraded. */}
+            {quote?.stale ? (
               <span
-                className="text-[9px] tracking-[0.22em] uppercase flex items-center gap-1.5"
-                style={{ color: "var(--fg-2)" }}
-              >
-                {quote.stale ? (
-                  <span
-                    title="stale (upstream rate-limited)"
-                    style={{
-                      display: "inline-block",
-                      width: 6,
-                      height: 6,
-                      borderRadius: 3,
-                      background: "rgba(255,180,80,0.85)",
-                      boxShadow: "0 0 6px rgba(255,180,80,0.5)",
-                    }}
-                  />
-                ) : null}
-                {stateLabel(quote.marketState)}
-              </span>
+                title="stale (upstream rate-limited)"
+                style={{
+                  display: "inline-block",
+                  width: 6,
+                  height: 6,
+                  borderRadius: 3,
+                  background: "rgba(255,180,80,0.85)",
+                  boxShadow: "0 0 6px rgba(255,180,80,0.5)",
+                }}
+              />
             ) : null}
           </div>
         </div>
