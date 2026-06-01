@@ -227,13 +227,11 @@ export function Overview() {
               Wrapped in a subtle vertical-gradient panel so the whole
               attention-pair gets a quiet visual frame. */}
           <div
-            className="grid grid-cols-1 lg:grid-cols-2 gap-x-10 items-start py-16 -mx-8 sm:-mx-12 px-8 sm:px-12"
+            className="grid grid-cols-1 lg:grid-cols-2 gap-x-10 items-start py-4 -mx-8 sm:-mx-12 px-8 sm:px-12"
             style={{
-              // Solid dark slab, bleeding to the page edges horizontally
-              // and fading top/bottom only. Bumped vertical padding from
-              // py-8 → py-16 so the gradient's transparent baseline sits
-              // further outward (more breathing room before / after the
-              // Reading + TODO row).
+              // Slab vertical padding tightened (py-16 → py-4, ~48px
+              // tighter on each side) so Reading content sits closer to
+              // the US30 panel bottom. Gradient stops unchanged.
               background:
                 "linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0.65) 10%, rgba(0,0,0,0.65) 90%, rgba(0,0,0,0) 100%)",
             }}
