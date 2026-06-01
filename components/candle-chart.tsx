@@ -585,6 +585,56 @@ export function CandleChart({
           );
         })}
 
+        {/* Latest-price reference line + label on the right axis.
+            Always visible (independent of hover) — a TradingView-style
+            "current price" indicator. Colored to match up/down accent. */}
+        {(() => {
+          const last = candles[candles.length - 1];
+          if (!last) return null;
+          const y = yOf(last.c);
+          // Skip if off-screen vertically (e.g. user panned the price
+          // viewport far away from latest close).
+          if (y < PAD_T - 4 || y > height - PAD_B + 4) return null;
+          const labelW = 44;
+          const labelH = 14;
+          const labelX = width - PAD_R + 4;
+          const labelY = y - labelH / 2;
+          return (
+            <g pointerEvents="none">
+              <line
+                x1={PAD_L}
+                x2={width - PAD_R}
+                y1={y}
+                y2={y}
+                stroke={accent}
+                strokeWidth={0.8}
+                strokeDasharray="3 3"
+                opacity={0.7}
+              />
+              <rect
+                x={labelX}
+                y={labelY}
+                width={labelW}
+                height={labelH}
+                fill={accent}
+                rx={2}
+              />
+              <text
+                x={labelX + labelW / 2}
+                y={labelY + labelH - 4}
+                fontSize={9.5}
+                fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
+                fill="rgba(10,10,10,0.95)"
+                fontWeight={700}
+                textAnchor="middle"
+                letterSpacing="0.02em"
+              >
+                {fmtPrice(last.c)}
+              </text>
+            </g>
+          );
+        })()}
+
         {hovered && hoverX !== null && hoverY !== null && !dragging ? (
           <g pointerEvents="none">
             <line
