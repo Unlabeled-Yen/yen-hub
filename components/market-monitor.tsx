@@ -85,12 +85,12 @@ export function MarketMonitor() {
   }, [tf]);
 
   const isUp = (quote?.change ?? 0) >= 0;
-  // Up = soft green (Yen liked it earlier); down = cool blue (deliberately
-  // not red). Matches the CandleChart palette.
+  // Up = soft mint green; down = soft amethyst violet. ~140° hue gap so
+  // green/down are unmistakably distinct. Matches the CandleChart palette.
   const accent = isUp
     ? "rgba(120,220,160,0.95)"
-    : "rgba(120,180,230,0.95)";
-  const accentDim = isUp ? "rgba(120,220,160,0.18)" : "rgba(120,180,230,0.18)";
+    : "rgba(180,130,235,0.95)";
+  const accentDim = isUp ? "rgba(120,220,160,0.18)" : "rgba(180,130,235,0.18)";
 
   return (
     <section

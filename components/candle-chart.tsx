@@ -35,13 +35,14 @@ const PAD_R = 56;
 const PAD_T = 8;
 const PAD_B = 22;
 
-// Up = soft green (the one Yen liked earlier in the project).
-// Down = cool blue, intentionally NOT red — pairs warm/cold against the
-// rest of the Yen Hub palette without screaming "loss".
+// Up = soft mint green. Down = soft amethyst violet. Hue gap ~140° on the
+// wheel — max separation that still fits the dark-warm Yen Hub palette.
+// Deliberately no red: violet carries no "loss" baggage and sits visually
+// far from both the green and the warm-cream brand accent.
 const UP_COLOR = "rgba(120,220,160,0.95)";
 const UP_FILL = "rgba(120,220,160,0.75)";
-const DOWN_COLOR = "rgba(120,180,230,0.95)";
-const DOWN_FILL = "rgba(120,180,230,0.75)";
+const DOWN_COLOR = "rgba(180,130,235,0.95)";
+const DOWN_FILL = "rgba(180,130,235,0.75)";
 const GRID = "rgba(255,255,255,0.05)";
 const AXIS_FG = "rgba(180,180,180,0.55)";
 
