@@ -85,12 +85,11 @@ export function MarketMonitor() {
   }, [tf]);
 
   const isUp = (quote?.change ?? 0) >= 0;
-  // Up = soft mint green; down = mustard amber. Classic Bloomberg-style
-  // green/amber pair, no red baggage. Matches the CandleChart palette.
+  // Up = warm orange; down = pale cream-mustard. Matches CandleChart.
   const accent = isUp
-    ? "rgba(120,220,160,0.95)"
-    : "rgba(210,180,90,0.95)";
-  const accentDim = isUp ? "rgba(120,220,160,0.18)" : "rgba(210,180,90,0.18)";
+    ? "rgba(255,170,100,0.95)"
+    : "rgba(235,225,185,0.95)";
+  const accentDim = isUp ? "rgba(255,170,100,0.18)" : "rgba(235,225,185,0.18)";
 
   return (
     <section

@@ -129,9 +129,12 @@ function BookBlock({ b, index }: { b: BookSummary; index: number }) {
         <span
           className="relative flex-1"
           style={{
-            height: 3,
+            // 1.1× of the original 3px — per Yen's tuning. Tiny bump,
+            // makes the bar a touch more present without breaking the
+            // hierarchy with the title/author lines above.
+            height: 3.3,
             background: isReading ? "rgba(255,255,255,0.06)" : "transparent",
-            borderRadius: 1.5,
+            borderRadius: 1.65,
             overflow: "hidden",
           }}
         >
