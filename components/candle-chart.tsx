@@ -263,7 +263,7 @@ export function CandleChart({
   }, [revealActive, isInitialReveal, seriesKey]);
   // Pen-draw ends after the stroke completes — lines stay rendered as
   // plain paths afterwards (no motion overhead during zoom/pan).
-  const PEN_DRAW_DUR = 1.5; // seconds — faster than the K reveal (~3.5s)
+  const PEN_DRAW_DUR = 2.8; // seconds — leisurely "ink stroke" pacing
   useEffect(() => {
     if (!penDrawActive) return;
     const t = window.setTimeout(
@@ -1212,21 +1212,7 @@ export function CandleChart({
         </motion.div>
       ) : null}
 
-      <div
-        style={{
-          position: "absolute",
-          bottom: 4,
-          right: PAD_R + 8,
-          fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-          fontSize: 8,
-          letterSpacing: "0.18em",
-          color: AXIS_FG,
-          opacity: 0.5,
-          pointerEvents: "none",
-        }}
-      >
-        WHEEL: K SPACING · DRAG: PAN · RIGHT-AXIS ↑↓: HEIGHT · 2×CLICK RESET
-      </div>
+      {/* Interaction-hint chip removed per spec — keep the chart clean. */}
     </div>
   );
 }

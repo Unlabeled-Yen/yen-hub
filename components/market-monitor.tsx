@@ -103,22 +103,22 @@ export function MarketMonitor() {
         <span style={{ opacity: 0.6 }}>US30 · VIX · 波動率</span>
       </header>
 
-      {/* Panel + vertical tf-tab strip sit side by side. Tabs live
-          OUTSIDE the panel border per spec — visually attached but not
-          inside the card. */}
-      <div className="relative flex-1 flex" style={{ gap: 8, minHeight: 360 }}>
+      {/* Panel takes the full width of the section. The tf tab strip
+          is positioned ABSOLUTELY outside the panel's right edge (see
+          below) so it visually sits next to the card without stealing
+          flex space — the US30 area keeps its full width. */}
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ duration: 0.6, delay: 0.45, ease: EASE }}
         className="relative flex-1 flex flex-col"
         style={{
+          minHeight: 360,
           borderRadius: 6,
           border: `1px solid ${accentDim}`,
           background: `linear-gradient(180deg, ${accent.replace("0.95", "0.04")} 0%, transparent 100%)`,
           padding: "20px 22px",
           gap: 12,
-          minWidth: 0,
         }}
       >
         {/* Top row: symbol + state + timeframe switcher */}
@@ -241,55 +241,61 @@ export function MarketMonitor() {
             待接
           </span>
         </div>
+        {/* Tab strip — absolutely positioned so it sits OUTSIDE the
+            panel's right border (left = 100% + small gap). Doesn't
+            consume any flex/grid space, so the US30 panel keeps its
+            full width. Single-letter labels D / H / M for compactness.
+            top: aligned just below the price row so the strip lines up
+            with the chart area. */}
+        <nav
+          aria-label="timeframe"
+          style={{
+            position: "absolute",
+            left: "calc(100% + 6px)",
+            top: 96,
+            width: 28,
+            display: "flex",
+            flexDirection: "column",
+            gap: 4,
+            zIndex: 2,
+          }}
+        >
+          {TIMEFRAMES.map((t) => {
+            const active = t === tf;
+            const letter = t === "1d" ? "D" : t === "2h" ? "H" : "M";
+            return (
+              <button
+                key={t}
+                type="button"
+                onClick={() => setTf(t)}
+                className="font-mono"
+                style={{
+                  width: 28,
+                  height: 24,
+                  fontSize: 11,
+                  letterSpacing: "0.04em",
+                  textAlign: "center",
+                  color: active ? "var(--fg-0)" : "var(--fg-2)",
+                  background: active
+                    ? "rgba(255,184,120,0.10)"
+                    : "rgba(0,0,0,0.35)",
+                  border: "1px solid",
+                  borderColor: active
+                    ? "rgba(255,184,120,0.40)"
+                    : "rgba(255,255,255,0.08)",
+                  borderRadius: 3,
+                  cursor: "pointer",
+                  transition:
+                    "color 200ms, background 200ms, border-color 200ms",
+                }}
+                title={t}
+              >
+                {letter}
+              </button>
+            );
+          })}
+        </nav>
       </motion.div>
-      {/* Vertical tf tabs outside the panel. Aligned to chart-area row
-          (top of panel is ~58px of header+price content before the
-          chart starts), so the tab strip starts near the chart's top. */}
-      <nav
-        aria-label="timeframe"
-        style={{
-          width: 38,
-          display: "flex",
-          flexDirection: "column",
-          gap: 4,
-          paddingTop: 84,
-          flexShrink: 0,
-        }}
-      >
-        {TIMEFRAMES.map((t) => {
-          const active = t === tf;
-          return (
-            <button
-              key={t}
-              type="button"
-              onClick={() => setTf(t)}
-              className="font-mono"
-              style={{
-                padding: "9px 0",
-                fontSize: 10,
-                letterSpacing: "0.16em",
-                textTransform: "uppercase",
-                color: active ? "var(--fg-0)" : "var(--fg-2)",
-                background: active
-                  ? "rgba(255,184,120,0.10)"
-                  : "transparent",
-                border: "1px solid",
-                borderColor: active
-                  ? "rgba(255,184,120,0.35)"
-                  : "rgba(255,255,255,0.06)",
-                borderRadius: 3,
-                cursor: "pointer",
-                transition:
-                  "color 200ms, background 200ms, border-color 200ms",
-              }}
-              title={t}
-            >
-              {t.toUpperCase()}
-            </button>
-          );
-        })}
-      </nav>
-      </div>
     </section>
   );
 }
