@@ -64,6 +64,14 @@ export function CommandPalette() {
   const [collapsed, setCollapsed] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const [holding, setHolding] = useState(false);
+  // userExpanded: the user has pressed the expand toggle. Overrides the
+  // default "show last ~3 lines" cap and pushes backdrop opacity up.
+  const [userExpanded, setUserExpanded] = useState(false);
+  // Reset the expand state every time the palette fully closes so the
+  // next summon starts compact.
+  useEffect(() => {
+    if (!open) setUserExpanded(false);
+  }, [open]);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -260,17 +268,62 @@ export function CommandPalette() {
         }
       }}
       style={{
-        // Light backdrop tint + blur so panels behind soften when the
-        // palette is open. Fades in/out with the palette itself so the
-        // transition feels of-a-piece.
-        background: leaving ? "rgba(0,0,0,0)" : "rgba(0,0,0,0.18)",
-        backdropFilter: leaving ? "blur(0px)" : "blur(6px) saturate(0.9)",
+        // Stronger blur + deeper tint than before. When the user
+        // pushes the chat to fully-expanded mode the tint bumps up
+        // again so the conversation reads on top of an even quieter
+        // backdrop.
+        background: leaving
+          ? "rgba(0,0,0,0)"
+          : userExpanded
+            ? "rgba(0,0,0,0.50)"
+            : "rgba(0,0,0,0.28)",
+        backdropFilter: leaving
+          ? "blur(0px)"
+          : userExpanded
+            ? "blur(22px) saturate(0.6)"
+            : "blur(14px) saturate(0.8)",
         WebkitBackdropFilter: leaving
           ? "blur(0px)"
-          : "blur(6px) saturate(0.9)",
+          : userExpanded
+            ? "blur(22px) saturate(0.6)"
+            : "blur(14px) saturate(0.8)",
         transition: `background ${FADE_MS}ms ease-out, backdrop-filter ${FADE_MS}ms ease-out, -webkit-backdrop-filter ${FADE_MS}ms ease-out`,
       }}
     >
+      {/* Noise texture overlay — gives the blurred backdrop a subtle
+          film-grain so the surface feels like glass, not a flat tint.
+          SVG turbulence is pixel-density independent; mix-blend-mode
+          overlay keeps it from washing out the underlying colours. */}
+      <svg
+        aria-hidden
+        style={{
+          position: "absolute",
+          inset: 0,
+          width: "100%",
+          height: "100%",
+          pointerEvents: "none",
+          opacity: leaving ? 0 : 0.085,
+          mixBlendMode: "overlay",
+          transition: `opacity ${FADE_MS}ms ease-out`,
+        }}
+        preserveAspectRatio="none"
+      >
+        <defs>
+          <filter id="palette-noise">
+            <feTurbulence
+              type="fractalNoise"
+              baseFrequency="0.9"
+              numOctaves="2"
+              seed="3"
+              stitchTiles="stitch"
+            />
+            <feColorMatrix
+              values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.6 0"
+            />
+          </filter>
+        </defs>
+        <rect width="100%" height="100%" filter="url(#palette-noise)" />
+      </svg>
       {/* Draggable, fading column. Positioned dead-center of the window
           via left/top 50% + translate(-50%, -50%). User drag can offset
           from there. */}
@@ -327,9 +380,18 @@ export function CommandPalette() {
             className="pointer-events-auto mb-6"
             initial={false}
             animate={{
-              maxHeight: collapsed ? 36 : "42vh",
+              // Three states:
+              //   collapsed (idle) → 36px peek
+              //   userExpanded   → 60vh full
+              //   default        → 96px (~3 lines of conversation text;
+              //                    grows naturally with content up to cap)
+              maxHeight: collapsed
+                ? 36
+                : userExpanded
+                  ? "60vh"
+                  : 96,
             }}
-            transition={{ duration: 2.5, ease: [0.22, 1, 0.36, 1] }}
+            transition={{ duration: collapsed || userExpanded ? 2.5 : 0.45, ease: [0.22, 1, 0.36, 1] }}
             style={{
               overflowY: collapsed ? "hidden" : "auto",
               overflowX: "hidden",
@@ -383,6 +445,45 @@ export function CommandPalette() {
             rows={1}
             className="flex-1 resize-none bg-transparent text-[16px] leading-relaxed text-[var(--fg-0)] placeholder:text-[var(--fg-3)] focus:outline-none"
           />
+          {/* Expand toggle — only meaningful once there's conversation
+              to look at. Press to fully unroll the message log; press
+              again to return to the compact 3-line view. */}
+          {messages.length > 0 ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                bump();
+                setUserExpanded((v) => !v);
+              }}
+              title={userExpanded ? "收回對話" : "展開對話"}
+              aria-label={userExpanded ? "collapse chat" : "expand chat"}
+              style={{
+                marginBottom: 4,
+                width: 24,
+                height: 24,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 14,
+                color: userExpanded
+                  ? "rgba(255,184,120,0.95)"
+                  : "var(--fg-2)",
+                background: "transparent",
+                border: "1px solid",
+                borderColor: userExpanded
+                  ? "rgba(255,184,120,0.40)"
+                  : "rgba(255,255,255,0.08)",
+                borderRadius: 4,
+                cursor: "pointer",
+                transition:
+                  "color 200ms, background 200ms, border-color 200ms",
+                lineHeight: 1,
+              }}
+            >
+              {userExpanded ? "⌃" : "⌄"}
+            </button>
+          ) : null}
         </div>
 
         {/* Hairline pulse under the input while streaming. */}
