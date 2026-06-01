@@ -413,7 +413,7 @@ export function TodoList() {
     //   baseline 500ms + 12*120ms = 1940ms + 700ms fade = 2.64s.
     // Add buffer; after flip, newly-mounted items (tab switch) render
     // instantly.
-    const id = window.setTimeout(() => setEntryPhase(false), 10_000);
+    const id = window.setTimeout(() => setEntryPhase(false), 15_000);
     return () => window.clearTimeout(id);
   }, [data, keysReady]);
 
