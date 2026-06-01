@@ -134,37 +134,8 @@ export function MarketMonitor() {
             </span>
           </div>
           <div className="flex items-center gap-3">
-            {/* Timeframe tabs */}
-            <div className="flex items-center gap-0.5">
-              {TIMEFRAMES.map((t) => {
-                const active = t === tf;
-                return (
-                  <button
-                    key={t}
-                    type="button"
-                    onClick={() => setTf(t)}
-                    className="text-[10px] tracking-[0.18em] uppercase px-2 py-0.5 transition-colors"
-                    style={{
-                      color: active ? "var(--fg-0)" : "var(--fg-2)",
-                      background: active
-                        ? "rgba(255,184,120,0.10)"
-                        : "transparent",
-                      border: "1px solid",
-                      borderColor: active
-                        ? "rgba(255,184,120,0.35)"
-                        : "rgba(255,255,255,0.05)",
-                      borderRadius: 2,
-                      cursor: "pointer",
-                    }}
-                  >
-                    {t}
-                  </button>
-                );
-              })}
-            </div>
-            {/* Market state chip removed per user request — CLOSE label was
-                noisy and PRE/OPEN/AFTER add little vs the price itself.
-                Keep just the stale indicator dot when upstream is degraded. */}
+            {/* Timeframe tabs moved into a vertical strip alongside the
+                chart below — keep just the stale indicator here. */}
             {quote?.stale ? (
               <span
                 title="stale (upstream rate-limited)"
@@ -216,22 +187,70 @@ export function MarketMonitor() {
           </div>
         </div>
 
-        {/* Candle chart — flex-grow to fill remaining space */}
-        <div className="flex-1 min-h-0 flex flex-col">
-          {quote && quote.candles.length > 0 ? (
-            <CandleChart
-              candles={quote.candles}
-              timeframe={quote.timeframe}
-              height={200}
-            />
-          ) : (
-            <div
-              className="flex-1 flex items-center justify-center text-[10px] tracking-[0.28em] uppercase"
-              style={{ color: "var(--fg-2)", opacity: 0.55 }}
-            >
-              {err ? `error · ${err}` : "loading"}
-            </div>
-          )}
+        {/* Chart + vertical timeframe tab strip on the right. The chart
+            takes flex-1 so it absorbs window width; the tab strip is a
+            fixed slim column hosting 15M / 2H / 1D buttons stacked. */}
+        <div className="flex-1 min-h-0 flex" style={{ gap: 8 }}>
+          <div className="min-w-0 flex-1 flex flex-col">
+            {quote && quote.candles.length > 0 ? (
+              <CandleChart
+                candles={quote.candles}
+                timeframe={quote.timeframe}
+                height={200}
+              />
+            ) : (
+              <div
+                className="flex-1 flex items-center justify-center text-[10px] tracking-[0.28em] uppercase"
+                style={{ color: "var(--fg-2)", opacity: 0.55 }}
+              >
+                {err ? `error · ${err}` : "loading"}
+              </div>
+            )}
+          </div>
+          <nav
+            aria-label="timeframe"
+            style={{
+              width: 38,
+              display: "flex",
+              flexDirection: "column",
+              gap: 4,
+              paddingTop: 2,
+              flexShrink: 0,
+            }}
+          >
+            {TIMEFRAMES.map((t) => {
+              const active = t === tf;
+              return (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setTf(t)}
+                  className="font-mono"
+                  style={{
+                    padding: "8px 0",
+                    fontSize: 10,
+                    letterSpacing: "0.16em",
+                    textTransform: "uppercase",
+                    color: active ? "var(--fg-0)" : "var(--fg-2)",
+                    background: active
+                      ? "rgba(255,184,120,0.10)"
+                      : "transparent",
+                    border: "1px solid",
+                    borderColor: active
+                      ? "rgba(255,184,120,0.35)"
+                      : "rgba(255,255,255,0.05)",
+                    borderRadius: 3,
+                    cursor: "pointer",
+                    transition:
+                      "color 200ms, background 200ms, border-color 200ms",
+                  }}
+                  title={t}
+                >
+                  {t.toUpperCase()}
+                </button>
+              );
+            })}
+          </nav>
         </div>
 
         <div

@@ -61,9 +61,14 @@ const ATR_H = 42; // pane height in px
 const ATR_GAP = 6; // gap between candle plot and ATR pane
 const ATR_PERIOD = 14;
 
-// Moving average overlay on the candle pane.
-const MA_PERIOD = 20;
-const MA_COLOR = "rgba(140,200,235,0.9)"; // cool blue — contrasts warm K
+// Moving averages — three SMAs in graduated green shades, light → dark
+// matching short → long period. The deepest green is the original "up"
+// green from earlier in the project.
+const MA_SERIES: Array<{ period: number; color: string }> = [
+  { period: 5, color: "rgba(210,250,225,0.85)" }, // lightest, near-white green
+  { period: 10, color: "rgba(160,235,190,0.9)" }, // mid
+  { period: 20, color: "rgba(110,210,150,0.95)" }, // darkest — anchor
+];
 
 const INITIAL_DUR = 0.85;
 const INITIAL_STAGGER_TOTAL = 2.6;
@@ -591,43 +596,50 @@ export function CandleChart({
       ? atrValues[hoverGlobalIdx]
       : null;
 
-  // MA20 — SMA of close prices, rolling 20-bar window.
-  const ma20Values = useMemo<Array<number | null>>(() => {
+  // MAs — for each series in MA_SERIES, compute the rolling SMA over its
+  // period. Output is parallel to MA_SERIES: same indices, same colors.
+  const maValues = useMemo<Array<Array<number | null>>>(() => {
     const N = candles.length;
-    if (N === 0) return [];
-    const out: Array<number | null> = new Array(N).fill(null);
-    let sum = 0;
-    for (let i = 0; i < N; i++) {
-      sum += candles[i].c;
-      if (i >= MA_PERIOD) sum -= candles[i - MA_PERIOD].c;
-      if (i >= MA_PERIOD - 1) out[i] = sum / MA_PERIOD;
-    }
-    return out;
+    return MA_SERIES.map(({ period }) => {
+      if (N === 0) return [] as Array<number | null>;
+      const out: Array<number | null> = new Array(N).fill(null);
+      let sum = 0;
+      for (let i = 0; i < N; i++) {
+        sum += candles[i].c;
+        if (i >= period) sum -= candles[i - period].c;
+        if (i >= period - 1) out[i] = sum / period;
+      }
+      return out;
+    });
   }, [candles]);
 
-  const ma20Path = useMemo(() => {
-    const parts: string[] = [];
-    let started = false;
-    for (let i = 0; i < ma20Values.length; i++) {
-      const v = ma20Values[i];
-      if (v === null) continue;
-      const x = xOf(i);
-      // Off-screen horizontally → break the polyline at the gap.
-      if (x < PAD_L - candleWidth * 2 || x > width - PAD_R + candleWidth * 2) {
-        started = false;
-        continue;
+  const maPaths = useMemo(() => {
+    return maValues.map((values) => {
+      const parts: string[] = [];
+      let started = false;
+      for (let i = 0; i < values.length; i++) {
+        const v = values[i];
+        if (v === null) continue;
+        const x = xOf(i);
+        if (x < PAD_L - candleWidth * 2 || x > width - PAD_R + candleWidth * 2) {
+          started = false;
+          continue;
+        }
+        const y = yOf(v);
+        parts.push(`${started ? "L" : "M"} ${x.toFixed(2)} ${y.toFixed(2)}`);
+        started = true;
       }
-      const y = yOf(v);
-      parts.push(`${started ? "L" : "M"} ${x.toFixed(2)} ${y.toFixed(2)}`);
-      started = true;
-    }
-    return parts.join(" ");
-  }, [ma20Values, xOf, yOf, candleWidth, width]);
+      return parts.join(" ");
+    });
+  }, [maValues, xOf, yOf, candleWidth, width]);
 
-  const hoveredMA =
-    hoverGlobalIdx !== null && hoverGlobalIdx < ma20Values.length
-      ? ma20Values[hoverGlobalIdx]
-      : null;
+  // Hover values per MA series (null where the rolling window isn't yet
+  // satisfied for that period at the hovered index).
+  const hoveredMAs = maValues.map((vs) =>
+    hoverGlobalIdx !== null && hoverGlobalIdx < vs.length
+      ? vs[hoverGlobalIdx]
+      : null,
+  );
 
   if (candles.length === 0) {
     return (
@@ -731,50 +743,40 @@ export function CandleChart({
           );
         })}
 
-        {/* MA(20) overlay — SMA of close prices over the last 20 bars.
-            Clipped to the candle plot so the line never bleeds into the
-            ATR pane or right axis during pan. Drawn before the latest-
-            price line so the price ribbon sits visually on top. */}
-        {ma20Path ? (
-          <g pointerEvents="none" clipPath="url(#candle-plot-clip)">
-            <path
-              d={ma20Path}
-              fill="none"
-              stroke={MA_COLOR}
-              strokeWidth={1.25}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-            {/* Hover marker — small dot on the MA line at the hovered bar */}
-            {hoveredMA !== null &&
-            hoverGlobalIdx !== null &&
-            !dragging ? (
-              <circle
-                cx={xOf(hoverGlobalIdx)}
-                cy={yOf(hoveredMA)}
-                r={2.4}
-                fill={MA_COLOR}
-                stroke="rgba(0,0,0,0.6)"
-                strokeWidth={0.5}
+        {/* MA overlays — three SMAs (period 5/10/20) in graduated green
+            shades. Clipped to the candle plot so lines never bleed into
+            the ATR pane or right axis during pan. */}
+        <g pointerEvents="none" clipPath="url(#candle-plot-clip)">
+          {maPaths.map((d, si) =>
+            d ? (
+              <path
+                key={`ma-${MA_SERIES[si].period}`}
+                d={d}
+                fill="none"
+                stroke={MA_SERIES[si].color}
+                strokeWidth={si === MA_SERIES.length - 1 ? 1.35 : 1.05}
+                strokeLinecap="round"
+                strokeLinejoin="round"
               />
-            ) : null}
-          </g>
-        ) : null}
-        {/* MA legend chip — bottom-left of the candle pane */}
-        {ma20Path ? (
-          <text
-            x={PAD_L + 2}
-            y={PAD_T + plotH - 4}
-            fontSize={8.5}
-            fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
-            fill={MA_COLOR}
-            letterSpacing="0.18em"
-            fontWeight={500}
-            pointerEvents="none"
-          >
-            MA(20)
-          </text>
-        ) : null}
+            ) : null,
+          )}
+          {/* Hover markers on each MA line */}
+          {hoverGlobalIdx !== null && !dragging
+            ? hoveredMAs.map((v, si) =>
+                v !== null ? (
+                  <circle
+                    key={`ma-mark-${MA_SERIES[si].period}`}
+                    cx={xOf(hoverGlobalIdx)}
+                    cy={yOf(v)}
+                    r={2.2}
+                    fill={MA_SERIES[si].color}
+                    stroke="rgba(0,0,0,0.6)"
+                    strokeWidth={0.5}
+                  />
+                ) : null,
+              )
+            : null}
+        </g>
 
         {/* Latest-price reference line + label on the right axis.
             Always visible (independent of hover) — a TradingView-style
@@ -1118,57 +1120,9 @@ export function CandleChart({
         })}
       </div>
 
-      {hovered && !dragging ? (
-        <div
-          style={{
-            position: "absolute",
-            top: 4,
-            left: 12,
-            display: "flex",
-            gap: 12,
-            fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-            fontSize: 10,
-            letterSpacing: "0.06em",
-            color: "var(--fg-1)",
-            background: "rgba(0,0,0,0.5)",
-            backdropFilter: "blur(4px)",
-            padding: "3px 8px",
-            borderRadius: 3,
-            border: "1px solid rgba(255,255,255,0.06)",
-            pointerEvents: "none",
-            whiteSpace: "nowrap",
-          }}
-        >
-          <span style={{ color: "var(--fg-0)", fontWeight: 600 }}>
-            {fmtCandleTime(hovered.t, timeframe, true)}
-          </span>
-          <span>
-            <span style={{ opacity: 0.55 }}>O</span> {fmtPrice(hovered.o)}
-          </span>
-          <span>
-            <span style={{ opacity: 0.55 }}>H</span> {fmtPrice(hovered.h)}
-          </span>
-          <span>
-            <span style={{ opacity: 0.55 }}>L</span> {fmtPrice(hovered.l)}
-          </span>
-          <span style={{ color: hovered.c >= hovered.o ? UP_COLOR : DOWN_COLOR }}>
-            <span style={{ opacity: 0.55, color: "var(--fg-1)" }}>C</span>{" "}
-            {fmtPrice(hovered.c)}
-          </span>
-          {hoveredMA !== null ? (
-            <span style={{ color: MA_COLOR }}>
-              <span style={{ opacity: 0.55, color: "var(--fg-1)" }}>MA20</span>{" "}
-              {fmtPrice(hoveredMA)}
-            </span>
-          ) : null}
-          {hoveredATR !== null ? (
-            <span style={{ color: "rgba(255,170,100,0.95)" }}>
-              <span style={{ opacity: 0.55, color: "var(--fg-1)" }}>ATR</span>{" "}
-              {fmtPrice(hoveredATR)}
-            </span>
-          ) : null}
-        </div>
-      ) : null}
+      {/* Top-left OHLC info strip removed per spec — hover info still
+          surfaces via the deep-hover pill and the right-axis price /
+          MA / ATR markers. */}
 
       {hovered && deepHover && hoverPos && !dragging ? (
         <motion.div
