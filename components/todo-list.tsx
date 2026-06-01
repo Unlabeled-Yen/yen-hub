@@ -115,13 +115,12 @@ const T_END = 3.5;
 // (TypewriterText removed — Yen cancelled the typewriter effect; all
 // item texts now use the same simple opacity fade-in as days-ago.)
 
-// Slowed further per Yen — last bump felt almost imperceptible. The
-// biggest perceived "fast" was the per-item fade duration; bumping
-// that and the stagger so each item is clearly its own beat.
-const FADE_BASELINE_MS = 800;
-const FADE_STAGGER_MS = 300;
+// Yen prefers short fade + long stagger — each item snaps in
+// individually but with a clear gap between items, not a slow blur.
+const FADE_BASELINE_MS = 400;
+const FADE_STAGGER_MS = 550;
 const STAGGER_CAP = 15;
-const FADE_DUR = 2.0;
+const FADE_DUR = 0.35;
 
 function TodoItem({
   t,
@@ -209,7 +208,7 @@ function TodoItem({
   const cappedI = Math.min(index, STAGGER_CAP);
   const overflowI = Math.max(0, index - STAGGER_CAP);
   const itemBase =
-    FADE_BASELINE_MS + cappedI * FADE_STAGGER_MS + overflowI * 50;
+    FADE_BASELINE_MS + cappedI * FADE_STAGGER_MS + overflowI * 80;
   const bodyText = trunc(t.text, 90);
   const fileText = fileName(t.file);
   const daysText = dayLabel(t.mtimeMs);
