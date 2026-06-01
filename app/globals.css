@@ -18,9 +18,10 @@
      semi-transparent (and adjustable via window-controls). 1 = opaque.
      User-controlled at runtime via localStorage `yen-hub:bg-alpha`. */
   /* Fixed transparency — locked per Yen's call. No runtime adjuster.
-     Bumped from 0.60 → 0.78 so the back-most layer (page tint behind
-     panels & frost) reads less see-through against the desktop. */
-  --bg-alpha: 0.78;
+     Tuned to 0.65 — sits between original 0.60 and the 0.78 over-pass;
+     enough body to mask the desktop content but still keeps the
+     translucent layered-glass feel. */
+  --bg-alpha: 0.65;
   --card-alpha: 0.75;
 
   /* Foregrounds (4 階) — bumped for higher dark-mode contrast */

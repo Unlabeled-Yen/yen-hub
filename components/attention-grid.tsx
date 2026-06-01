@@ -236,13 +236,19 @@ function ZoneColumn({
         {!inactive ? (
           <>
             {/* Drawing pen — bright glowing line that scans upward, the
-                "ink tip" that traces the bar's height. Leads the fill by
-                a beat; fades when it reaches its endpoint. */}
+                "ink tip" tracing the bar's height. Uses transform
+                (translateY) instead of `bottom: %`: the previous
+                percentage-bottom animation hit layout reflow every frame
+                plus the heavy box-shadow had to repaint, which caused
+                visible flicker. Transform is GPU-accelerated and stable. */}
             <motion.div
-              initial={{ bottom: "0%", opacity: 0 }}
-              animate={{ bottom: barPct, opacity: [0, 1, 1, 0] }}
+              initial={{ y: 0, opacity: 0 }}
+              animate={{
+                y: -(barValue / scaleMax) * COL_H,
+                opacity: [0, 1, 1, 0],
+              }}
               transition={{
-                bottom: { duration: BAR_DUR, ease: "linear", delay },
+                y: { duration: BAR_DUR, ease: "linear", delay },
                 opacity: {
                   duration: BAR_DUR,
                   delay,
@@ -254,11 +260,12 @@ function ZoneColumn({
                 position: "absolute",
                 left: -1,
                 right: -1,
+                bottom: 0,
                 height: 1.5,
                 background: penColor(sev),
                 boxShadow: `0 0 6px ${penColor(sev)}, 0 0 14px ${penColor(sev)}`,
                 borderRadius: 1,
-                willChange: "bottom, opacity",
+                willChange: "transform, opacity",
                 zIndex: 2,
                 pointerEvents: "none",
               }}
