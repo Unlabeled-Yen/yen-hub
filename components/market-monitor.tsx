@@ -15,7 +15,6 @@
 import { motion } from "motion/react";
 import { useEffect, useState } from "react";
 import { CandleChart, type Candle } from "./candle-chart";
-import { WorldClock } from "./world-clock";
 
 const EASE: [number, number, number, number] = [0.075, 0.82, 0.165, 1];
 
@@ -123,17 +122,10 @@ export function MarketMonitor() {
       aria-label="market monitor"
       data-tauri-drag-region
     >
-      {/* NY clock floats ABOVE the section via absolute positioning, so
-          it doesn't add a row to the flex flow. The panel top can then
-          align with AttentionGrid's chart top (both share row-top via
-          items-stretch). Scrolls with the page because the parent
-          section is in normal flow. */}
-      <div
-        className="absolute right-0 flex"
-        style={{ top: -22 }}
-      >
-        <WorldClock />
-      </div>
+      {/* NY clock used to mount here at top:-22, but the parent `main`
+          has `overflow-y-auto` which clips any child positioned above
+          y=0. Moved out to overview's outer flex container (which is
+          NOT a scroll container) so it can't be clipped. */}
       <header className="flex items-center gap-3 text-[11px] tracking-[0.30em] uppercase text-[var(--fg-2)] mb-4 flex-shrink-0">
         <span>Market</span>
         <span style={{ opacity: 0.4 }}>—</span>

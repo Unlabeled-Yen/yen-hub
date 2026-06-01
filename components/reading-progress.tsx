@@ -56,11 +56,14 @@ function BookBlock({ b, index }: { b: BookSummary; index: number }) {
   const { author, title } = fromServer ?? parseBook(b.name);
   const pct = b.chapters === 0 ? 0 : b.openedChapters / b.chapters;
   const pctLabel = `${Math.round(pct * 100)}%`;
-  // Base offset shifts so the LAST book's progress bar (index 7) ends
-  // at the global entry T_END=3.5s.
-  // book bar end = (base + i*0.06) + 0.25 (bar lead) + 2.2 (bar dur)
-  // For i=7: 0.63 + 0.42 + 0.25 + 2.2 = 3.50 ✓
-  const delay = 0.63 + index * 0.06;
+  // New choreography: cube spins to settle by t=1.0s, then book article
+  // fade-ins stagger, then progress bars draw — all chained so the last
+  // bar ends at the global T_END = 3.5s.
+  // article fade-in delay  = 1.0 + i * 0.04
+  // bar starts at delay + 0.22 (lead)
+  // bar dur = 2.0
+  // For i=7: 1.0 + 0.28 + 0.22 + 2.0 = 3.50 ✓
+  const delay = 1.0 + index * 0.04;
 
   // Three visual states:
   //   reading: opened > 0 chapters → full brightness, teal progress
@@ -146,7 +149,7 @@ function BookBlock({ b, index }: { b: BookSummary; index: number }) {
             <motion.span
               initial={{ width: 0 }}
               animate={{ width: `${Math.max(2, pct * 100)}%` }}
-              transition={{ duration: 2.2, ease: EASE, delay: delay + 0.25 }}
+              transition={{ duration: 2.0, ease: EASE, delay: delay + 0.22 }}
               style={{
                 display: "block",
                 height: "100%",
@@ -212,6 +215,15 @@ function ReadingCube({ data }: { data: AttentionResponse }) {
   // ref so it doesn't need to re-bind every render. Updated by an effect
   // below once we compute the real page array.
   const populatedRef = useRef(1);
+  // Entrance flag — true during the first ~1.0s while the cube spins
+  // into position. While true, the rotation transition uses a fast
+  // ease-out (the "settle"); after, future face changes use the slower
+  // user-driven rotation curve.
+  const [entered, setEntered] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setEntered(true), 1050);
+    return () => clearTimeout(t);
+  }, []);
   const [size, setSize] = useState<{ w: number; h: number }>({ w: 470, h: 360 });
   const [face, setFace] = useState(0);
 
@@ -327,8 +339,17 @@ function ReadingCube({ data }: { data: AttentionResponse }) {
           }}
         >
           <motion.div
+            // Entrance: cube starts spun 270° away (3/4 turn) and settles
+            // to the active face in ~1.0s — fast snap with overshoot-free
+            // ease-out. After `entered`, future face changes use the
+            // slower user-driven rotation curve.
+            initial={{ rotateY: 270 }}
             animate={{ rotateY: -face * 90 }}
-            transition={{ duration: ROTATION_DURATION, ease: [0.65, 0, 0.35, 1] }}
+            transition={
+              entered
+                ? { duration: ROTATION_DURATION, ease: [0.65, 0, 0.35, 1] }
+                : { duration: 1.0, ease: [0.16, 1, 0.3, 1] }
+            }
             style={{
               position: "absolute",
               inset: 0,
@@ -374,36 +395,8 @@ function ReadingCube({ data }: { data: AttentionResponse }) {
         </div>
       </div>
 
-      {/* Face indicator dots — only for populated pages. "20/20" tally
-          removed per spec; the header counter (1/3) already conveys
-          position. */}
-      <div className="flex-shrink-0 flex items-center justify-center gap-2 mt-4">
-        {pages.slice(0, populatedPageCount).map((_, i) => (
-          <button
-            key={i}
-            type="button"
-            onClick={() => setFace(i)}
-            aria-label={`第 ${i + 1} 面`}
-            style={{
-              width: 6,
-              height: 6,
-              borderRadius: 999,
-              background:
-                i === face
-                  ? "rgba(255,184,120,0.85)"
-                  : "rgba(255,255,255,0.15)",
-              boxShadow:
-                i === face
-                  ? "0 0 6px rgba(255,184,120,0.55)"
-                  : "none",
-              border: "none",
-              cursor: "pointer",
-              transition: "background 280ms, box-shadow 280ms",
-              padding: 0,
-            }}
-          />
-        ))}
-      </div>
+      {/* Face indicator dots removed per spec — header counter (1/3) is
+          the sole position indicator. */}
     </section>
   );
 }

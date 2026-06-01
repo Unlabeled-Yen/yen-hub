@@ -107,12 +107,18 @@ function buildStrikePath(rects: LineRect[]): string {
 
 type ClickMode = "strike" | "promote" | "none";
 
+// Global entry sync target — every panel's intro ends at T_END seconds.
+// Reading cube (3.50) and AttentionGrid pen (3.50) all converge here so
+// the page reads as one breath instead of three separate openings.
+const T_END = 3.5;
+
 function TodoItem({
   t,
   index,
   isDone,
   isPriority,
   clickMode,
+  entryPhase,
   onToggleDone,
   onTogglePriority,
 }: {
@@ -121,6 +127,12 @@ function TodoItem({
   isDone: boolean;
   isPriority: boolean;
   clickMode: ClickMode;
+  // True only during the page's first ~T_END seconds. When true, each
+  // item types in (clip-path inset shrinking right→left) with its own
+  // duration tuned so it ENDS at T_END — earlier items take longer,
+  // later items take shorter, all finishing together.
+  // When false (tab switches after entry), use the regular short fade.
+  entryPhase: boolean;
   onToggleDone: (t: Todo, next: boolean) => void;
   onTogglePriority: (t: Todo, next: boolean) => void;
 }) {
@@ -173,9 +185,17 @@ function TodoItem({
   const showPriorityDot = clickMode === "promote" && isPriority;
   const clickable = clickMode !== "none";
 
+  // Entry timing: stagger 0.05s/item capped so very long lists still
+  // start typing within ~1.5s; typeDur = T_END - itemDelay so all items
+  // finish typing simultaneously at T_END.
+  const itemDelay = entryPhase ? Math.min(index * 0.05, 1.5) : 0;
+  const typeDur = entryPhase ? Math.max(0.6, T_END - itemDelay) : 0;
+
   return (
     <motion.div
-      initial={{ opacity: 0, x: -4 }}
+      initial={
+        entryPhase ? { opacity: 1, x: 0 } : { opacity: 0, x: -4 }
+      }
       animate={{ opacity: 1, x: 0 }}
       transition={{ duration: 0.45, delay: index * 0.025, ease: EASE }}
       onClick={handleClick}
@@ -208,15 +228,52 @@ function TodoItem({
         <div className="relative min-w-0 flex-1">
           <motion.span
             ref={textRef}
+            initial={
+              entryPhase
+                ? { clipPath: "inset(0 100% 0 0)" }
+                : { clipPath: "inset(0 0% 0 0)" }
+            }
             animate={{
+              clipPath: "inset(0 0% 0 0)",
               color: dimText ? "var(--fg-2)" : "var(--fg-0)",
               opacity: dimText ? 0.55 : 1,
             }}
-            transition={{ duration: 0.35, ease: EASE }}
+            transition={{
+              clipPath: entryPhase
+                ? { duration: typeDur, delay: itemDelay, ease: "linear" }
+                : { duration: 0 },
+              color: { duration: 0.35, ease: EASE },
+              opacity: { duration: 0.35, ease: EASE },
+            }}
             style={{ display: "inline" }}
           >
             {trunc(t.text, 90)}
           </motion.span>
+          {/* Blinking cursor during the typewriter pass — pinned to the
+              text's right edge via the same clip-path mask. Hidden once
+              entry phase ends. */}
+          {entryPhase ? (
+            <motion.span
+              aria-hidden
+              initial={{ opacity: 0 }}
+              animate={{ opacity: [0, 0.85, 0] }}
+              transition={{
+                duration: 0.8,
+                repeat: Math.ceil(typeDur / 0.8),
+                ease: "linear",
+                delay: itemDelay,
+              }}
+              style={{
+                display: "inline-block",
+                width: 1,
+                height: "0.9em",
+                marginLeft: 1,
+                verticalAlign: "text-bottom",
+                background: "rgba(255,184,120,0.85)",
+                boxShadow: "0 0 4px rgba(255,184,120,0.45)",
+              }}
+            />
+          ) : null}
           {showStrike ? (
             <svg
               className="absolute inset-0 pointer-events-none"
@@ -266,6 +323,7 @@ function GroupBlock({
   doneKeys,
   priorityKeys,
   clickMode,
+  entryPhase,
   onToggleDone,
   onTogglePriority,
 }: {
@@ -277,6 +335,7 @@ function GroupBlock({
   doneKeys: Map<string, string>;
   priorityKeys: Map<string, string>;
   clickMode: ClickMode;
+  entryPhase: boolean;
   onToggleDone: (t: Todo, next: boolean) => void;
   onTogglePriority: (t: Todo, next: boolean) => void;
 }) {
@@ -302,6 +361,7 @@ function GroupBlock({
             isDone={doneKeys.has(todoId(t))}
             isPriority={priorityKeys.has(todoId(t))}
             clickMode={clickMode}
+            entryPhase={entryPhase}
             onToggleDone={onToggleDone}
             onTogglePriority={onTogglePriority}
           />
@@ -317,6 +377,17 @@ export function TodoList() {
   const [tab, setTab] = useState<Tab>("priority");
   const [doneMap, setDoneMap] = useState<Map<string, string>>(new Map());
   const [priorityMap, setPriorityMap] = useState<Map<string, string>>(new Map());
+  // Typewriter entry phase. Starts true; flips false ~T_END after the
+  // FIRST mount of real items (so a slow fetch doesn't shift the timing
+  // window past page load). Tab switches after that use the normal fade.
+  const [entryPhase, setEntryPhase] = useState(true);
+  const entryArmedRef = useRef(false);
+  useEffect(() => {
+    if (!data || entryArmedRef.current) return;
+    entryArmedRef.current = true;
+    const id = window.setTimeout(() => setEntryPhase(false), T_END * 1000 + 100);
+    return () => window.clearTimeout(id);
+  }, [data]);
 
   useEffect(() => {
     let cancelled = false;
@@ -569,6 +640,7 @@ export function TodoList() {
                     doneKeys={doneMap}
                     priorityKeys={priorityMap}
                     clickMode={clickMode}
+                    entryPhase={entryPhase}
                     onToggleDone={onToggleDone}
                     onTogglePriority={onTogglePriority}
                   />
@@ -606,6 +678,7 @@ export function TodoList() {
                       isDone={doneMap.has(todoId(t))}
                       isPriority={true}
                       clickMode={clickMode}
+                      entryPhase={entryPhase}
                       onToggleDone={onToggleDone}
                       onTogglePriority={onTogglePriority}
                     />
@@ -639,6 +712,7 @@ export function TodoList() {
                       isDone={doneMap.has(todoId(t))}
                       isPriority={priorityMap.has(todoId(t))}
                       clickMode={clickMode}
+                      entryPhase={entryPhase}
                       onToggleDone={onToggleDone}
                       onTogglePriority={onTogglePriority}
                     />

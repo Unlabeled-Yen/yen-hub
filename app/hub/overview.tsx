@@ -19,6 +19,7 @@ import { AttentionGrid } from "@/components/attention-grid";
 import { TodoList } from "@/components/todo-list";
 import { ReadingProgress } from "@/components/reading-progress";
 import { MarketMonitor } from "@/components/market-monitor";
+import { WorldClock } from "@/components/world-clock";
 
 type Span = { cols?: number; rows?: number };
 type ModuleDef = {
@@ -250,17 +251,28 @@ export function Overview() {
   }, []);
   return (
     <motion.div
-      className="flex flex-1 flex-col"
+      className="flex flex-1 flex-col relative"
       // Inline opacity-0 to defeat the SSR-hydration flash where content
       // briefly paints at full opacity before motion's initial kicks in.
       // (The earlier K-candle blob was caused by a different bug — Stooq
       // fallback's 1-candle response with no width clamp — so this style
-      // is safe.)
+      // is safe.) `relative` anchors the absolute-positioned WorldClock
+      // below.
       style={{ opacity: 0 }}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: RISE_DURATION, ease: "linear" }}
     >
+      {/* NY clock — pinned to top-right of the outer flex container,
+          OUTSIDE the carousel's overflow-y:auto. Previously mounted
+          inside MarketMonitor at top:-22 but the main element's
+          overflow-y:auto clipped it. */}
+      <div
+        className="absolute z-30 pointer-events-none"
+        style={{ top: 10, right: 24 }}
+      >
+        <WorldClock />
+      </div>
       {/* Top spacer — just enough room for the overlay traffic lights
           (~28px tall). Tightened so the NY clock chip sits visually
           close to the US30 panel top edge. */}

@@ -74,9 +74,26 @@ fn wait_until_ready(port: u16) -> Result<(), String> {
     Err(format!("sidecar did not bind :{port} within {READY_TIMEOUT:?}"))
 }
 
+/// Per-startup token authenticating webview → sidecar requests. Generated
+/// fresh on every launch, lives only in process memory (Rust + Node + the
+/// webview's JS heap). The webview fetches it once via the
+/// `get_sidecar_token` Tauri command; subsequent fetch() calls include it
+/// as `X-Yen-Token`. Other local processes can't read another process's
+/// env or memory on macOS without special entitlements, so this raises the
+/// bar against casual "any localhost process pokes 127.0.0.1" attacks.
+fn mint_sidecar_token() -> Result<String, String> {
+    let mut buf = [0u8; 32];
+    fs::File::open("/dev/urandom")
+        .and_then(|mut f| f.read_exact(&mut buf))
+        .map_err(|e| format!("read /dev/urandom: {e}"))?;
+    Ok(buf.iter().map(|b| format!("{b:02x}")).collect())
+}
+
 /// Spawn the Node sidecar pointed at the bundled `sidecar/server.js`,
-/// wait for it to bind, then navigate `window` to it.
-pub fn launch(app: &AppHandle, window: WebviewWindow) -> Result<(), String> {
+/// wait for it to bind, then navigate `window` to it. Returns the
+/// per-startup sidecar token so the caller can store it in Tauri state
+/// and serve it to the webview via the `get_sidecar_token` command.
+pub fn launch(app: &AppHandle, window: WebviewWindow) -> Result<String, String> {
     let port = pick_port().map_err(|e| format!("pick_port: {e}"))?;
 
     // Resolve the staged Next standalone tree (`src-tauri/sidecar/`),
@@ -89,6 +106,7 @@ pub fn launch(app: &AppHandle, window: WebviewWindow) -> Result<(), String> {
     log::info!("yen sidecar: spawning node on :{port}");
 
     let session_password = ensure_session_secret(app)?;
+    let sidecar_token = mint_sidecar_token()?;
 
     // Resolve the Obsidian vault path:
     //   1. YEN_VAULT_PATH from the launching environment (if user exported it)
@@ -109,6 +127,7 @@ pub fn launch(app: &AppHandle, window: WebviewWindow) -> Result<(), String> {
         .env("HOSTNAME", "127.0.0.1")
         .env("NODE_ENV", "production")
         .env("SESSION_PASSWORD", session_password)
+        .env("YEN_HUB_TOKEN", &sidecar_token)
         .env("YEN_VAULT_PATH", vault_path);
 
     if !anthropic_key.is_empty() {
@@ -150,5 +169,5 @@ pub fn launch(app: &AppHandle, window: WebviewWindow) -> Result<(), String> {
         .map_err(|e| format!("parse url: {e}"))?;
     window.navigate(url).map_err(|e| format!("navigate: {e}"))?;
 
-    Ok(())
+    Ok(sidecar_token)
 }
