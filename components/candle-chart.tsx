@@ -71,7 +71,12 @@ const MA_SERIES: Array<{ period: number; color: string }> = [
   { period: 20, color: "rgba(85,150,115,0.85)" }, // darkest — anchor
 ];
 
-const INITIAL_DUR = 0.85;
+// Entry animation timing — all initial-reveal animations across the
+// hub (AttentionGrid bars, K reveal, MA/ATR pen-draw, Reading book
+// progress bars, price line) END together at T_END = 3.5s.
+// Last K bar finishes at INITIAL_STAGGER_TOTAL + INITIAL_DUR = 2.6 + 0.9
+// = 3.5s ✓.
+const INITIAL_DUR = 0.9;
 const INITIAL_STAGGER_TOTAL = 2.6;
 const FAST_DUR = 0.22;
 
@@ -270,11 +275,11 @@ export function CandleChart({
   }, [revealActive, isInitialReveal, seriesKey]);
   // Pen-draw ends after the stroke completes — lines stay rendered as
   // plain paths afterwards (no motion overhead during zoom/pan).
-  // Reveal timings tuned so everything lands together at ~T_END.
-  // K reveal: stagger 2.6s + 0.85s/candle ≈ 3.45s.
-  // MA/ATR pen: 3.3s, finishes ~150ms before last K.
-  // Price line: starts at 2.9s, 0.6s sprint, lands at 3.5s.
-  const PEN_DRAW_DUR = 3.3;
+  // Reveal timings all align to T_END = 3.5s:
+  // K reveal:    stagger 2.6 + 0.9/candle  = 3.5s
+  // MA/ATR pen:  duration 3.5 from t=0     = 3.5s
+  // Price line:  delay 2.9 + dur 0.6       = 3.5s
+  const PEN_DRAW_DUR = 3.5;
   const PRICE_LINE_DELAY = 2.9;
   const PRICE_LINE_DUR = 0.6;
   const REVEAL_TOTAL_MS = Math.max(

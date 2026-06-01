@@ -56,7 +56,11 @@ function BookBlock({ b, index }: { b: BookSummary; index: number }) {
   const { author, title } = fromServer ?? parseBook(b.name);
   const pct = b.chapters === 0 ? 0 : b.openedChapters / b.chapters;
   const pctLabel = `${Math.round(pct * 100)}%`;
-  const delay = 0.2 + index * 0.06;
+  // Base offset shifts so the LAST book's progress bar (index 7) ends
+  // at the global entry T_END=3.5s.
+  // book bar end = (base + i*0.06) + 0.25 (bar lead) + 2.2 (bar dur)
+  // For i=7: 0.63 + 0.42 + 0.25 + 2.2 = 3.50 ✓
+  const delay = 0.63 + index * 0.06;
 
   // Three visual states:
   //   reading: opened > 0 chapters → full brightness, teal progress

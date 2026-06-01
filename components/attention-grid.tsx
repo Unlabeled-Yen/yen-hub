@@ -214,7 +214,10 @@ function ZoneColumn({
   scaleMax: number;
   index: number;
 }) {
-  const delay = index * ROW_STAGGER;
+  // Base offset shifts all columns so the LAST one ends at the global
+  // entry T_END=3.5s. Last col: index 4 × 0.18 + 2.5 = 3.22 → add 0.28
+  // base so 0.28 + 3.22 = 3.50.
+  const delay = index * ROW_STAGGER + 0.28;
   const inactive = z.added === 0 && z.opened === 0;
   const isReview = z.opened > z.added;
   const sev = severityOf(z);
