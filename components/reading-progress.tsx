@@ -22,6 +22,7 @@ import { motion } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { parseBook as parseBookShared } from "@/lib/vault/book-translations";
 import { EASE } from "@/lib/animation/constants";
+import { useAttention } from "@/lib/hooks/use-attention";
 
 type BookSummary = {
   name: string;
@@ -169,27 +170,7 @@ function BookBlock({ b, index }: { b: BookSummary; index: number }) {
 }
 
 export function ReadingProgress() {
-  const [data, setData] = useState<AttentionResponse | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const r = await fetch("/api/vault/attention?days=7", {
-          credentials: "same-origin",
-        });
-        if (!r.ok) return;
-        const json = (await r.json()) as AttentionResponse;
-        if (!cancelled) setData(json);
-      } catch {
-        /* swallow — show nothing on failure */
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
+  const data = useAttention<AttentionResponse>();
   if (!data) return null;
   return <ReadingCube data={data} />;
 }

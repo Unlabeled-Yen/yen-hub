@@ -16,6 +16,7 @@ import { motion } from "motion/react";
 import { useEffect, useState } from "react";
 import { parseBook as parseBookName } from "@/lib/vault/book-translations";
 import { EASE } from "@/lib/animation/constants";
+import { useAttention } from "@/lib/hooks/use-attention";
 
 type Zone =
   | "library"
@@ -422,38 +423,11 @@ function LibraryDetail({ library }: { library: AttentionResponse["library"] }) {
 }
 
 export function AttentionGrid() {
-  const [data, setData] = useState<AttentionResponse | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const r = await fetch("/api/vault/attention?days=7", {
-          credentials: "same-origin",
-        });
-        if (!r.ok) {
-          const body = await r.json().catch(() => ({}));
-          throw new Error(body.error ?? `HTTP ${r.status}`);
-        }
-        const json = (await r.json()) as AttentionResponse;
-        if (!cancelled) setData(json);
-      } catch (e) {
-        if (!cancelled) setErr(e instanceof Error ? e.message : String(e));
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  if (err) {
-    return (
-      <div className="font-mono text-[12px] text-[var(--fg-2)]">
-        attention · {err}
-      </div>
-    );
-  }
+  // Shared hook: AttentionGrid and ReadingProgress both call /api/
+  // vault/attention. The hook dedups so the vault fs is only scanned
+  // once on mount. Errors are swallowed inside the hook (returns null);
+  // we just render the loading shell in that case.
+  const data = useAttention<AttentionResponse>();
   if (!data) {
     return (
       <div className="font-mono text-[12px] text-[var(--fg-2)] tracking-[0.30em] uppercase">

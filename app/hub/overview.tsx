@@ -13,14 +13,13 @@
  */
 
 import { motion, useMotionValue, animate } from "motion/react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CommandPalette } from "@/components/command-palette";
 import { AttentionGrid } from "@/components/attention-grid";
 import { TodoList } from "@/components/todo-list";
 import { ReadingProgress } from "@/components/reading-progress";
 import { MarketMonitor } from "@/components/market-monitor";
 import { WorldClock } from "@/components/world-clock";
-import { EASE as RISE_EASE } from "@/lib/animation/constants";
 
 type Span = { cols?: number; rows?: number };
 type ModuleDef = {
@@ -139,22 +138,10 @@ function spanCls(span: Span): string {
   return `${colMap[c] ?? ""} ${rowMap[r] ?? ""}`.trim();
 }
 
-/** Random delay 0–0.9s per card, regenerated on every page mount.
- *  useMemo with empty deps = runs once on mount, deterministic for the
- *  lifetime of this Overview instance. */
-function useShuffledDelays(count: number): number[] {
-  return useMemo(
-    () => Array.from({ length: count }, () => Math.random() * 0.3),
-    [count],
-  );
-}
-
-/** Shared timing — page fade and card rise both ride this curve. */
+/** Shared timing — outer page-level fade-in. */
 const RISE_DURATION = 1.1;
-// RISE_EASE is just the shared EASE renamed at import for clarity.
 
 export function Overview() {
-  const delays = useShuffledDelays(MODULES.length);
   // Measure Reading's height so TODO can match it (CSS Grid can't align
   // bottoms when items have wildly different natural heights). Reading sits
   // at its content's natural size; TODO's `height` is mirrored from JS.
@@ -363,29 +350,18 @@ export function Overview() {
           </div>
         </main>
 
-        {/* Page 2 — Bento modules. Swipe right or drag left to reach. */}
+        {/* Page 2 — Bento modules. No entry animation: the 6 motion.div
+            + perspective + willChange:transform combo was running its
+            animation engine even while off-screen, contributing to the
+            first-paint stutter on Page 1. Plain divs render instantly. */}
         <main
           className="shrink-0 w-screen h-full px-8 sm:px-12 py-1 overflow-y-auto hub-scrollbar"
         >
-          <div
-            className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 auto-rows-[140px] gap-4"
-            style={{ perspective: "1600px", perspectiveOrigin: "50% 30%" }}
-          >
-            {MODULES.map((m, i) => (
-              <motion.div
-                key={m.title}
-                className={spanCls(m.span)}
-                initial={{ y: 75 }}
-                animate={{ y: 0 }}
-                transition={{
-                  duration: RISE_DURATION,
-                  ease: RISE_EASE,
-                  delay: delays[i],
-                }}
-                style={{ willChange: "transform" }}
-              >
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 auto-rows-[140px] gap-4">
+            {MODULES.map((m) => (
+              <div key={m.title} className={spanCls(m.span)}>
                 <ModuleCard title={m.title} hint={m.hint} />
-              </motion.div>
+              </div>
             ))}
           </div>
         </main>
