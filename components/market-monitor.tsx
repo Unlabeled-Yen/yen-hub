@@ -116,7 +116,11 @@ export function MarketMonitor() {
           minHeight: 360,
           borderRadius: 6,
           border: `1px solid ${accentDim}`,
-          background: `linear-gradient(180deg, ${accent.replace("0.95", "0.04")} 0%, transparent 100%)`,
+          // Solid-enough background so the underlying window (desktop /
+          // chat) doesn't bleed through into the chart area. Warm accent
+          // gradient sits on top of the near-black fill for the brand
+          // ambience.
+          background: `linear-gradient(180deg, ${accent.replace("0.95", "0.04")} 0%, transparent 100%), rgba(10, 11, 14, 0.96)`,
           padding: "20px 22px",
           gap: 12,
         }}
