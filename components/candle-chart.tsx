@@ -263,15 +263,25 @@ export function CandleChart({
   }, [revealActive, isInitialReveal, seriesKey]);
   // Pen-draw ends after the stroke completes — lines stay rendered as
   // plain paths afterwards (no motion overhead during zoom/pan).
-  const PEN_DRAW_DUR = 2.8; // seconds — leisurely "ink stroke" pacing
+  // Reveal timings tuned so everything lands together at ~T_END.
+  // K reveal: stagger 2.6s + 0.85s/candle ≈ 3.45s.
+  // MA/ATR pen: 3.3s, finishes ~150ms before last K.
+  // Price line: starts at 2.9s, 0.6s sprint, lands at 3.5s.
+  const PEN_DRAW_DUR = 3.3;
+  const PRICE_LINE_DELAY = 2.9;
+  const PRICE_LINE_DUR = 0.6;
+  const REVEAL_TOTAL_MS = Math.max(
+    PEN_DRAW_DUR * 1000,
+    (PRICE_LINE_DELAY + PRICE_LINE_DUR) * 1000,
+  );
   useEffect(() => {
     if (!penDrawActive) return;
     const t = window.setTimeout(
       () => setPenDrawActive(false),
-      PEN_DRAW_DUR * 1000 + 80,
+      REVEAL_TOTAL_MS + 120,
     );
     return () => window.clearTimeout(t);
-  }, [penDrawActive]);
+  }, [penDrawActive, REVEAL_TOTAL_MS]);
 
   // Hover -------------------------------------------------------------
   const [hoverGlobalIdx, setHoverGlobalIdx] = useState<number | null>(null);
@@ -771,41 +781,109 @@ export function CandleChart({
             if (!d) return null;
             const stroke = MA_SERIES[si].color;
             const sw = si === MA_SERIES.length - 1 ? 1.35 : 1.05;
-            // Match-color glow — drop-shadow uses the line's own stroke
-            // so each MA gets its own halo tint. Two-layer (tight + soft)
-            // gives the line a luminous "neon" feel on the dark panel.
-            const glow = `drop-shadow(0 0 2px ${stroke}) drop-shadow(0 0 6px ${stroke.replace(/[\d.]+\)$/, "0.45)")})`;
+            // Geometric glow — two extra thicker strokes behind the main
+            // line. Works inside clipPath because it's pure geometry
+            // (drop-shadow filters get clipped, these don't).
+            const glowOuter = stroke.replace(/[\d.]+\)$/, "0.18)");
+            const glowInner = stroke.replace(/[\d.]+\)$/, "0.40)");
+            const swOuter = sw + 5;
+            const swInner = sw + 2.5;
             if (penDrawActive) {
+              const t = {
+                pathLength: { duration: PEN_DRAW_DUR, ease: "easeOut" as const },
+                opacity: { duration: 0.18 },
+              };
               return (
-                <motion.path
-                  key={`ma-${seriesKey}-${MA_SERIES[si].period}`}
+                <g key={`ma-${seriesKey}-${MA_SERIES[si].period}`}>
+                  <motion.path
+                    d={d}
+                    fill="none"
+                    stroke={glowOuter}
+                    strokeWidth={swOuter}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    initial={{ pathLength: 0, opacity: 0 }}
+                    animate={{ pathLength: 1, opacity: 1 }}
+                    transition={t}
+                  />
+                  <motion.path
+                    d={d}
+                    fill="none"
+                    stroke={glowInner}
+                    strokeWidth={swInner}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    initial={{ pathLength: 0, opacity: 0 }}
+                    animate={{ pathLength: 1, opacity: 1 }}
+                    transition={t}
+                  />
+                  <motion.path
+                    d={d}
+                    fill="none"
+                    stroke={stroke}
+                    strokeWidth={sw}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    initial={{ pathLength: 0, opacity: 0 }}
+                    animate={{ pathLength: 1, opacity: 1 }}
+                    transition={t}
+                  />
+                  {/* Leading head dot — SVG animateMotion drags a faint
+                      luminous dot along the path in lockstep with the
+                      pen-draw. Disappears when penDrawActive ends and
+                      the whole branch unmounts. */}
+                  <circle
+                    r={2.4}
+                    fill={stroke}
+                    opacity={0.95}
+                  >
+                    <animateMotion
+                      dur={`${PEN_DRAW_DUR}s`}
+                      path={d}
+                      fill="freeze"
+                    />
+                  </circle>
+                  <circle
+                    r={5}
+                    fill={glowInner}
+                    opacity={0.6}
+                  >
+                    <animateMotion
+                      dur={`${PEN_DRAW_DUR}s`}
+                      path={d}
+                      fill="freeze"
+                    />
+                  </circle>
+                </g>
+              );
+            }
+            return (
+              <g key={`ma-${MA_SERIES[si].period}`}>
+                <path
+                  d={d}
+                  fill="none"
+                  stroke={glowOuter}
+                  strokeWidth={swOuter}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <path
+                  d={d}
+                  fill="none"
+                  stroke={glowInner}
+                  strokeWidth={swInner}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <path
                   d={d}
                   fill="none"
                   stroke={stroke}
                   strokeWidth={sw}
                   strokeLinecap="round"
                   strokeLinejoin="round"
-                  initial={{ pathLength: 0, opacity: 0 }}
-                  animate={{ pathLength: 1, opacity: 1 }}
-                  transition={{
-                    pathLength: { duration: PEN_DRAW_DUR, ease: "easeOut" },
-                    opacity: { duration: 0.18 },
-                  }}
-                  style={{ filter: glow }}
                 />
-              );
-            }
-            return (
-              <path
-                key={`ma-${MA_SERIES[si].period}`}
-                d={d}
-                fill="none"
-                stroke={stroke}
-                strokeWidth={sw}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                style={{ filter: glow }}
-              />
+              </g>
             );
           })}
           {/* Hover markers on each MA line */}
@@ -827,19 +905,73 @@ export function CandleChart({
         </g>
 
         {/* Latest-price reference line + label on the right axis.
-            Always visible (independent of hover) — a TradingView-style
-            "current price" indicator. Colored to match up/down accent. */}
+            On initial reveal: zips left → right at the end of the K/MA
+            stagger (PRICE_LINE_DELAY → +PRICE_LINE_DUR), landing at the
+            same moment as the last K bar settles. Otherwise static. */}
         {(() => {
           const last = candles[candles.length - 1];
           if (!last) return null;
           const y = yOf(last.c);
-          // Skip if off-screen vertically (panned away, or below candle
-          // pane into the ATR area).
           if (y < PAD_T - 4 || y > PAD_T + plotH + 4) return null;
           const labelW = 44;
           const labelH = 14;
           const labelX = width - PAD_R + 4;
           const labelY = y - labelH / 2;
+          if (penDrawActive) {
+            return (
+              <g key={`price-${seriesKey}`} pointerEvents="none">
+                <motion.line
+                  x1={PAD_L}
+                  y1={y}
+                  y2={y}
+                  stroke={accent}
+                  strokeWidth={0.8}
+                  opacity={0.85}
+                  initial={{ x2: PAD_L }}
+                  animate={{ x2: width - PAD_R }}
+                  transition={{
+                    delay: PRICE_LINE_DELAY,
+                    duration: PRICE_LINE_DUR,
+                    ease: [0.22, 0.9, 0.36, 1],
+                  }}
+                />
+                <motion.g
+                  initial={{ opacity: 0, scale: 0.7 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{
+                    delay: PRICE_LINE_DELAY + PRICE_LINE_DUR - 0.1,
+                    duration: 0.25,
+                    ease: [0.22, 0.9, 0.36, 1],
+                  }}
+                  style={{
+                    transformOrigin: `${labelX + labelW / 2}px ${labelY + labelH / 2}px`,
+                    transformBox: "fill-box" as "fill-box",
+                  }}
+                >
+                  <rect
+                    x={labelX}
+                    y={labelY}
+                    width={labelW}
+                    height={labelH}
+                    fill={accent}
+                    rx={2}
+                  />
+                  <text
+                    x={labelX + labelW / 2}
+                    y={labelY + labelH - 4}
+                    fontSize={9.5}
+                    fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
+                    fill="rgba(10,10,10,0.95)"
+                    fontWeight={700}
+                    textAnchor="middle"
+                    letterSpacing="0.02em"
+                  >
+                    {fmtPrice(last.c)}
+                  </text>
+                </motion.g>
+              </g>
+            );
+          }
           return (
             <g pointerEvents="none">
               <line
@@ -947,36 +1079,93 @@ export function CandleChart({
                 as the MA lines. */}
             {(() => {
               const atrStroke = "rgba(255,170,100,0.85)";
-              // Two-layer warm glow mirroring the MA halo style.
-              const atrGlow =
-                "drop-shadow(0 0 2px rgba(255,170,100,0.85)) drop-shadow(0 0 6px rgba(255,170,100,0.45))";
-              return penDrawActive ? (
-                <motion.path
-                  key={`atr-${seriesKey}`}
-                  d={atrPath}
-                  fill="none"
-                  stroke={atrStroke}
-                  strokeWidth={1.1}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  initial={{ pathLength: 0, opacity: 0 }}
-                  animate={{ pathLength: 1, opacity: 1 }}
-                  transition={{
-                    pathLength: { duration: PEN_DRAW_DUR, ease: "easeOut" },
-                    opacity: { duration: 0.18 },
-                  }}
-                  style={{ filter: atrGlow }}
-                />
-              ) : (
-                <path
-                  d={atrPath}
-                  fill="none"
-                  stroke={atrStroke}
-                  strokeWidth={1.1}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  style={{ filter: atrGlow }}
-                />
+              const atrGlowOuter = "rgba(255,170,100,0.18)";
+              const atrGlowInner = "rgba(255,170,100,0.40)";
+              const atrSW = 1.1;
+              if (penDrawActive) {
+                const t = {
+                  pathLength: { duration: PEN_DRAW_DUR, ease: "easeOut" as const },
+                  opacity: { duration: 0.18 },
+                };
+                return (
+                  <g key={`atr-${seriesKey}`}>
+                    <motion.path
+                      d={atrPath}
+                      fill="none"
+                      stroke={atrGlowOuter}
+                      strokeWidth={atrSW + 5}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      initial={{ pathLength: 0, opacity: 0 }}
+                      animate={{ pathLength: 1, opacity: 1 }}
+                      transition={t}
+                    />
+                    <motion.path
+                      d={atrPath}
+                      fill="none"
+                      stroke={atrGlowInner}
+                      strokeWidth={atrSW + 2.5}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      initial={{ pathLength: 0, opacity: 0 }}
+                      animate={{ pathLength: 1, opacity: 1 }}
+                      transition={t}
+                    />
+                    <motion.path
+                      d={atrPath}
+                      fill="none"
+                      stroke={atrStroke}
+                      strokeWidth={atrSW}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      initial={{ pathLength: 0, opacity: 0 }}
+                      animate={{ pathLength: 1, opacity: 1 }}
+                      transition={t}
+                    />
+                    <circle r={2.4} fill={atrStroke} opacity={0.95}>
+                      <animateMotion
+                        dur={`${PEN_DRAW_DUR}s`}
+                        path={atrPath}
+                        fill="freeze"
+                      />
+                    </circle>
+                    <circle r={5} fill={atrGlowInner} opacity={0.6}>
+                      <animateMotion
+                        dur={`${PEN_DRAW_DUR}s`}
+                        path={atrPath}
+                        fill="freeze"
+                      />
+                    </circle>
+                  </g>
+                );
+              }
+              return (
+                <g>
+                  <path
+                    d={atrPath}
+                    fill="none"
+                    stroke={atrGlowOuter}
+                    strokeWidth={atrSW + 5}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                  <path
+                    d={atrPath}
+                    fill="none"
+                    stroke={atrGlowInner}
+                    strokeWidth={atrSW + 2.5}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                  <path
+                    d={atrPath}
+                    fill="none"
+                    stroke={atrStroke}
+                    strokeWidth={atrSW}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </g>
               );
             })()}
             {/* Right-axis price labels for the ATR scale */}
