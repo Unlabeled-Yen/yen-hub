@@ -357,6 +357,12 @@ export function CommandPalette() {
         }}
         className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-2xl px-8 pointer-events-none"
         style={{
+          // Hard ceiling on the whole assembly so it can never overflow
+          // the Tauri webview no matter the message content. Centering
+          // is geometric (translate(-50%, -50%) anchors the assembly's
+          // mid-point at the window's mid-point); the cap guarantees
+          // the top and bottom edges always sit inside the viewport.
+          maxHeight: "85vh",
           cursor: holding ? "grabbing" : "grab",
         }}
         onMouseDown={() => setHolding(true)}
@@ -407,17 +413,17 @@ export function CommandPalette() {
               ref={scrollRef}
               className="pointer-events-auto mb-6 hub-scrollbar"
               initial={false}
-              // Cap chosen so the entire assembly (messages + gap +
-              // input + label margins) stays inside the viewport when
-              // centered with translate(-50%, -50%). userExpanded
-              // value subtracts the input/header height so 10-turn
-              // mode tops out well under 100vh.
+              // Tighter caps so the WHOLE assembly fits well inside
+              // the Tauri webview no matter the window size. Assembly
+              // total ≈ messages_max + 24 (mb-6) + ~52 (input). Caps
+              // below leave generous top/bottom breathing room so the
+              // user never sees an edge hit the window.
               animate={{
                 maxHeight: collapsed
                   ? 36
                   : userExpanded
-                    ? "calc(82vh - 90px)"
-                    : "calc(45vh - 60px)",
+                    ? "calc(70vh - 100px)"
+                    : "calc(35vh - 50px)",
               }}
               transition={{
                 duration: collapsed || userExpanded ? 1.2 : 0.45,
