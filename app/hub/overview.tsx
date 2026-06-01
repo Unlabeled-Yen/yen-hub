@@ -158,7 +158,13 @@ export function Overview() {
   // bottoms when items have wildly different natural heights). Reading sits
   // at its content's natural size; TODO's `height` is mirrored from JS.
   const readingRef = useRef<HTMLDivElement | null>(null);
-  const [readingH, setReadingH] = useState<number | null>(null);
+  // Seed with a realistic estimate so the slab + TODO container has a
+  // stable height during initial paint. Without this readingH was null
+  // → TODO had no fixed height → 0px container → bento cards rendered
+  // tight against the slab → ResizeObserver fired → height settled to
+  // ~600px → bento cards visibly jumped down. The estimate is replaced
+  // by the real measurement after the first ResizeObserver tick.
+  const [readingH, setReadingH] = useState<number>(620);
   useEffect(() => {
     const node = readingRef.current;
     if (!node) return;
@@ -174,10 +180,12 @@ export function Overview() {
   return (
     <motion.div
       className="flex flex-1 flex-col"
-      // Reverted: inline style.opacity 0 was interfering with motion's
-      // re-render lifecycle (suspected of causing the K-candle blob
-      // bug). Back to motion-only fade — small chance of brief flash
-      // on hydration, acceptable trade-off.
+      // Inline opacity-0 to defeat the SSR-hydration flash where content
+      // briefly paints at full opacity before motion's initial kicks in.
+      // (The earlier K-candle blob was caused by a different bug — Stooq
+      // fallback's 1-candle response with no width clamp — so this style
+      // is safe.)
+      style={{ opacity: 0 }}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: RISE_DURATION, ease: "linear" }}
@@ -242,7 +250,7 @@ export function Overview() {
               transition={{ duration: 1.0, ease: [0.075, 0.82, 0.165, 1], delay: 0.5 }}
               className="min-w-0"
               style={{
-                height: readingH ? `${readingH}px` : undefined,
+                height: `${readingH}px`,
               }}
             >
               <TodoList />
