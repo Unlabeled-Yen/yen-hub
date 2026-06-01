@@ -22,26 +22,10 @@ import { motion } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { parseBook as parseBookShared } from "@/lib/vault/book-translations";
 import { EASE } from "@/lib/animation/constants";
-import { useAttention } from "@/lib/hooks/use-attention";
-
-type BookSummary = {
-  name: string;
-  path: string;
-  chapters: number;
-  addedChapters: number;
-  openedChapters: number;
-  furthestChapter?: { num: number; title: string } | null;
-  displayTitle?: string;
-  displayAuthor?: string;
-};
-
-type AttentionResponse = {
-  library: {
-    activelyReading: BookSummary[];
-    newlyHoarded: BookSummary[];
-    books?: BookSummary[]; // full list — preferred when present
-  };
-};
+import type {
+  AttentionResponse,
+  BookSummary,
+} from "@/lib/vault/attention-types";
 
 // Re-export parseBook under a local alias so existing call sites don't change.
 const parseBook = parseBookShared;
@@ -169,8 +153,14 @@ function BookBlock({ b, index }: { b: BookSummary; index: number }) {
   );
 }
 
-export function ReadingProgress() {
-  const data = useAttention<AttentionResponse>();
+export function ReadingProgress({
+  data,
+}: {
+  /** Parent (Overview) fetches once and passes here. See AttentionGrid
+   *  for the same prop — they share the payload so the vault fs isn't
+   *  scanned twice. null = still loading. */
+  data: AttentionResponse | null;
+}) {
   if (!data) return null;
   return <ReadingCube data={data} />;
 }

@@ -20,6 +20,7 @@ import { TodoList } from "@/components/todo-list";
 import { ReadingProgress } from "@/components/reading-progress";
 import { MarketMonitor } from "@/components/market-monitor";
 import { WorldClock } from "@/components/world-clock";
+import type { AttentionResponse } from "@/lib/vault/attention-types";
 
 type Span = { cols?: number; rows?: number };
 type ModuleDef = {
@@ -173,6 +174,31 @@ export function Overview() {
     };
   }, []);
 
+  // Single source of truth for /api/vault/attention. Both AttentionGrid
+  // and ReadingProgress need this payload — fetching once here and
+  // passing as props avoids the previous double-scan of the vault
+  // filesystem on first paint (one of the main causes of cold-start
+  // stutter on the home page).
+  const [attention, setAttention] = useState<AttentionResponse | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch("/api/vault/attention?days=7", {
+          credentials: "same-origin",
+        });
+        if (!r.ok) return;
+        const json = (await r.json()) as AttentionResponse;
+        if (!cancelled) setAttention(json);
+      } catch {
+        /* swallow — children render their loading shell on null */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Horizontal page carousel (page 0 = home, page 1 = bento modules).
   // Trigger: horizontal wheel input (Mac trackpad two-finger swipe OR
   // mouse with horizontal wheel). NO drag — Yen disabled click-and-drag
@@ -299,7 +325,7 @@ export function Overview() {
                 transition={{ duration: 0.4, ease: "linear", delay: 0 }}
                 className="min-w-0"
               >
-                <AttentionGrid />
+                <AttentionGrid data={attention} />
               </motion.div>
               <motion.div
                 initial={{ opacity: 0, y: 14 }}
@@ -338,7 +364,7 @@ export function Overview() {
                 }}
               />
               <div ref={readingRef} className="min-w-0 relative">
-                <ReadingProgress />
+                <ReadingProgress data={attention} />
               </div>
               <div
                 className="min-w-0 relative"

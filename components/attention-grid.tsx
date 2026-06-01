@@ -16,45 +16,12 @@ import { motion } from "motion/react";
 import { useEffect, useState } from "react";
 import { parseBook as parseBookName } from "@/lib/vault/book-translations";
 import { EASE } from "@/lib/animation/constants";
-import { useAttention } from "@/lib/hooks/use-attention";
-
-type Zone =
-  | "library"
-  | "septic"
-  | "workshop"
-  | "yenhub"
-  | "writing"
-  | "trading"
-  | "queue"
-  | "indexes"
-  | "derived"
-  | "drafts"
-  | "other";
-
-type ZoneBreakdown = {
-  zone: Zone;
-  label: string;
-  unit: "file" | "book";
-  total: number;
-  added: number;
-  opened: number;
-  hoardRatio: number | null;
-};
-
-type BookSummary = {
-  name: string;
-  path: string;
-  chapters: number;
-  addedChapters: number;
-  openedChapters: number;
-};
-
-type AttentionResponse = {
-  window: number;
-  generatedAt: number;
-  zones: ZoneBreakdown[];
-  library: { activelyReading: BookSummary[]; newlyHoarded: BookSummary[] };
-};
+import type {
+  AttentionResponse,
+  BookSummary,
+  Zone,
+  ZoneBreakdown,
+} from "@/lib/vault/attention-types";
 
 const PINNED: Zone[] = [
   "library",
@@ -422,12 +389,14 @@ function LibraryDetail({ library }: { library: AttentionResponse["library"] }) {
   );
 }
 
-export function AttentionGrid() {
-  // Shared hook: AttentionGrid and ReadingProgress both call /api/
-  // vault/attention. The hook dedups so the vault fs is only scanned
-  // once on mount. Errors are swallowed inside the hook (returns null);
-  // we just render the loading shell in that case.
-  const data = useAttention<AttentionResponse>();
+export function AttentionGrid({
+  data,
+}: {
+  /** Parent (Overview) fetches /api/vault/attention once and passes
+   *  the same payload here AND to ReadingProgress so the vault file-
+   *  system isn't scanned twice on first paint. null = still loading. */
+  data: AttentionResponse | null;
+}) {
   if (!data) {
     return (
       <div className="font-mono text-[12px] text-[var(--fg-2)] tracking-[0.30em] uppercase">
