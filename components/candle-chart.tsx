@@ -290,10 +290,15 @@ export function CandleChart({
   // Reveal timings all align to T_END = 3.5s:
   // K reveal:    stagger 2.6 + 0.9/candle  = 3.5s
   // MA/ATR pen:  duration 3.5 from t=0     = 3.5s
-  // Price line:  delay 2.9 + dur 0.6       = 3.5s
+  // Price line:  delay 0 + dur 3.5 (linear) = 3.5s
+  //   ↑ Per Yen: price index line should sweep at the SAME pixel-per-
+  //   second speed as the MA/ATR pens throughout. They both span ~same
+  //   horizontal extent over 3.5s linearly. Previous "delay 2.9 + dur
+  //   0.6 with ease-out" had the line zip across way faster than MA/ATR
+  //   and decelerate near the right edge.
   const PEN_DRAW_DUR = 3.5;
-  const PRICE_LINE_DELAY = 2.9;
-  const PRICE_LINE_DUR = 0.6;
+  const PRICE_LINE_DELAY = 0;
+  const PRICE_LINE_DUR = 3.5;
   const REVEAL_TOTAL_MS = Math.max(
     PEN_DRAW_DUR * 1000,
     (PRICE_LINE_DELAY + PRICE_LINE_DUR) * 1000,
@@ -909,7 +914,8 @@ export function CandleChart({
                   transition={{
                     delay: PRICE_LINE_DELAY,
                     duration: PRICE_LINE_DUR,
-                    ease: [0.22, 0.9, 0.36, 1],
+                    // Linear so pixels/sec matches MA/ATR pen draw exactly.
+                    ease: "linear",
                   }}
                 />
                 <motion.g

@@ -502,13 +502,24 @@ export function TodoList() {
   const [tab, setTab] = useState<Tab>("priority");
   const [doneMap, setDoneMap] = useState<Map<string, string>>(new Map());
   const [priorityMap, setPriorityMap] = useState<Map<string, string>>(new Map());
+  // Gate rendering until the SHA-1 hashing for doneKeys / priorityKeys
+  // has run for every item. Without this gate, the first paint after
+  // fetch shows data but with priorityMap STILL empty → priorityPool is
+  // empty → the placeholder "尚未挑選首要代辦 / 點標題切到「總覽代辦」"
+  // flashes briefly, and Yen reads the "總覽代辦" in the placeholder
+  // text as a tab swap. Holding "loading" until both data AND keys are
+  // ready eliminates that flash entirely.
+  const [keysReady, setKeysReady] = useState(false);
   // Typewriter entry phase. Starts true; flips false ~T_END after the
   // FIRST mount of real items (so a slow fetch doesn't shift the timing
   // window past page load). Tab switches after that use the normal fade.
   const [entryPhase, setEntryPhase] = useState(true);
   const entryArmedRef = useRef(false);
   useEffect(() => {
-    if (!data || entryArmedRef.current) return;
+    // Arm when BOTH data and keysReady are true — that's when items
+    // actually render and the typewriter starts. Arming earlier would
+    // burn the 12s timer during SHA-1 hashing while nothing is visible.
+    if (!data || !keysReady || entryArmedRef.current) return;
     entryArmedRef.current = true;
     // Long enough to cover even the slowest item in a long priority
     // list. Typing per item runs:
@@ -523,7 +534,7 @@ export function TodoList() {
     // `done` flag, not entryPhase.
     const id = window.setTimeout(() => setEntryPhase(false), 12_000);
     return () => window.clearTimeout(id);
-  }, [data]);
+  }, [data, keysReady]);
 
   useEffect(() => {
     let cancelled = false;
@@ -555,6 +566,7 @@ export function TodoList() {
         if (!cancelled) {
           setDoneMap(nextDone);
           setPriorityMap(nextPriority);
+          setKeysReady(true);
         }
       } catch (e) {
         if (!cancelled) setErr(e instanceof Error ? e.message : String(e));
@@ -688,7 +700,7 @@ export function TodoList() {
       </div>
     );
   }
-  if (!data) {
+  if (!data || !keysReady) {
     return (
       <div className="font-mono text-[12px] text-[var(--fg-2)] tracking-[0.30em] uppercase">
         todos · loading
