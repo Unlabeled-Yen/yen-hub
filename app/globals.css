@@ -260,23 +260,15 @@ textarea,
 }
 .breathe-text-warm-soft { animation: breathe-text-warm-soft 8.5s ease-in-out infinite; }
 
-/* Hub scrollbar — slim, warm-translucent. Used by scrollable inner panels
-   (TODO list) so the chrome stays subtle but always usable. */
+/* Hub scrollbar — visually hidden, scrolling still works. Per spec:
+   no scrollbar chrome inside the TODO list, but wheel / trackpad scroll
+   still navigates the overflow content. */
 .hub-scrollbar {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(255, 184, 120, 0.20) transparent;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* legacy Edge */
 }
 .hub-scrollbar::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-.hub-scrollbar::-webkit-scrollbar-track {
-  background: transparent;
-}
-.hub-scrollbar::-webkit-scrollbar-thumb {
-  background: rgba(255, 184, 120, 0.20);
-  border-radius: 3px;
-}
-.hub-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 184, 120, 0.35);
+  width: 0;
+  height: 0;
+  display: none;
 }
