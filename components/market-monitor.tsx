@@ -25,6 +25,7 @@ type Quote = {
   series: number[];
   marketState: string;
   updatedAt: number;
+  source?: "yahoo" | "stooq";
   stale?: boolean;
 };
 
@@ -281,7 +282,11 @@ export function MarketMonitor() {
           className="flex items-center justify-between text-[9px] tracking-[0.20em] uppercase mt-1"
           style={{ color: "var(--fg-2)", opacity: 0.55 }}
         >
-          <span>Yahoo · ^DJI · 5m</span>
+          <span>
+            {quote?.source === "stooq"
+              ? "Stooq · ^DJI · session"
+              : "Yahoo · ^DJI · 5m"}
+          </span>
           <span>
             {quote
               ? new Date(quote.updatedAt).toLocaleTimeString("en-US", {

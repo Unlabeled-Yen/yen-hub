@@ -1,19 +1,20 @@
 /**
  * GET /api/market/us30
  *
- * Proxy Yahoo Finance chart endpoint for ^DJI (Dow Jones / US30 underlier).
- * No API key. We wrap Yahoo with three layers of resilience because their
- * free unauthenticated edges 429 aggressively:
+ * US30 / Dow Jones quote with two-layer source fallback because Yahoo's
+ * unauthenticated edges 429 aggressively from residential IPs:
  *
- *   1. **Module-level fresh cache** — once we have a good response, serve
- *      it for FRESH_MS without re-fetching. The client polls every 60s; this
- *      ensures we only hit Yahoo once per minute even with React StrictMode
- *      double-mounts or multiple tabs.
- *   2. **Two-host fallback** — try query1 first, then query2. They sit on
- *      different edges and rate-limit independently.
- *   3. **Stale-while-error** — on upstream failure (429 or otherwise),
- *      keep returning the last good quote for up to STALE_OK_MS. Response
- *      includes `stale: true` so the UI can dim the indicator.
+ *   Primary  → Yahoo (query1 → query2): full intraday 5m series + true
+ *              previous close + market state.
+ *   Fallback → Stooq CSV: only today's OHLC; we synthesize a 4-point
+ *              sketch series (open/high/low/close) and use open as the
+ *              change baseline. Marked source: "stooq" in the response.
+ *
+ * Resilience layers on top of source fallback:
+ *   1. Module-level fresh cache (FRESH_MS) — first response good, serve
+ *      from memory for 60s with no upstream call.
+ *   2. Stale-while-error — on total upstream failure, last good quote
+ *      keeps serving for STALE_OK_MS with `stale: true`.
  */
 
 import { NextResponse } from "next/server";
@@ -30,6 +31,7 @@ type Quote = {
   series: number[];
   marketState: string;
   updatedAt: number;
+  source: "yahoo" | "stooq";
   stale?: boolean;
 };
 
@@ -38,14 +40,16 @@ const STALE_OK_MS = 30 * 60_000;
 
 let cache: { quote: Quote; at: number } | null = null;
 
+const UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605 (KHTML, like Gecko) Version/17.0 Safari/605.1.15";
+
+// ---------- Yahoo ----------
+
 const YAHOO_HOSTS = [
   "https://query1.finance.yahoo.com",
   "https://query2.finance.yahoo.com",
 ];
 const YAHOO_PATH = "/v8/finance/chart/%5EDJI?interval=5m&range=1d";
-
-const UA =
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605 (KHTML, like Gecko) Version/17.0 Safari/605.1.15";
 
 type YahooChart = {
   chart?: {
@@ -57,15 +61,13 @@ type YahooChart = {
         regularMarketTime?: number;
         marketState?: string;
       };
-      indicators?: {
-        quote?: Array<{ close?: Array<number | null> }>;
-      };
+      indicators?: { quote?: Array<{ close?: Array<number | null> }> };
     }>;
     error?: { description?: string } | null;
   };
 };
 
-async function fetchOneHost(host: string): Promise<Quote> {
+async function fetchYahooHost(host: string): Promise<Quote> {
   const res = await fetch(host + YAHOO_PATH, {
     headers: { "User-Agent": UA, Accept: "application/json" },
     cache: "no-store",
@@ -93,6 +95,7 @@ async function fetchOneHost(host: string): Promise<Quote> {
     marketState: meta.marketState ?? "CLOSED",
     updatedAt:
       (meta.regularMarketTime ?? Math.floor(Date.now() / 1000)) * 1000,
+    source: "yahoo",
   };
 }
 
@@ -100,13 +103,64 @@ async function fetchYahoo(): Promise<Quote> {
   let lastErr: unknown = null;
   for (const host of YAHOO_HOSTS) {
     try {
-      return await fetchOneHost(host);
+      return await fetchYahooHost(host);
     } catch (e) {
       lastErr = e;
     }
   }
   throw lastErr ?? new Error("all yahoo hosts failed");
 }
+
+// ---------- Stooq ----------
+
+async function fetchStooq(): Promise<Quote> {
+  const res = await fetch(
+    "https://stooq.com/q/l/?s=^dji&f=sd2t2ohlcv&h&e=csv",
+    {
+      headers: { "User-Agent": UA },
+      cache: "no-store",
+    },
+  );
+  if (!res.ok) throw new Error(`stooq ${res.status}`);
+  const text = await res.text();
+  const lines = text.trim().split("\n");
+  if (lines.length < 2) throw new Error("stooq empty");
+  const [, , , o, h, l, c] = lines[1].split(",");
+  const open = Number(o);
+  const high = Number(h);
+  const low = Number(l);
+  const close = Number(c);
+  if (!Number.isFinite(close)) throw new Error("stooq parse");
+  // No previous-close in this endpoint — use open as the intraday baseline.
+  // Change becomes "session move" rather than "day vs yesterday".
+  return {
+    symbol: "US30",
+    price: close,
+    prev: open,
+    change: close - open,
+    changePct: open > 0 ? ((close - open) / open) * 100 : 0,
+    series: [open, high, low, close],
+    marketState: "CLOSED",
+    updatedAt: Date.now(),
+    source: "stooq",
+  };
+}
+
+async function fetchAny(): Promise<Quote> {
+  try {
+    return await fetchYahoo();
+  } catch (yahooErr) {
+    try {
+      return await fetchStooq();
+    } catch (stooqErr) {
+      throw new Error(
+        `yahoo: ${yahooErr instanceof Error ? yahooErr.message : yahooErr}; stooq: ${stooqErr instanceof Error ? stooqErr.message : stooqErr}`,
+      );
+    }
+  }
+}
+
+// ---------- Handler ----------
 
 export async function GET() {
   if (process.env.DEV_BYPASS_AUTH !== "1") {
@@ -116,17 +170,15 @@ export async function GET() {
     }
   }
 
-  // Layer 1: fresh cache hit — no upstream call.
   if (cache && Date.now() - cache.at < FRESH_MS) {
     return NextResponse.json(cache.quote);
   }
 
   try {
-    const q = await fetchYahoo();
+    const q = await fetchAny();
     cache = { quote: q, at: Date.now() };
     return NextResponse.json(q);
   } catch (e) {
-    // Layer 3: serve stale if recent enough.
     if (cache && Date.now() - cache.at < STALE_OK_MS) {
       return NextResponse.json({ ...cache.quote, stale: true });
     }
