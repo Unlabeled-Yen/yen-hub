@@ -178,16 +178,17 @@ export function Overview() {
       animate={{ opacity: 1 }}
       transition={{ duration: RISE_DURATION, ease: "linear" }}
     >
-      {/* Top spacer — leaves room for the overlay traffic lights (~28px)
-          since the Tauri window uses titleBarStyle: "Overlay". */}
-      <div className="h-12" data-tauri-drag-region />
+      {/* Top spacer — just enough room for the overlay traffic lights
+          (~28px tall). Tightened so the NY clock chip sits visually
+          close to the US30 panel top edge. */}
+      <div className="h-8" data-tauri-drag-region />
 
-      <main className="flex-1 px-8 sm:px-12 py-4">
+      <main className="flex-1 px-8 sm:px-12 py-1">
         {/* Natural-flow stack — each row sizes to its content, page scrolls
             if total height exceeds viewport. Reading is naturally sized;
             TODO's height is mirrored from Reading via JS measurement so
             the two bottoms always align. */}
-        <div className="flex flex-col gap-10 pt-6">
+        <div className="flex flex-col gap-10 pt-0">
           {/* Upper row: chart at max-content, market fills the rest */}
           <div className="grid grid-cols-1 lg:grid-cols-[max-content_1fr] gap-x-10 items-stretch flex-shrink-0">
             <motion.div
