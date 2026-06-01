@@ -701,11 +701,14 @@ export function TodoList() {
     );
   }
   if (!data || !keysReady) {
-    return (
-      <div className="font-mono text-[12px] text-[var(--fg-2)] tracking-[0.30em] uppercase">
-        todos · loading
-      </div>
-    );
+    // Return null instead of a "todos · loading" string. Yen reported
+    // seeing the English loading text flash before the panel suddenly
+    // resets to "首要代辦" with the typewriter. Rendering nothing keeps
+    // the panel area blank during the ~100ms load → no jarring switch
+    // from "loading" markup to the full panel markup. The wrapper in
+    // overview.tsx reserves the height via readingH so the page layout
+    // doesn't shift either.
+    return null;
   }
 
   const titleText = TAB_LABEL[tab];

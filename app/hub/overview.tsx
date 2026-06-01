@@ -159,13 +159,13 @@ export function Overview() {
   // bottoms when items have wildly different natural heights). Reading sits
   // at its content's natural size; TODO's `height` is mirrored from JS.
   const readingRef = useRef<HTMLDivElement | null>(null);
-  // Seed with a realistic estimate so the slab + TODO container has a
-  // stable height during initial paint. Without this readingH was null
-  // → TODO had no fixed height → 0px container → bento cards rendered
-  // tight against the slab → ResizeObserver fired → height settled to
-  // ~600px → bento cards visibly jumped down. The estimate is replaced
-  // by the real measurement after the first ResizeObserver tick.
-  const [readingH, setReadingH] = useState<number>(620);
+  // Seed with a tight estimate of ReadingProgress's actual layout:
+  //   header (~17px text + 20px mb) + cube (380px) ≈ 417px.
+  // Previous 620 estimate caused TODO to render way taller than reading
+  // while data was loading / before ResizeObserver fired, so the
+  // review tab (45 items) extended down close to the carousel dots
+  // instead of aligning with reading's bottom edge.
+  const [readingH, setReadingH] = useState<number>(420);
   useEffect(() => {
     const node = readingRef.current;
     if (!node) return;
@@ -176,7 +176,14 @@ export function Overview() {
     update();
     const obs = new ResizeObserver(update);
     obs.observe(node);
-    return () => obs.disconnect();
+    // One delayed remeasure to catch any post-data layout shift the
+    // RO might miss (data fetch + cube spin + initial paint all settle
+    // by ~2s; remeasure at 2.5s as a backstop).
+    const t = window.setTimeout(update, 2500);
+    return () => {
+      obs.disconnect();
+      window.clearTimeout(t);
+    };
   }, []);
 
   // Horizontal page carousel (page 0 = home, page 1 = bento modules).
