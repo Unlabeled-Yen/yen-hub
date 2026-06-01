@@ -3,18 +3,22 @@
 /**
  * MarketMonitor — top-right of Page A.
  *
- * Currently shows US30 (Dow Jones Industrial Average via Yahoo ^DJI):
- *   - large price, day change + percent, market state chip
- *   - intraday sparkline (5m closes, last ~78 points = US session day)
- *   - 60s polling
+ * US30 candlestick (Yahoo ^DJI, Stooq fallback):
+ *   - 5m / 1h / 1d timeframe switcher
+ *   - big price + day change/percent + market state
+ *   - self-drawn OHLC candle chart (see CandleChart)
+ *   - 60s polling per timeframe
  *
- * VIX + 波動率 slots are still reserved underneath — wire when ready.
+ * VIX + 波動率 slots stay reserved underneath.
  */
 
 import { motion } from "motion/react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
+import { CandleChart, type Candle } from "./candle-chart";
 
 const EASE: [number, number, number, number] = [0.075, 0.82, 0.165, 1];
+
+type Timeframe = "5m" | "1h" | "1d";
 
 type Quote = {
   symbol: string;
@@ -22,10 +26,11 @@ type Quote = {
   prev: number;
   change: number;
   changePct: number;
-  series: number[];
+  candles: Candle[];
   marketState: string;
   updatedAt: number;
   source?: "yahoo" | "stooq";
+  timeframe: Timeframe;
   stale?: boolean;
 };
 
@@ -44,21 +49,6 @@ const fmtPct = new Intl.NumberFormat("en-US", {
   signDisplay: "always",
 });
 
-function buildSparkline(series: number[], w: number, h: number): string {
-  if (series.length < 2) return "";
-  const min = Math.min(...series);
-  const max = Math.max(...series);
-  const span = max - min || 1;
-  const stepX = w / (series.length - 1);
-  return series
-    .map((v, i) => {
-      const x = i * stepX;
-      const y = h - ((v - min) / span) * h;
-      return `${i === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
-    })
-    .join(" ");
-}
-
 function stateLabel(s: string): string {
   switch (s) {
     case "PRE":
@@ -73,7 +63,10 @@ function stateLabel(s: string): string {
   }
 }
 
+const TIMEFRAMES: Timeframe[] = ["5m", "1h", "1d"];
+
 export function MarketMonitor() {
+  const [tf, setTf] = useState<Timeframe>("5m");
   const [quote, setQuote] = useState<Quote | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -81,7 +74,7 @@ export function MarketMonitor() {
     let cancelled = false;
     async function pull() {
       try {
-        const r = await fetch("/api/market/us30", {
+        const r = await fetch(`/api/market/us30?tf=${tf}`, {
           credentials: "same-origin",
         });
         if (!r.ok) {
@@ -103,19 +96,12 @@ export function MarketMonitor() {
       cancelled = true;
       clearInterval(id);
     };
-  }, []);
+  }, [tf]);
 
   const isUp = (quote?.change ?? 0) >= 0;
   const accent = isUp
-    ? "rgba(120, 220, 160, 0.95)" // soft green
-    : "rgba(255, 110, 90, 0.95)"; // warm red
-
-  const sparkW = 360;
-  const sparkH = 60;
-  const sparkPath = useMemo(
-    () => (quote ? buildSparkline(quote.series, sparkW, sparkH) : ""),
-    [quote],
-  );
+    ? "rgba(255, 184, 120, 0.95)" // warm cream — matches the rest of the Yen Hub up-vibe
+    : "rgba(255, 95, 85, 0.95)"; // deep red
 
   return (
     <section
@@ -137,15 +123,15 @@ export function MarketMonitor() {
         style={{
           minHeight: 360,
           borderRadius: 6,
-          border: `1px solid ${isUp ? "rgba(120,220,160,0.18)" : "rgba(255,110,90,0.18)"}`,
+          border: `1px solid ${isUp ? "rgba(255,184,120,0.18)" : "rgba(255,95,85,0.18)"}`,
           background:
             "linear-gradient(180deg, rgba(255,184,120,0.04) 0%, rgba(255,184,120,0) 100%)",
           padding: "20px 22px",
-          gap: 10,
+          gap: 12,
         }}
       >
-        {/* US30 block */}
-        <div className="flex items-baseline justify-between gap-4">
+        {/* Top row: symbol + state + timeframe switcher */}
+        <div className="flex items-center justify-between gap-4">
           <div className="flex items-baseline gap-3">
             <span
               className="text-[11px] tracking-[0.30em] uppercase"
@@ -160,29 +146,60 @@ export function MarketMonitor() {
               DJIA · ^DJI
             </span>
           </div>
-          {quote ? (
-            <span
-              className="text-[9px] tracking-[0.22em] uppercase flex items-center gap-1.5"
-              style={{ color: "var(--fg-2)" }}
-            >
-              {quote.stale ? (
-                <span
-                  title="stale (upstream rate-limited)"
-                  style={{
-                    display: "inline-block",
-                    width: 6,
-                    height: 6,
-                    borderRadius: 3,
-                    background: "rgba(255,180,80,0.85)",
-                    boxShadow: "0 0 6px rgba(255,180,80,0.5)",
-                  }}
-                />
-              ) : null}
-              {stateLabel(quote.marketState)}
-            </span>
-          ) : null}
+          <div className="flex items-center gap-3">
+            {/* Timeframe tabs */}
+            <div className="flex items-center gap-0.5">
+              {TIMEFRAMES.map((t) => {
+                const active = t === tf;
+                return (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => setTf(t)}
+                    className="text-[10px] tracking-[0.18em] uppercase px-2 py-0.5 transition-colors"
+                    style={{
+                      color: active ? "var(--fg-0)" : "var(--fg-2)",
+                      background: active
+                        ? "rgba(255,184,120,0.10)"
+                        : "transparent",
+                      border: "1px solid",
+                      borderColor: active
+                        ? "rgba(255,184,120,0.35)"
+                        : "rgba(255,255,255,0.05)",
+                      borderRadius: 2,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {t}
+                  </button>
+                );
+              })}
+            </div>
+            {quote ? (
+              <span
+                className="text-[9px] tracking-[0.22em] uppercase flex items-center gap-1.5"
+                style={{ color: "var(--fg-2)" }}
+              >
+                {quote.stale ? (
+                  <span
+                    title="stale (upstream rate-limited)"
+                    style={{
+                      display: "inline-block",
+                      width: 6,
+                      height: 6,
+                      borderRadius: 3,
+                      background: "rgba(255,180,80,0.85)",
+                      boxShadow: "0 0 6px rgba(255,180,80,0.5)",
+                    }}
+                  />
+                ) : null}
+                {stateLabel(quote.marketState)}
+              </span>
+            ) : null}
+          </div>
         </div>
 
+        {/* Price + change row */}
         <div className="flex items-end justify-between gap-6">
           <div className="flex items-baseline gap-3 min-w-0">
             <span
@@ -217,60 +234,17 @@ export function MarketMonitor() {
           </div>
         </div>
 
-        {/* Sparkline */}
-        <div
-          style={{
-            marginTop: 4,
-            width: "100%",
-            height: sparkH,
-            position: "relative",
-          }}
-        >
-          {sparkPath ? (
-            <svg
-              width="100%"
-              height={sparkH}
-              viewBox={`0 0 ${sparkW} ${sparkH}`}
-              preserveAspectRatio="none"
-              aria-hidden
-            >
-              <defs>
-                <linearGradient
-                  id="us30-fill"
-                  x1="0"
-                  y1="0"
-                  x2="0"
-                  y2="1"
-                >
-                  <stop offset="0%" stopColor={accent} stopOpacity={0.25} />
-                  <stop offset="100%" stopColor={accent} stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <motion.path
-                d={`${sparkPath} L ${sparkW} ${sparkH} L 0 ${sparkH} Z`}
-                fill="url(#us30-fill)"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ duration: 0.8, ease: EASE }}
-              />
-              <motion.path
-                d={sparkPath}
-                fill="none"
-                stroke={accent}
-                strokeWidth={1.4}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                initial={{ pathLength: 0 }}
-                animate={{ pathLength: 1 }}
-                transition={{ duration: 1.1, ease: [0.22, 0.9, 0.36, 1] }}
-                style={{
-                  filter: `drop-shadow(0 0 4px ${accent.replace("0.95", "0.40")})`,
-                }}
-              />
-            </svg>
+        {/* Candle chart — flex-grow to fill remaining space */}
+        <div className="flex-1 min-h-0 flex flex-col">
+          {quote && quote.candles.length > 0 ? (
+            <CandleChart
+              candles={quote.candles}
+              timeframe={quote.timeframe}
+              height={200}
+            />
           ) : (
             <div
-              className="text-[10px] tracking-[0.28em] uppercase"
+              className="flex-1 flex items-center justify-center text-[10px] tracking-[0.28em] uppercase"
               style={{ color: "var(--fg-2)", opacity: 0.55 }}
             >
               {err ? `error · ${err}` : "loading"}
@@ -279,13 +253,13 @@ export function MarketMonitor() {
         </div>
 
         <div
-          className="flex items-center justify-between text-[9px] tracking-[0.20em] uppercase mt-1"
+          className="flex items-center justify-between text-[9px] tracking-[0.20em] uppercase"
           style={{ color: "var(--fg-2)", opacity: 0.55 }}
         >
           <span>
             {quote?.source === "stooq"
-              ? "Stooq · ^DJI · session"
-              : "Yahoo · ^DJI · 5m"}
+              ? `Stooq · ^DJI · ${tf}`
+              : `Yahoo · ^DJI · ${tf}`}
           </span>
           <span>
             {quote
@@ -300,16 +274,13 @@ export function MarketMonitor() {
 
         {/* VIX + 波動率 — still reserved */}
         <div
-          className="mt-auto pt-4 border-t border-white/[0.04] flex items-center gap-4 text-[10px] tracking-[0.22em] uppercase"
+          className="pt-3 border-t border-white/[0.04] flex items-center gap-4 text-[10px] tracking-[0.22em] uppercase"
           style={{ color: "var(--fg-2)", opacity: 0.55 }}
         >
           <span>VIX —</span>
           <span style={{ opacity: 0.4 }}>·</span>
           <span>波動率 —</span>
-          <span
-            className="ml-auto text-[9px]"
-            style={{ opacity: 0.65 }}
-          >
+          <span className="ml-auto text-[9px]" style={{ opacity: 0.65 }}>
             待接
           </span>
         </div>

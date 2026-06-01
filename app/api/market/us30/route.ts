@@ -1,26 +1,29 @@
 /**
- * GET /api/market/us30
+ * GET /api/market/us30?tf=5m|1h|1d
  *
- * US30 / Dow Jones quote with two-layer source fallback because Yahoo's
- * unauthenticated edges 429 aggressively from residential IPs:
+ * Returns OHLC candles + summary for ^DJI (Dow / US30 underlier).
  *
- *   Primary  → Yahoo (query1 → query2): full intraday 5m series + true
- *              previous close + market state.
- *   Fallback → Stooq CSV: only today's OHLC; we synthesize a 4-point
- *              sketch series (open/high/low/close) and use open as the
- *              change baseline. Marked source: "stooq" in the response.
+ * Timeframes:
+ *   5m → 5-minute candles over the current trading day  (~78 bars)
+ *   1h → 1-hour candles over the past 5 sessions         (~33 bars)
+ *   1d → daily candles over the past 3 months            (~65 bars)
  *
- * Resilience layers on top of source fallback:
- *   1. Module-level fresh cache (FRESH_MS) — first response good, serve
- *      from memory for 60s with no upstream call.
- *   2. Stale-while-error — on total upstream failure, last good quote
- *      keeps serving for STALE_OK_MS with `stale: true`.
+ * Source resolution:
+ *   Primary  → Yahoo (query1 → query2) gives full OHLC time series.
+ *   Fallback → Stooq CSV; only one bar's worth (today's OHLC) — chart
+ *              degrades gracefully to a single candle.
+ *
+ * Resilience layers (per timeframe):
+ *   - Module-level fresh cache (FRESH_MS) keyed by timeframe.
+ *   - Stale-while-error (STALE_OK_MS) — last good kept for 30 min.
  */
 
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
 
 export const dynamic = "force-dynamic";
+
+type Candle = { t: number; o: number; h: number; l: number; c: number };
 
 type Quote = {
   symbol: string;
@@ -28,17 +31,20 @@ type Quote = {
   prev: number;
   change: number;
   changePct: number;
-  series: number[];
+  candles: Candle[];
   marketState: string;
   updatedAt: number;
   source: "yahoo" | "stooq";
+  timeframe: Timeframe;
   stale?: boolean;
 };
+
+type Timeframe = "5m" | "1h" | "1d";
 
 const FRESH_MS = 60_000;
 const STALE_OK_MS = 30 * 60_000;
 
-let cache: { quote: Quote; at: number } | null = null;
+const cache: Map<Timeframe, { quote: Quote; at: number }> = new Map();
 
 const UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605 (KHTML, like Gecko) Version/17.0 Safari/605.1.15";
@@ -49,7 +55,12 @@ const YAHOO_HOSTS = [
   "https://query1.finance.yahoo.com",
   "https://query2.finance.yahoo.com",
 ];
-const YAHOO_PATH = "/v8/finance/chart/%5EDJI?interval=5m&range=1d";
+
+const YAHOO_PARAMS: Record<Timeframe, { interval: string; range: string }> = {
+  "5m": { interval: "5m", range: "1d" },
+  "1h": { interval: "1h", range: "5d" },
+  "1d": { interval: "1d", range: "3mo" },
+};
 
 type YahooChart = {
   chart?: {
@@ -61,14 +72,24 @@ type YahooChart = {
         regularMarketTime?: number;
         marketState?: string;
       };
-      indicators?: { quote?: Array<{ close?: Array<number | null> }> };
+      timestamp?: number[];
+      indicators?: {
+        quote?: Array<{
+          open?: Array<number | null>;
+          high?: Array<number | null>;
+          low?: Array<number | null>;
+          close?: Array<number | null>;
+        }>;
+      };
     }>;
     error?: { description?: string } | null;
   };
 };
 
-async function fetchYahooHost(host: string): Promise<Quote> {
-  const res = await fetch(host + YAHOO_PATH, {
+async function fetchYahooHost(host: string, tf: Timeframe): Promise<Quote> {
+  const { interval, range } = YAHOO_PARAMS[tf];
+  const url = `${host}/v8/finance/chart/%5EDJI?interval=${interval}&range=${range}`;
+  const res = await fetch(url, {
     headers: { "User-Agent": UA, Accept: "application/json" },
     cache: "no-store",
   });
@@ -79,9 +100,32 @@ async function fetchYahooHost(host: string): Promise<Quote> {
     throw new Error(json.chart?.error?.description ?? "no result");
   }
   const meta = result.meta;
-  const closes = result.indicators?.quote?.[0]?.close ?? [];
-  const series = closes.filter((v): v is number => typeof v === "number");
-  const price = Number(meta.regularMarketPrice ?? series.at(-1) ?? 0);
+  const ts = result.timestamp ?? [];
+  const q = result.indicators?.quote?.[0] ?? {};
+  const opens = q.open ?? [];
+  const highs = q.high ?? [];
+  const lows = q.low ?? [];
+  const closes = q.close ?? [];
+
+  const candles: Candle[] = [];
+  for (let i = 0; i < ts.length; i++) {
+    const o = opens[i];
+    const h = highs[i];
+    const l = lows[i];
+    const c = closes[i];
+    if (
+      typeof o === "number" &&
+      typeof h === "number" &&
+      typeof l === "number" &&
+      typeof c === "number"
+    ) {
+      candles.push({ t: ts[i] * 1000, o, h, l, c });
+    }
+  }
+
+  const price = Number(
+    meta.regularMarketPrice ?? candles.at(-1)?.c ?? 0,
+  );
   const prev = Number(meta.chartPreviousClose ?? meta.previousClose ?? price);
   const change = price - prev;
   const changePct = prev > 0 ? (change / prev) * 100 : 0;
@@ -91,19 +135,20 @@ async function fetchYahooHost(host: string): Promise<Quote> {
     prev,
     change,
     changePct,
-    series,
+    candles,
     marketState: meta.marketState ?? "CLOSED",
     updatedAt:
       (meta.regularMarketTime ?? Math.floor(Date.now() / 1000)) * 1000,
     source: "yahoo",
+    timeframe: tf,
   };
 }
 
-async function fetchYahoo(): Promise<Quote> {
+async function fetchYahoo(tf: Timeframe): Promise<Quote> {
   let lastErr: unknown = null;
   for (const host of YAHOO_HOSTS) {
     try {
-      return await fetchYahooHost(host);
+      return await fetchYahooHost(host, tf);
     } catch (e) {
       lastErr = e;
     }
@@ -113,7 +158,7 @@ async function fetchYahoo(): Promise<Quote> {
 
 // ---------- Stooq ----------
 
-async function fetchStooq(): Promise<Quote> {
+async function fetchStooq(tf: Timeframe): Promise<Quote> {
   const res = await fetch(
     "https://stooq.com/q/l/?s=^dji&f=sd2t2ohlcv&h&e=csv",
     {
@@ -131,27 +176,26 @@ async function fetchStooq(): Promise<Quote> {
   const low = Number(l);
   const close = Number(c);
   if (!Number.isFinite(close)) throw new Error("stooq parse");
-  // No previous-close in this endpoint — use open as the intraday baseline.
-  // Change becomes "session move" rather than "day vs yesterday".
   return {
     symbol: "US30",
     price: close,
     prev: open,
     change: close - open,
     changePct: open > 0 ? ((close - open) / open) * 100 : 0,
-    series: [open, high, low, close],
+    candles: [{ t: Date.now(), o: open, h: high, l: low, c: close }],
     marketState: "CLOSED",
     updatedAt: Date.now(),
     source: "stooq",
+    timeframe: tf,
   };
 }
 
-async function fetchAny(): Promise<Quote> {
+async function fetchAny(tf: Timeframe): Promise<Quote> {
   try {
-    return await fetchYahoo();
+    return await fetchYahoo(tf);
   } catch (yahooErr) {
     try {
-      return await fetchStooq();
+      return await fetchStooq(tf);
     } catch (stooqErr) {
       throw new Error(
         `yahoo: ${yahooErr instanceof Error ? yahooErr.message : yahooErr}; stooq: ${stooqErr instanceof Error ? stooqErr.message : stooqErr}`,
@@ -162,25 +206,32 @@ async function fetchAny(): Promise<Quote> {
 
 // ---------- Handler ----------
 
-export async function GET() {
+function parseTf(s: string | null): Timeframe {
+  if (s === "5m" || s === "1h" || s === "1d") return s;
+  return "5m";
+}
+
+export async function GET(req: NextRequest) {
   if (process.env.DEV_BYPASS_AUTH !== "1") {
     const session = await getSession();
     if (!session.userId) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
   }
+  const tf = parseTf(req.nextUrl.searchParams.get("tf"));
 
-  if (cache && Date.now() - cache.at < FRESH_MS) {
-    return NextResponse.json(cache.quote);
+  const cached = cache.get(tf);
+  if (cached && Date.now() - cached.at < FRESH_MS) {
+    return NextResponse.json(cached.quote);
   }
 
   try {
-    const q = await fetchAny();
-    cache = { quote: q, at: Date.now() };
+    const q = await fetchAny(tf);
+    cache.set(tf, { quote: q, at: Date.now() });
     return NextResponse.json(q);
   } catch (e) {
-    if (cache && Date.now() - cache.at < STALE_OK_MS) {
-      return NextResponse.json({ ...cache.quote, stale: true });
+    if (cached && Date.now() - cached.at < STALE_OK_MS) {
+      return NextResponse.json({ ...cached.quote, stale: true });
     }
     return NextResponse.json(
       { error: e instanceof Error ? e.message : String(e) },
