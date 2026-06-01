@@ -12,7 +12,7 @@
  * intentionally irregular stagger.
  */
 
-import { motion } from "motion/react";
+import { motion, useMotionValue, animate, type PanInfo } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CommandPalette } from "@/components/command-palette";
 import { AttentionGrid } from "@/components/attention-grid";
@@ -177,6 +177,44 @@ export function Overview() {
     obs.observe(node);
     return () => obs.disconnect();
   }, []);
+
+  // Horizontal page carousel (page 0 = home, page 1 = bento modules).
+  // Framer Motion drag handles the swipe — Mac trackpad two-finger
+  // pan, plus mouse drag, both work. Snap by drag distance + velocity.
+  const PAGE_COUNT = 2;
+  const [page, setPage] = useState(0);
+  const [vw, setVw] = useState<number>(
+    typeof window === "undefined" ? 1200 : window.innerWidth,
+  );
+  useEffect(() => {
+    const onResize = () => setVw(window.innerWidth);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  const carouselX = useMotionValue(0);
+  // Snap carouselX whenever page changes (incl. on mount).
+  useEffect(() => {
+    const controls = animate(carouselX, -page * vw, {
+      type: "spring",
+      stiffness: 220,
+      damping: 28,
+    });
+    return () => controls.stop();
+  }, [page, vw, carouselX]);
+  function onCarouselDragEnd(_e: unknown, info: PanInfo) {
+    const dx = info.offset.x;
+    const vx = info.velocity.x;
+    // Distance threshold OR velocity threshold flips the page.
+    const distThresh = vw * 0.18;
+    const velThresh = 380;
+    let next = page;
+    if (dx < -distThresh || vx < -velThresh) {
+      next = Math.min(PAGE_COUNT - 1, page + 1);
+    } else if (dx > distThresh || vx > velThresh) {
+      next = Math.max(0, page - 1);
+    }
+    setPage(next);
+  }
   return (
     <motion.div
       className="flex flex-1 flex-col"
@@ -195,21 +233,26 @@ export function Overview() {
           close to the US30 panel top edge. */}
       <div className="h-8" data-tauri-drag-region />
 
-      {/* Horizontal carousel: Page 1 = home dashboard, Page 2 = bento
-          modules. CSS scroll-snap handles the swipe — Mac trackpad
-          two-finger horizontal swipe slides between pages. Scrollbar
-          hidden via hub-scrollbar; pages snap to start. */}
-      <div
-        className="flex-1 overflow-x-auto overflow-y-hidden flex hub-scrollbar"
+      {/* Horizontal carousel — Framer Motion drag instead of CSS
+          scroll-snap (which Yen reported feeling sluggish on Mac
+          trackpad). Drag locks to x-axis; drag-end snaps by distance
+          + velocity. Dots at the bottom show current page. */}
+      <div className="flex-1 relative overflow-hidden">
+      <motion.div
+        className="absolute inset-0 flex"
         style={{
-          scrollSnapType: "x mandatory",
-          scrollBehavior: "smooth",
+          x: carouselX,
+          width: `${PAGE_COUNT * 100}vw`,
         }}
+        drag="x"
+        dragDirectionLock
+        dragElastic={0.08}
+        dragMomentum={false}
+        onDragEnd={onCarouselDragEnd}
       >
         {/* Page 1 — Home (existing content) */}
         <main
-          className="shrink-0 w-screen px-8 sm:px-12 py-1 overflow-y-auto hub-scrollbar"
-          style={{ scrollSnapAlign: "start" }}
+          className="shrink-0 w-screen h-full px-8 sm:px-12 py-1 overflow-y-auto hub-scrollbar"
         >
           <div className="flex flex-col gap-2 pt-0">
             {/* Upper row: chart at max-content, market fills the rest */}
@@ -261,12 +304,9 @@ export function Overview() {
           </div>
         </main>
 
-        {/* Page 2 — Bento modules. Lives here on its own page so the
-            home dashboard reads clean without anything beneath. Swipe
-            right (two-finger trackpad) to reach. */}
+        {/* Page 2 — Bento modules. Swipe right or drag left to reach. */}
         <main
-          className="shrink-0 w-screen px-8 sm:px-12 py-1 overflow-y-auto hub-scrollbar"
-          style={{ scrollSnapAlign: "start" }}
+          className="shrink-0 w-screen h-full px-8 sm:px-12 py-1 overflow-y-auto hub-scrollbar"
         >
           <div
             className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 auto-rows-[140px] gap-4"
@@ -290,6 +330,38 @@ export function Overview() {
             ))}
           </div>
         </main>
+      </motion.div>
+      {/* Page indicator dots — click to jump. Sits centered at the
+          very bottom of the viewport, above all carousel content. */}
+      <nav
+        className="absolute left-1/2 -translate-x-1/2 flex items-center gap-2 z-10"
+        aria-label="page indicator"
+        style={{ bottom: 16 }}
+      >
+        {Array.from({ length: PAGE_COUNT }).map((_, i) => (
+          <button
+            key={i}
+            type="button"
+            onClick={() => setPage(i)}
+            aria-label={`page ${i + 1}`}
+            style={{
+              width: 7,
+              height: 7,
+              borderRadius: 999,
+              background:
+                i === page
+                  ? "rgba(255,184,120,0.9)"
+                  : "rgba(255,255,255,0.18)",
+              boxShadow:
+                i === page ? "0 0 6px rgba(255,184,120,0.55)" : "none",
+              border: "none",
+              cursor: "pointer",
+              padding: 0,
+              transition: "background 240ms, box-shadow 240ms",
+            }}
+          />
+        ))}
+      </nav>
       </div>
 
       <CommandPalette />
