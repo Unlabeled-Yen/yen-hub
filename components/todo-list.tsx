@@ -115,11 +115,13 @@ const T_END = 3.5;
 // (TypewriterText removed — Yen cancelled the typewriter effect; all
 // item texts now use the same simple opacity fade-in as days-ago.)
 
-// All scaled up ~1.33× from the previous 15s timer step per Yen.
-const FADE_BASELINE_MS = 700;
-const FADE_STAGGER_MS = 160;
-const STAGGER_CAP = 12;
-const FADE_DUR = 0.95;
+// Slowed further per Yen — last bump felt almost imperceptible. The
+// biggest perceived "fast" was the per-item fade duration; bumping
+// that and the stagger so each item is clearly its own beat.
+const FADE_BASELINE_MS = 800;
+const FADE_STAGGER_MS = 300;
+const STAGGER_CAP = 15;
+const FADE_DUR = 2.0;
 
 function TodoItem({
   t,
@@ -207,7 +209,7 @@ function TodoItem({
   const cappedI = Math.min(index, STAGGER_CAP);
   const overflowI = Math.max(0, index - STAGGER_CAP);
   const itemBase =
-    FADE_BASELINE_MS + cappedI * FADE_STAGGER_MS + overflowI * 20;
+    FADE_BASELINE_MS + cappedI * FADE_STAGGER_MS + overflowI * 50;
   const bodyText = trunc(t.text, 90);
   const fileText = fileName(t.file);
   const daysText = dayLabel(t.mtimeMs);
@@ -409,7 +411,7 @@ export function TodoList() {
     //   baseline 500ms + 12*120ms = 1940ms + 700ms fade = 2.64s.
     // Add buffer; after flip, newly-mounted items (tab switch) render
     // instantly.
-    const id = window.setTimeout(() => setEntryPhase(false), 20_000);
+    const id = window.setTimeout(() => setEntryPhase(false), 25_000);
     return () => window.clearTimeout(id);
   }, [data, keysReady]);
 
