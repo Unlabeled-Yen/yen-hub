@@ -15,6 +15,7 @@
 import { motion } from "motion/react";
 import { useEffect, useState } from "react";
 import { parseBook as parseBookName } from "@/lib/vault/book-translations";
+import { EASE } from "@/lib/animation/constants";
 
 type Zone =
   | "library"
@@ -94,7 +95,6 @@ const SHORT: Record<Zone, string> = {
 const COL_W = 28; // each column width in px (slimmer = less mass)
 const COL_H = 320; // chart height — taller now that lower row is fixed
 const COL_GAP = 22; // gap between columns (more air around slim columns)
-const EASE: [number, number, number, number] = [0.075, 0.82, 0.165, 1];
 const BAR_DUR = 2.5; // slower draw
 const ROW_STAGGER = 0.18;
 const FILL_OFFSET = 0.024; // fill barely trails pen (was 0.08, now -70%)

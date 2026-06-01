@@ -21,6 +21,7 @@
 import { motion } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { parseBook as parseBookShared } from "@/lib/vault/book-translations";
+import { EASE } from "@/lib/animation/constants";
 
 type BookSummary = {
   name: string;
@@ -40,8 +41,6 @@ type AttentionResponse = {
     books?: BookSummary[]; // full list — preferred when present
   };
 };
-
-const EASE: [number, number, number, number] = [0.075, 0.82, 0.165, 1];
 
 // Re-export parseBook under a local alias so existing call sites don't change.
 const parseBook = parseBookShared;

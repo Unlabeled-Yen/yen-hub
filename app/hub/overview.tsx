@@ -20,6 +20,7 @@ import { TodoList } from "@/components/todo-list";
 import { ReadingProgress } from "@/components/reading-progress";
 import { MarketMonitor } from "@/components/market-monitor";
 import { WorldClock } from "@/components/world-clock";
+import { EASE as RISE_EASE } from "@/lib/animation/constants";
 
 type Span = { cols?: number; rows?: number };
 type ModuleDef = {
@@ -150,8 +151,7 @@ function useShuffledDelays(count: number): number[] {
 
 /** Shared timing — page fade and card rise both ride this curve. */
 const RISE_DURATION = 1.1;
-// Strong ease-out: fast initial acceleration, long quiet settle.
-const RISE_EASE: [number, number, number, number] = [0.075, 0.82, 0.165, 1];
+// RISE_EASE is just the shared EASE renamed at import for clarity.
 
 export function Overview() {
   const delays = useShuffledDelays(MODULES.length);
@@ -259,12 +259,10 @@ export function Overview() {
   return (
     <motion.div
       className="flex flex-1 flex-col relative"
-      // Inline opacity-0 to defeat the SSR-hydration flash where content
-      // briefly paints at full opacity before motion's initial kicks in.
-      // (The earlier K-candle blob was caused by a different bug — Stooq
-      // fallback's 1-candle response with no width clamp — so this style
-      // is safe.) `relative` anchors the absolute-positioned WorldClock
-      // below.
+      // Inline opacity-0 to defeat the SSR-hydration flash where
+      // content briefly paints at full opacity before motion's initial
+      // kicks in. `relative` anchors the absolute-positioned
+      // WorldClock below.
       style={{ opacity: 0 }}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}

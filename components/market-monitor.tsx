@@ -15,8 +15,7 @@
 import { motion } from "motion/react";
 import { useEffect, useState } from "react";
 import { CandleChart, type Candle } from "./candle-chart";
-
-const EASE: [number, number, number, number] = [0.075, 0.82, 0.165, 1];
+import { EASE } from "@/lib/animation/constants";
 
 type Timeframe = "15m" | "2h" | "1d";
 

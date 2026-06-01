@@ -19,6 +19,7 @@
 
 import { motion, AnimatePresence } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { EASE } from "@/lib/animation/constants";
 
 type Todo = {
   file: string;
@@ -36,7 +37,6 @@ type TodosResponse = {
   priorityKeys: string[];
 };
 
-const EASE: [number, number, number, number] = [0.075, 0.82, 0.165, 1];
 const OLD_DAYS = 7;
 
 type Tab = "priority" | "category" | "review";
@@ -112,11 +112,8 @@ type ClickMode = "strike" | "promote" | "none";
 // the page reads as one breath instead of three separate openings.
 const T_END = 3.5;
 
-// (TypewriterText removed — Yen cancelled the typewriter effect; all
-// item texts now use the same simple opacity fade-in as days-ago.)
-
-// Yen prefers short fade + long stagger — each item snaps in
-// individually but with a clear gap between items, not a slow blur.
+// Short fade + long stagger — each item snaps in individually but
+// with a clear gap between items, not a slow blur.
 const FADE_BASELINE_MS = 400;
 const FADE_STAGGER_MS = 450;
 const STAGGER_CAP = 15;
