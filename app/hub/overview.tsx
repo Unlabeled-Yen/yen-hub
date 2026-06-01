@@ -201,10 +201,9 @@ export function Overview() {
             TODO's height is mirrored from Reading via JS measurement so
             the two bottoms always align. */}
         {/* gap between upper (chart + market) and lower (reading + todo)
-            rows. Original 10 (40px) → 3 (12px, too tight) → 8 (32px) as
-            the comfortable middle that still keeps the slab visually
-            tucked under the US30 panel. */}
-        <div className="flex flex-col gap-8 pt-0">
+            rows. Tuned to gap-2 (8px) per Yen's call — slab tucked
+            tight against the US30 panel bottom. */}
+        <div className="flex flex-col gap-2 pt-0">
           {/* Upper row: chart at max-content, market fills the rest */}
           <div className="grid grid-cols-1 lg:grid-cols-[max-content_1fr] gap-x-10 items-stretch flex-shrink-0">
             <motion.div
