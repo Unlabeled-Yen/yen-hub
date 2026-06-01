@@ -283,10 +283,18 @@ export function CandleChart({
     const ds = dragRef.current;
     if (!e || !ds) return;
     if (ds.kind === "pan") {
+      // 2D pan — both horizontal and vertical follow the cursor.
+      // dx → shift in candles (drag right reveals earlier candles).
+      // dy → shift in price (drag down reveals higher prices, since
+      // dragging the viewport down moves the visible price window up).
       const dx = e.clientX - ds.startClientX;
+      const dy = e.clientY - ds.startClientY;
       const newXStart =
         ds.startXStart - dx / Math.max(0.5, candleWidthRef.current);
+      const newYCenter =
+        ds.startYCenter + dy / Math.max(0.0001, yScaleRef.current);
       setXStart(newXStart);
+      setYCenter(newYCenter);
     } else if (ds.kind === "price-zoom") {
       const dy = e.clientY - ds.startClientY;
       const factor = Math.exp(-dy / 180);
@@ -844,7 +852,7 @@ export function CandleChart({
           pointerEvents: "none",
         }}
       >
-        WHEEL: K SPACING · DRAG ←→: PAN · RIGHT-AXIS ↑↓: HEIGHT · 2×CLICK RESET
+        WHEEL: K SPACING · DRAG: PAN · RIGHT-AXIS ↑↓: HEIGHT · 2×CLICK RESET
       </div>
     </div>
   );
