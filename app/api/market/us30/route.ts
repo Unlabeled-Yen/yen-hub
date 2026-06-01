@@ -197,6 +197,58 @@ async function fetchTwelveData(tf: Timeframe, key: string): Promise<Quote> {
   };
 }
 
+// ---------- Mock (dev) ----------
+// Enabled via `MOCK_US30=1` in .env.local. Returns a deterministic
+// synthetic OHLC series so the UI can be reloaded freely during dev
+// without burning Twelve Data's 8/min × 800/day budget.
+function fetchMock(tf: Timeframe): Quote {
+  // Bar counts matching production TD_OUTPUTSIZE so the chart looks
+  // about right.
+  const n = tf === "15m" ? 78 : tf === "2h" ? 60 : 90;
+  // Time step in minutes per bar.
+  const stepMin = tf === "15m" ? 15 : tf === "2h" ? 120 : 60 * 24;
+  const stepMs = stepMin * 60_000;
+  // Deterministic-ish pseudo-random based on bar index (no Math.random
+  // so reloads are stable).
+  const lcg = (seed: number) => {
+    let s = seed;
+    return () => {
+      s = (s * 1664525 + 1013904223) % 0xffffffff;
+      return s / 0xffffffff;
+    };
+  };
+  const rnd = lcg(tf === "15m" ? 31 : tf === "2h" ? 47 : 73);
+
+  let close = 50_000; // starting price
+  const candles: Candle[] = [];
+  const now = Date.now();
+  for (let i = n - 1; i >= 0; i--) {
+    const t = now - i * stepMs;
+    // Drift up over time + random walk
+    const drift = (n - i) * 8;
+    const move = (rnd() - 0.5) * 220;
+    const open = close;
+    close = Math.max(40_000, open + move + drift * 0.02);
+    const high = Math.max(open, close) + rnd() * 80;
+    const low = Math.min(open, close) - rnd() * 80;
+    candles.push({ t, o: open, h: high, l: low, c: close });
+  }
+  const last = candles[candles.length - 1];
+  const prev = candles[candles.length - 2]?.c ?? last.o;
+  return {
+    symbol: "US30",
+    price: last.c,
+    prev,
+    change: last.c - prev,
+    changePct: prev > 0 ? ((last.c - prev) / prev) * 100 : 0,
+    candles,
+    marketState: "REGULAR",
+    updatedAt: Date.now(),
+    source: "twelvedata", // pretend; UI doesn't care
+    timeframe: tf,
+  };
+}
+
 // ---------- Stooq (fallback) ----------
 
 async function fetchStooq(tf: Timeframe): Promise<Quote> {
@@ -251,6 +303,20 @@ export async function GET(req: NextRequest) {
     }
   }
   const tf = parseTf(req.nextUrl.searchParams.get("tf"));
+
+  // Dev mock — bypass all upstreams. Set MOCK_US30=1 in .env.local
+  // while iterating on the UI to keep TD's 8/min × 800/day budget
+  // intact. Cached per-tf so it doesn't flicker between requests.
+  if (process.env.MOCK_US30 === "1") {
+    const c = cache.get(tf);
+    if (c && Date.now() - c.at < 10 * 60_000) {
+      return NextResponse.json(c.quote);
+    }
+    const q = fetchMock(tf);
+    cache.set(tf, { quote: q, at: Date.now() });
+    console.log(`[us30] tf=${tf} source=MOCK candles=${q.candles.length}`);
+    return NextResponse.json(q);
+  }
 
   const cached = cache.get(tf);
   if (cached && Date.now() - cached.at < FRESH_MS) {
