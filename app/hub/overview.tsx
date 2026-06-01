@@ -12,7 +12,7 @@
  * intentionally irregular stagger.
  */
 
-import { motion, useMotionValue, animate, type PanInfo } from "motion/react";
+import { motion, useMotionValue, animate } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CommandPalette } from "@/components/command-palette";
 import { AttentionGrid } from "@/components/attention-grid";
@@ -179,10 +179,15 @@ export function Overview() {
   }, []);
 
   // Horizontal page carousel (page 0 = home, page 1 = bento modules).
-  // Framer Motion drag handles the swipe — Mac trackpad two-finger
-  // pan, plus mouse drag, both work. Snap by drag distance + velocity.
+  // Trigger: horizontal wheel input (Mac trackpad two-finger swipe OR
+  // mouse with horizontal wheel). NO drag — Yen disabled click-and-drag
+  // since it added unwanted friction.
   const PAGE_COUNT = 2;
   const [page, setPage] = useState(0);
+  const pageRef = useRef(0);
+  useEffect(() => {
+    pageRef.current = page;
+  }, [page]);
   const [vw, setVw] = useState<number>(
     typeof window === "undefined" ? 1200 : window.innerWidth,
   );
@@ -192,7 +197,6 @@ export function Overview() {
     return () => window.removeEventListener("resize", onResize);
   }, []);
   const carouselX = useMotionValue(0);
-  // Snap carouselX whenever page changes (incl. on mount).
   useEffect(() => {
     const controls = animate(carouselX, -page * vw, {
       type: "spring",
@@ -201,20 +205,49 @@ export function Overview() {
     });
     return () => controls.stop();
   }, [page, vw, carouselX]);
-  function onCarouselDragEnd(_e: unknown, info: PanInfo) {
-    const dx = info.offset.x;
-    const vx = info.velocity.x;
-    // Distance threshold OR velocity threshold flips the page.
-    const distThresh = vw * 0.18;
-    const velThresh = 380;
-    let next = page;
-    if (dx < -distThresh || vx < -velThresh) {
-      next = Math.min(PAGE_COUNT - 1, page + 1);
-    } else if (dx > distThresh || vx > velThresh) {
-      next = Math.max(0, page - 1);
-    }
-    setPage(next);
-  }
+
+  // Wheel-driven page change. Accumulates horizontal deltaX from the
+  // carousel container; once it crosses THRESH the page flips and the
+  // accumulator resets. cooldownRef debounces so one big trackpad
+  // flick (which fires many wheel events in quick succession) flips
+  // exactly one page, not several.
+  const carouselContainerRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = carouselContainerRef.current;
+    if (!el) return;
+    const THRESH = 90; // px of accumulated deltaX
+    const COOLDOWN = 600; // ms — block further flips while page settles
+    let accum = 0;
+    let cooldownUntil = 0;
+    let resetTimer: number | null = null;
+    const handler = (e: WheelEvent) => {
+      // Only react to horizontal wheel intent. Vertical wheels pass
+      // through to the inner page's own scroll.
+      if (Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
+      e.preventDefault();
+      const now = Date.now();
+      if (now < cooldownUntil) return;
+      accum += e.deltaX;
+      // Auto-reset the accumulator after a brief idle so partial swipes
+      // don't accumulate forever across separate gestures.
+      if (resetTimer !== null) window.clearTimeout(resetTimer);
+      resetTimer = window.setTimeout(() => (accum = 0), 200);
+      if (accum >= THRESH) {
+        accum = 0;
+        cooldownUntil = now + COOLDOWN;
+        setPage((p) => Math.min(PAGE_COUNT - 1, p + 1));
+      } else if (accum <= -THRESH) {
+        accum = 0;
+        cooldownUntil = now + COOLDOWN;
+        setPage((p) => Math.max(0, p - 1));
+      }
+    };
+    el.addEventListener("wheel", handler, { passive: false });
+    return () => {
+      el.removeEventListener("wheel", handler);
+      if (resetTimer !== null) window.clearTimeout(resetTimer);
+    };
+  }, []);
   return (
     <motion.div
       className="flex flex-1 flex-col"
@@ -233,22 +266,21 @@ export function Overview() {
           close to the US30 panel top edge. */}
       <div className="h-8" data-tauri-drag-region />
 
-      {/* Horizontal carousel — Framer Motion drag instead of CSS
-          scroll-snap (which Yen reported feeling sluggish on Mac
-          trackpad). Drag locks to x-axis; drag-end snaps by distance
-          + velocity. Dots at the bottom show current page. */}
-      <div className="flex-1 relative overflow-hidden">
+      {/* Horizontal carousel — driven by horizontal wheel events
+          (Mac trackpad two-finger swipe + mouse with horizontal wheel).
+          No drag per Yen's spec. Carousel container catches wheel and
+          accumulates deltaX; once threshold reached, snap to next/prev
+          page. Vertical wheel passes through to inner page scroll. */}
+      <div
+        className="flex-1 relative overflow-hidden"
+        ref={carouselContainerRef}
+      >
       <motion.div
         className="absolute inset-0 flex"
         style={{
           x: carouselX,
           width: `${PAGE_COUNT * 100}vw`,
         }}
-        drag="x"
-        dragDirectionLock
-        dragElastic={0.08}
-        dragMomentum={false}
-        onDragEnd={onCarouselDragEnd}
       >
         {/* Page 1 — Home (existing content) */}
         <main
