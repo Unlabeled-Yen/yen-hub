@@ -25,6 +25,7 @@ import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, type UIMessage } from "ai";
 import { motion } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { IntentCard } from "@/components/agent/intent-card";
 import {
   createConversation,
   deriveTitle,
@@ -33,18 +34,16 @@ import {
   type Conversation as Convo,
 } from "@/lib/conversations/store";
 
+/** Sentinel format Duffy embeds in chat to surface an approval card inline.
+ *  See `lib/agent/duffy/prompt.ts` and `lib/agent/duffy/agent.ts`. */
+const INTENT_SENTINEL = /<<INTENT:(int_[A-Za-z0-9-]+)>>/g;
+
 function isEditableTarget(t: EventTarget | null): boolean {
   if (!(t instanceof HTMLElement)) return false;
   const tag = t.tagName;
   if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
   if (t.isContentEditable) return true;
   return false;
-}
-
-function isPrintable(e: KeyboardEvent): boolean {
-  if (e.metaKey || e.ctrlKey || e.altKey) return false;
-  if (e.key.length !== 1) return false;
-  return true;
 }
 
 /** No-activity grace before the conversation collapses to a single-line
@@ -148,7 +147,10 @@ export function CommandPalette() {
     };
   }, [collapsed]);
 
-  // Global keyboard listener — heart of "type to summon"
+  // Global keyboard listener — Space-to-summon (was: any-printable-key).
+  // Per spec, only the spacebar opens the palette; other characters
+  // (letters, digits, punctuation, IME composition) are no longer
+  // triggers, so casual typing on Page A doesn't accidentally summon.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       // Esc → fade out (matches the auto-close behaviour)
@@ -166,20 +168,11 @@ export function CommandPalette() {
       }
       // Already open OR target is editable → let it pass
       if (open || isEditableTarget(e.target)) return;
-      if (!isPrintable(e)) return;
-
-      // IME composition (Chinese / Japanese / Korean):
-      // do NOT preventDefault and do NOT prefill — let the focused
-      // textarea catch the composition naturally so the first character
-      // (which was the IME's bopomofo intermediate) isn't dropped.
-      if (e.isComposing) {
-        setOpen(true);
-        return;
-      }
-
-      // Latin printable: capture the key as prefill.
+      // Only the spacebar triggers — and only when no modifier is held
+      // (Ctrl/Cmd/Alt+Space should pass through to OS shortcuts).
+      if (e.key !== " " || e.metaKey || e.ctrlKey || e.altKey) return;
       e.preventDefault();
-      setInput(e.key);
+      setInput(""); // no prefill — space is the trigger, not content
       setOpen(true);
     };
     window.addEventListener("keydown", onKeyDown);
@@ -266,23 +259,33 @@ export function CommandPalette() {
           setTimeout(() => setOpen(false), FADE_MS);
         }
       }}
+      style={{
+        // Light backdrop tint + blur so panels behind soften when the
+        // palette is open. Fades in/out with the palette itself so the
+        // transition feels of-a-piece.
+        background: leaving ? "rgba(0,0,0,0)" : "rgba(0,0,0,0.18)",
+        backdropFilter: leaving ? "blur(0px)" : "blur(6px) saturate(0.9)",
+        WebkitBackdropFilter: leaving
+          ? "blur(0px)"
+          : "blur(6px) saturate(0.9)",
+        transition: `background ${FADE_MS}ms ease-out, backdrop-filter ${FADE_MS}ms ease-out, -webkit-backdrop-filter ${FADE_MS}ms ease-out`,
+      }}
     >
-      {/* Draggable, fading column */}
+      {/* Draggable, fading column. Positioned dead-center of the window
+          via left/top 50% + translate(-50%, -50%). User drag can offset
+          from there. */}
       <motion.div
         drag
         dragMomentum={false}
         dragElastic={0.05}
-        dragConstraints={{ left: -400, right: 400, top: -250, bottom: 350 }}
-        // Skip first-frame interpolation that caused the palette to
-        // appear off-position then snap to target on open.
+        dragConstraints={{ left: -400, right: 400, top: -300, bottom: 300 }}
         initial={false}
         animate={{ opacity: leaving ? 0 : 1 }}
         transition={{
           opacity: { duration: leaving ? FADE_MS / 1000 : 0.3, ease: "easeOut" },
         }}
-        className="absolute left-1/2 -translate-x-1/2 w-full max-w-2xl px-8 pointer-events-none"
+        className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-2xl px-8 pointer-events-none"
         style={{
-          bottom: "25vh",
           cursor: holding ? "grabbing" : "grab",
         }}
         onMouseDown={() => setHolding(true)}
@@ -412,6 +415,77 @@ function Turn({
   // In clamped (peek) mode: hide role label and clamp text to one line.
   // The label is animated out via motion's height tween implicitly through
   // CSS transition since it's display:block always.
+  const renderBody = () => {
+    // In clamped peek mode we always want plain one-line text, no cards.
+    if (clamped) {
+      return (
+        <div
+          className="text-[14px] leading-relaxed whitespace-nowrap overflow-hidden text-ellipsis"
+          style={{
+            color: isUser
+              ? "rgba(255, 255, 255, 0.42)"
+              : "rgba(255, 255, 255, 0.62)",
+          }}
+          title={text}
+        >
+          {text.replace(/\s+/g, " ").trim()}
+        </div>
+      );
+    }
+
+    // Assistant messages may carry Duffy intent sentinels. Split text into
+    // (text | intent-card | text | intent-card | …) segments preserving
+    // order so context reads naturally.
+    if (!isUser && INTENT_SENTINEL.test(text)) {
+      INTENT_SENTINEL.lastIndex = 0;
+      const segments: Array<
+        { type: "text"; text: string } | { type: "intent"; id: string }
+      > = [];
+      let lastIndex = 0;
+      for (const m of text.matchAll(INTENT_SENTINEL)) {
+        const idx = m.index ?? 0;
+        if (idx > lastIndex) {
+          segments.push({ type: "text", text: text.slice(lastIndex, idx) });
+        }
+        segments.push({ type: "intent", id: m[1] });
+        lastIndex = idx + m[0].length;
+      }
+      if (lastIndex < text.length) {
+        segments.push({ type: "text", text: text.slice(lastIndex) });
+      }
+      return (
+        <div className="text-[14px] leading-relaxed">
+          {segments.map((seg, i) =>
+            seg.type === "text" ? (
+              <span
+                key={i}
+                className="whitespace-pre-wrap"
+                style={{ color: "rgba(255, 255, 255, 0.62)" }}
+              >
+                {seg.text}
+              </span>
+            ) : (
+              <IntentCard key={i} intentId={seg.id} />
+            ),
+          )}
+        </div>
+      );
+    }
+
+    return (
+      <div
+        className="text-[14px] leading-relaxed whitespace-pre-wrap"
+        style={{
+          color: isUser
+            ? "rgba(255, 255, 255, 0.42)"
+            : "rgba(255, 255, 255, 0.62)",
+        }}
+      >
+        {text}
+      </div>
+    );
+  };
+
   return (
     <div>
       <div
@@ -425,25 +499,7 @@ function Turn({
       >
         {isUser ? "you" : "yen"}
       </div>
-      <div
-        className={`text-[14px] leading-relaxed ${
-          clamped
-            ? "whitespace-nowrap overflow-hidden text-ellipsis"
-            : "whitespace-pre-wrap"
-        }`}
-        // Lower-contrast gray-white per role — AI brighter than user
-        // so the eye still distinguishes them but neither is stark.
-        style={{
-          color: isUser
-            ? "rgba(255, 255, 255, 0.42)"
-            : "rgba(255, 255, 255, 0.62)",
-        }}
-        title={clamped ? text : undefined}
-      >
-        {clamped
-          ? text.replace(/\s+/g, " ").trim()
-          : text}
-      </div>
+      {renderBody()}
     </div>
   );
 }
