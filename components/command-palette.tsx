@@ -282,21 +282,25 @@ export function CommandPalette() {
         // pushes the chat to fully-expanded mode the tint bumps up
         // again so the conversation reads on top of an even quieter
         // backdrop.
+        // Lower blur strength + heavier tint than the previous pass —
+        // strong blur scatters bright pixels behind into halos around
+        // text. Pulling blur down ~30% and lifting the dark tint masks
+        // most of that bleed while keeping the "frosted" feel.
         background: leaving
           ? "rgba(0,0,0,0)"
           : userExpanded
-            ? "rgba(0,0,0,0.50)"
-            : "rgba(0,0,0,0.28)",
+            ? "rgba(0,0,0,0.58)"
+            : "rgba(0,0,0,0.36)",
         backdropFilter: leaving
           ? "blur(0px)"
           : userExpanded
-            ? "blur(22px) saturate(0.6)"
-            : "blur(14px) saturate(0.8)",
+            ? "blur(14px) saturate(0.85)"
+            : "blur(9px) saturate(0.9)",
         WebkitBackdropFilter: leaving
           ? "blur(0px)"
           : userExpanded
-            ? "blur(22px) saturate(0.6)"
-            : "blur(14px) saturate(0.8)",
+            ? "blur(14px) saturate(0.85)"
+            : "blur(9px) saturate(0.9)",
         transition: `background ${FADE_MS}ms ease-out, backdrop-filter ${FADE_MS}ms ease-out, -webkit-backdrop-filter ${FADE_MS}ms ease-out`,
       }}
     >
@@ -312,7 +316,7 @@ export function CommandPalette() {
           width: "100%",
           height: "100%",
           pointerEvents: "none",
-          opacity: leaving ? 0 : 0.18,
+          opacity: leaving ? 0 : 0.10,
           transition: `opacity ${FADE_MS}ms ease-out`,
         }}
         preserveAspectRatio="none"
@@ -403,11 +407,17 @@ export function CommandPalette() {
               ref={scrollRef}
               className="pointer-events-auto mb-6 hub-scrollbar"
               initial={false}
-              // Soft height ceiling only as a safety net for extreme
-              // edge cases (10 huge turns at once). 80vh ≈ never hit
-              // under realistic conversation pacing.
+              // Cap chosen so the entire assembly (messages + gap +
+              // input + label margins) stays inside the viewport when
+              // centered with translate(-50%, -50%). userExpanded
+              // value subtracts the input/header height so 10-turn
+              // mode tops out well under 100vh.
               animate={{
-                maxHeight: collapsed ? 36 : userExpanded ? "70vh" : "40vh",
+                maxHeight: collapsed
+                  ? 36
+                  : userExpanded
+                    ? "calc(82vh - 90px)"
+                    : "calc(45vh - 60px)",
               }}
               transition={{
                 duration: collapsed || userExpanded ? 1.2 : 0.45,
