@@ -71,7 +71,9 @@ export function WorldClock() {
       className="fixed z-50 font-mono select-none pointer-events-none"
       style={{
         top: 14,
-        right: 22,
+        // Aligned with the US30 panel's right edge (= page's `sm:px-12`
+        // right padding, 48px from viewport).
+        right: 48,
         fontSize: 12,
         letterSpacing: "0.22em",
         fontWeight: 700,

@@ -133,10 +133,15 @@ export function CandleChart({
   candles,
   timeframe,
   height = 200,
+  onHoverChange,
 }: {
   candles: Candle[];
   timeframe: "15m" | "2h" | "1d";
   height?: number;
+  /** Fires whenever the hovered candle changes. Pass the candle (or null
+   *  when the cursor leaves the plot) so the parent can render an
+   *  out-of-panel info chip with the exact date/time. */
+  onHoverChange?: (candle: Candle | null) => void;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(600);
@@ -297,6 +302,16 @@ export function CandleChart({
 
   // Hover -------------------------------------------------------------
   const [hoverGlobalIdx, setHoverGlobalIdx] = useState<number | null>(null);
+  // Notify parent on every hover change so it can render the date/time
+  // chip outside the panel.
+  useEffect(() => {
+    if (!onHoverChange) return;
+    if (hoverGlobalIdx === null || hoverGlobalIdx >= candles.length) {
+      onHoverChange(null);
+    } else {
+      onHoverChange(candles[hoverGlobalIdx] ?? null);
+    }
+  }, [hoverGlobalIdx, candles, onHoverChange]);
   const [hoverPos, setHoverPos] = useState<{ x: number; y: number } | null>(
     null,
   );

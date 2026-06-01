@@ -51,10 +51,35 @@ const fmtPct = new Intl.NumberFormat("en-US", {
 
 const TIMEFRAMES: Timeframe[] = ["15m", "2h", "1d"];
 
+function fmtHoverTime(t: number, tf: Timeframe): string {
+  const d = new Date(t);
+  if (tf === "1d") {
+    // For daily bars, show date only — there's no meaningful "time of day"
+    return d.toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "short",
+      day: "2-digit",
+      timeZone: "UTC",
+    });
+  }
+  return d.toLocaleString("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: "UTC",
+  });
+}
+
 export function MarketMonitor() {
   const [tf, setTf] = useState<Timeframe>("1d");
   const [quote, setQuote] = useState<Quote | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // Time of the hovered K bar — set by CandleChart via onHoverChange.
+  // Shown in the panel header (outside the bordered card).
+  const [hoverTime, setHoverTime] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -101,6 +126,20 @@ export function MarketMonitor() {
         <span>Market</span>
         <span style={{ opacity: 0.4 }}>—</span>
         <span style={{ opacity: 0.6 }}>US30 · VIX · 波動率</span>
+        {/* Hovered K-bar date/time — appears on the right side of the
+            header (i.e. outside the panel's bordered card, above and to
+            the right). Only shown while the user is hovering a candle. */}
+        {hoverTime !== null ? (
+          <span
+            className="ml-auto text-[10px] tracking-[0.18em]"
+            style={{
+              color: "rgba(255,184,120,0.95)",
+              textShadow: "0 0 6px rgba(255,184,120,0.35)",
+            }}
+          >
+            {fmtHoverTime(hoverTime, tf)}
+          </span>
+        ) : null}
       </header>
 
       {/* Panel takes the full width of the section. The tf tab strip
@@ -154,6 +193,7 @@ export function MarketMonitor() {
               candles={quote.candles}
               timeframe={quote.timeframe}
               height={360}
+              onHoverChange={(c) => setHoverTime(c ? c.t : null)}
             />
           ) : (
             <div
