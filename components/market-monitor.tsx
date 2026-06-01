@@ -116,84 +116,32 @@ export function MarketMonitor() {
           minHeight: 360,
           borderRadius: 6,
           border: `1px solid ${accentDim}`,
-          // Solid-enough background so the underlying window (desktop /
-          // chat) doesn't bleed through into the chart area. Warm accent
-          // gradient sits on top of the near-black fill for the brand
-          // ambience.
-          background: `linear-gradient(180deg, ${accent.replace("0.95", "0.04")} 0%, transparent 100%), rgba(10, 11, 14, 0.96)`,
+          background: `linear-gradient(180deg, ${accent.replace("0.95", "0.04")} 0%, transparent 100%)`,
           padding: "20px 22px",
           gap: 12,
         }}
       >
-        {/* Top row: symbol + state + timeframe switcher */}
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-baseline gap-3">
-            <span
-              className="text-[11px] tracking-[0.30em] uppercase"
-              style={{ color: "rgba(255,184,120,0.85)" }}
-            >
-              US30
-            </span>
-            <span
-              className="text-[9px] tracking-[0.22em] uppercase"
-              style={{ color: "var(--fg-2)", opacity: 0.7 }}
-            >
-              DJIA · ^DJI
-            </span>
-          </div>
-          <div className="flex items-center gap-3">
-            {/* Timeframe tabs moved into a vertical strip alongside the
-                chart below — keep just the stale indicator here. */}
-            {quote?.stale ? (
-              <span
-                title="stale (upstream rate-limited)"
-                style={{
-                  display: "inline-block",
-                  width: 6,
-                  height: 6,
-                  borderRadius: 3,
-                  background: "rgba(255,180,80,0.85)",
-                  boxShadow: "0 0 6px rgba(255,180,80,0.5)",
-                }}
-              />
-            ) : null}
-          </div>
-        </div>
-
-        {/* Price + change row */}
-        <div className="flex items-end justify-between gap-6">
-          <div className="flex items-baseline gap-3 min-w-0">
-            <span
-              className="tabular-nums"
-              style={{
-                fontSize: 28,
-                fontWeight: 600,
-                color: "var(--fg-0)",
-                letterSpacing: "0.02em",
-                textShadow: `0 0 12px ${accent.replace("0.95", "0.25")}`,
-              }}
-            >
-              {quote ? fmtPrice.format(quote.price) : "—"}
-            </span>
-          </div>
-          <div className="flex flex-col items-end gap-0.5 tabular-nums">
-            <span
-              style={{
-                fontSize: 13,
-                fontWeight: 500,
-                color: accent,
-              }}
-            >
-              {quote ? fmtChange.format(quote.change) : "—"}
-            </span>
-            <span
-              className="text-[11px]"
-              style={{ color: accent, opacity: 0.85 }}
-            >
-              {quote ? `${fmtPct.format(quote.changePct)}%` : ""}
-            </span>
-          </div>
-        </div>
+        {/* Top US30/DJIA labels + big price-change row removed per spec.
+            The chart already exposes the latest price via the right-axis
+            colored ribbon, and the panel's accent border / Market header
+            communicate context. Stale indicator floats top-right. */}
+        {quote?.stale ? (
+          <span
+            title="stale (upstream rate-limited)"
+            style={{
+              position: "absolute",
+              top: 12,
+              right: 12,
+              display: "inline-block",
+              width: 6,
+              height: 6,
+              borderRadius: 3,
+              background: "rgba(255,180,80,0.85)",
+              boxShadow: "0 0 6px rgba(255,180,80,0.5)",
+              zIndex: 1,
+            }}
+          />
+        ) : null}
 
         {/* Candle chart — tabs moved outside the panel (see below). */}
         <div className="flex-1 min-h-0 flex flex-col">
@@ -256,7 +204,7 @@ export function MarketMonitor() {
           style={{
             position: "absolute",
             left: "calc(100% + 6px)",
-            top: 96,
+            top: 24,
             width: 28,
             display: "flex",
             flexDirection: "column",
