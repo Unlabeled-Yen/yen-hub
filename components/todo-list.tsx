@@ -112,6 +112,115 @@ type ClickMode = "strike" | "promote" | "none";
 // the page reads as one breath instead of three separate openings.
 const T_END = 3.5;
 
+/**
+ * TypewriterText — per-character substring reveal with a blinking
+ * caret that's truly anchored to the last visible character (not the
+ * full text's right edge, which was the bug with the previous
+ * clip-path approach).
+ *
+ * `startMs` is relative to mount. Speed is `charsPerSec`.
+ * When the last char is written, the caret unmounts immediately
+ * (no fade-out) per Yen's spec ("打完字 字元後直線就要馬上消失").
+ *
+ * `onComplete` lets the parent chain the next typewriter (e.g. main
+ * text → file name → days-ago) deterministically.
+ */
+function TypewriterText({
+  text,
+  startMs,
+  charsPerSec,
+  className,
+  style,
+  showCursor = true,
+  cursorColor = "rgba(255,184,120,0.95)",
+  onComplete,
+}: {
+  text: string;
+  startMs: number;
+  charsPerSec: number;
+  className?: string;
+  style?: React.CSSProperties;
+  showCursor?: boolean;
+  cursorColor?: string;
+  onComplete?: () => void;
+}) {
+  const [n, setN] = useState(0);
+  const [done, setDone] = useState(false);
+  // Re-run when the text identity changes (tab swap / list re-fetch).
+  useEffect(() => {
+    setN(0);
+    setDone(false);
+    const total = text.length;
+    if (total === 0) {
+      setDone(true);
+      onComplete?.();
+      return;
+    }
+    const msPerChar = 1000 / charsPerSec;
+    const startAt = performance.now() + startMs;
+    let raf = 0;
+    let cancelled = false;
+    const tick = () => {
+      if (cancelled) return;
+      const now = performance.now();
+      if (now < startAt) {
+        raf = requestAnimationFrame(tick);
+        return;
+      }
+      const elapsed = now - startAt;
+      const target = Math.min(total, Math.floor(elapsed / msPerChar) + 1);
+      setN(target);
+      if (target < total) {
+        raf = requestAnimationFrame(tick);
+      } else {
+        setDone(true);
+        onComplete?.();
+      }
+    };
+    raf = requestAnimationFrame(tick);
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+    };
+  }, [text, startMs, charsPerSec, onComplete]);
+
+  return (
+    <span className={className} style={style}>
+      {text.slice(0, n)}
+      {!done && showCursor ? (
+        <motion.span
+          aria-hidden
+          animate={{ opacity: [1, 0, 1] }}
+          transition={{ duration: 0.65, repeat: Infinity, ease: "linear" }}
+          style={{
+            display: "inline-block",
+            width: 1.5,
+            height: "0.85em",
+            marginLeft: 1,
+            verticalAlign: "text-bottom",
+            background: cursorColor,
+            boxShadow: `0 0 4px ${cursorColor}`,
+          }}
+        />
+      ) : null}
+    </span>
+  );
+}
+
+// Typing speed — applies to all TypewriterText instances. Yen wanted
+// slower than the previous clip-path speed. 16 chars/sec = ~62ms/char.
+const TYPE_CPS = 16;
+// Baseline before the panel's typewriter sequence begins. The wrapper
+// no longer fades opacity, so this is the only breath before typing.
+const TYPE_BASELINE_MS = 300;
+// Between-item stagger for the body row. Capped after a few items so
+// long lists don't take forever.
+const STAGGER_MS = 380;
+const STAGGER_CAP = 8;
+// Tiny pause between sub-row segments so the caret visibly hops from
+// one element to the next.
+const SUB_GAP_MS = 80;
+
 function TodoItem({
   t,
   index,
@@ -185,27 +294,24 @@ function TodoItem({
   const showPriorityDot = clickMode === "promote" && isPriority;
   const clickable = clickMode !== "none";
 
-  // Entry timing: panel wrapper fades in t=0.5→1.5s; user wants typing
-  // to start ~1s AFTER fade-in completes (so ≈2.5s from page mount).
-  // Items mount ~100ms after page mount when data arrives, so a 2.3s
-  // baseline relative to item mount lands typing at ~2.4s page time.
-  // Past spec was end-sync at T_END=3.5 but it felt artificially slow;
-  // typewriter now runs at a natural rate and ends whenever it ends.
-  const TYPE_BASELINE = 2.3;
-  const itemDelay = entryPhase ? TYPE_BASELINE + Math.min(index * 0.06, 2.0) : 0;
-  // Per-item duration scales with text length. Bumped per Yen — current
-  // 22ms/char felt too quick. 40ms/char with a 0.9-2.0s clamp gives a
-  // genuine "watching it type" feel without dragging on long todos.
-  const charCount = Math.min(t.text.length, 90);
-  const typeDur = entryPhase ? Math.min(Math.max(charCount * 0.04, 0.9), 2.0) : 0;
+  // Typewriter sequencing (only when entryPhase is true). Each item gets
+  // a base offset; within it, body → file → days-ago types in order so
+  // the caret visibly hops between elements.
+  // Stagger drops to a tiny step after the first STAGGER_CAP items so
+  // long lists don't snowball into 20+ second intros.
+  const cappedI = Math.min(index, STAGGER_CAP);
+  const overflowI = Math.max(0, index - STAGGER_CAP);
+  const itemBase = TYPE_BASELINE_MS + cappedI * STAGGER_MS + overflowI * 80;
+  const bodyText = trunc(t.text, 90);
+  const fileText = fileName(t.file);
+  const daysText = dayLabel(t.mtimeMs);
+  const bodyDurMs = entryPhase ? (bodyText.length / TYPE_CPS) * 1000 : 0;
+  const fileStartMs = itemBase + bodyDurMs + SUB_GAP_MS;
+  const fileDurMs = entryPhase ? (fileText.length / TYPE_CPS) * 1000 : 0;
+  const daysStartMs = fileStartMs + fileDurMs + SUB_GAP_MS;
 
   return (
-    <motion.div
-      initial={
-        entryPhase ? { opacity: 1, x: 0 } : { opacity: 0, x: -4 }
-      }
-      animate={{ opacity: 1, x: 0 }}
-      transition={{ duration: 0.45, delay: index * 0.025, ease: EASE }}
+    <div
       onClick={handleClick}
       role={clickable ? "button" : undefined}
       tabIndex={clickable ? 0 : undefined}
@@ -234,54 +340,28 @@ function TodoItem({
           />
         ) : null}
         <div className="relative min-w-0 flex-1">
-          <motion.span
+          {/* Body span doubles as the strike-path anchor (textRef +
+              measure()), so we keep it as the wrapping element. When
+              entryPhase, render via TypewriterText; otherwise plain. */}
+          <span
             ref={textRef}
-            initial={
-              entryPhase
-                ? { clipPath: "inset(0 100% 0 0)" }
-                : { clipPath: "inset(0 0% 0 0)" }
-            }
-            animate={{
-              clipPath: "inset(0 0% 0 0)",
+            style={{
               color: dimText ? "var(--fg-2)" : "var(--fg-0)",
               opacity: dimText ? 0.55 : 1,
+              transition: "color 350ms, opacity 350ms",
+              display: "inline",
             }}
-            transition={{
-              clipPath: entryPhase
-                ? { duration: typeDur, delay: itemDelay, ease: "linear" }
-                : { duration: 0 },
-              color: { duration: 0.35, ease: EASE },
-              opacity: { duration: 0.35, ease: EASE },
-            }}
-            style={{ display: "inline" }}
           >
-            {trunc(t.text, 90)}
-          </motion.span>
-          {/* Blinking cursor during the typewriter pass — pinned to the
-              text's right edge via the same clip-path mask. Hidden once
-              entry phase ends. */}
-          {entryPhase ? (
-            <motion.span
-              aria-hidden
-              initial={{ opacity: 0 }}
-              animate={{ opacity: [0, 0.85, 0] }}
-              transition={{
-                duration: 0.8,
-                repeat: Math.ceil(typeDur / 0.8),
-                ease: "linear",
-                delay: itemDelay,
-              }}
-              style={{
-                display: "inline-block",
-                width: 1,
-                height: "0.9em",
-                marginLeft: 1,
-                verticalAlign: "text-bottom",
-                background: "rgba(255,184,120,0.85)",
-                boxShadow: "0 0 4px rgba(255,184,120,0.45)",
-              }}
-            />
-          ) : null}
+            {entryPhase ? (
+              <TypewriterText
+                text={bodyText}
+                startMs={itemBase}
+                charsPerSec={TYPE_CPS}
+              />
+            ) : (
+              bodyText
+            )}
+          </span>
           {showStrike ? (
             <svg
               className="absolute inset-0 pointer-events-none"
@@ -312,13 +392,31 @@ function TodoItem({
         </div>
       </div>
       <div className="text-[10px] text-[var(--fg-2)] mt-1 flex items-center gap-2 min-w-0 pl-[1px]">
-        <span className="truncate flex-1 min-w-0">{fileName(t.file)}</span>
+        <span className="truncate flex-1 min-w-0">
+          {entryPhase ? (
+            <TypewriterText
+              text={fileText}
+              startMs={fileStartMs}
+              charsPerSec={TYPE_CPS}
+            />
+          ) : (
+            fileText
+          )}
+        </span>
         <span style={{ opacity: 0.5 }}>·</span>
         <span className="tabular-nums whitespace-nowrap">
-          {dayLabel(t.mtimeMs)}
+          {entryPhase ? (
+            <TypewriterText
+              text={daysText}
+              startMs={daysStartMs}
+              charsPerSec={TYPE_CPS}
+            />
+          ) : (
+            daysText
+          )}
         </span>
       </div>
-    </motion.div>
+    </div>
   );
 }
 
@@ -393,10 +491,18 @@ export function TodoList() {
   useEffect(() => {
     if (!data || entryArmedRef.current) return;
     entryArmedRef.current = true;
-    // Long enough to cover the slowest item:
-    //   baseline 2.3s + max stagger 2.0s + max typeDur 2.0s = 6.3s
-    // Add 0.5s buffer so we never cut a cursor blink mid-cycle.
-    const id = window.setTimeout(() => setEntryPhase(false), 6800);
+    // Long enough to cover even the slowest item in a long priority
+    // list. Typing per item runs:
+    //   itemBase (~300ms baseline + up to 8*380ms stagger ≈ 3.3s)
+    //     + body (≤90 chars / 16cps ≈ 5.6s)
+    //     + file (≤30 chars ≈ 1.9s)
+    //     + days-ago (≤6 chars ≈ 0.4s)
+    //   ≈ 11s worst case.
+    // After this flips false, NEWLY-mounted items render instantly
+    // (tab switches feel snappy). Already-mounted items keep typing
+    // because the cursor state is driven by TypewriterText's internal
+    // `done` flag, not entryPhase.
+    const id = window.setTimeout(() => setEntryPhase(false), 12_000);
     return () => window.clearTimeout(id);
   }, [data]);
 
@@ -615,7 +721,17 @@ export function TodoList() {
           }}
           title="單擊切換首要 / 總覽，雙擊進入審查"
         >
-          <span>{titleText}</span>
+          <span>
+            {entryPhase ? (
+              <TypewriterText
+                text={titleText}
+                startMs={0}
+                charsPerSec={TYPE_CPS}
+              />
+            ) : (
+              titleText
+            )}
+          </span>
           <span style={{ opacity: 0.4 }}>—</span>
           <span className="tabular-nums">{displayCount}</span>
         </button>

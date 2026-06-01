@@ -93,12 +93,11 @@ function BookBlock({ b, index }: { b: BookSummary; index: number }) {
   }
 
   return (
-    <motion.article
-      initial={{ opacity: 0, y: 6 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.6, delay, ease: EASE }}
-      className="font-mono"
-    >
+    // No article fade-in — books need to be VISIBLE during the cube
+    // barrel-roll, otherwise the cube spins around empty faces and the
+    // user just sees a blank panel until bars start drawing. The cube
+    // rotation IS the entry visual; bars then draw on the settled face.
+    <article className="font-mono">
       {/* Row 1: title alone (no inline counter — moved to status row) */}
       <h4
         className="text-[13px] leading-tight truncate"
@@ -166,7 +165,7 @@ function BookBlock({ b, index }: { b: BookSummary; index: number }) {
           {isReading ? pctLabel : "—"}
         </span>
       </div>
-    </motion.article>
+    </article>
   );
 }
 

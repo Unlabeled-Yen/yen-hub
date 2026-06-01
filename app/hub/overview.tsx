@@ -326,31 +326,16 @@ export function Overview() {
                   "linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0.65) 10%, rgba(0,0,0,0.65) 90%, rgba(0,0,0,0) 100%)",
               }}
             >
-              <motion.div
-                ref={readingRef}
-                // Reading panel does its OWN entry (cube barrel roll +
-                // bar pen-draw inside ReadingProgress). The wrapper
-                // used to fade opacity 0→1 over a full second, which
-                // hid the cube spin entirely — by the time the wrapper
-                // was visible, the cube had already settled.
-                // Now: tiny y-drop only, instantly opaque, so the cube
-                // animation is the entrance.
-                initial={{ y: 6 }}
-                animate={{ y: 0 }}
-                transition={{ duration: 0.4, ease: [0.075, 0.82, 0.165, 1] }}
-                className="min-w-0"
-              >
+              {/* No wrapper fade/translate per Yen — both panels go
+                  STRAIGHT into their own entry effects (Reading: cube
+                  barrel-roll, TodoList: typewriter). Previous opacity
+                  fades hid the cube/typewriter from view until 1.5s+. */}
+              <div ref={readingRef} className="min-w-0">
                 <ReadingProgress />
-              </motion.div>
-              <motion.div
-                initial={{ opacity: 0, y: 14 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 1.0, ease: [0.075, 0.82, 0.165, 1], delay: 0.5 }}
-                className="min-w-0"
-                style={{ height: `${readingH}px` }}
-              >
+              </div>
+              <div className="min-w-0" style={{ height: `${readingH}px` }}>
                 <TodoList />
-              </motion.div>
+              </div>
             </div>
           </div>
         </main>
