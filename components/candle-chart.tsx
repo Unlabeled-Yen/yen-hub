@@ -43,9 +43,9 @@ const PAD_T = 8;
 const PAD_B = 22;
 
 const UP_COLOR = "rgba(255,170,100,0.95)";
-const UP_FILL = "rgba(255,170,100,0.75)";
+const UP_FILL = "rgba(255,170,100,1)"; // solid body — no transparency
 const DOWN_COLOR = "rgba(235,225,185,0.95)";
-const DOWN_FILL = "rgba(235,225,185,0.75)";
+const DOWN_FILL = "rgba(235,225,185,1)"; // solid body — no transparency
 const GRID = "rgba(255,255,255,0.05)";
 const AXIS_FG = "rgba(180,180,180,0.55)";
 
@@ -1052,7 +1052,9 @@ export function CandleChart({
           const yClose = yOf(c.c) - PAD_T;
           const bodyY = Math.min(yOpen, yClose);
           const bodyH = Math.max(1, Math.abs(yOpen - yClose));
-          const wickW = Math.max(1, Math.min(2, bodyW * 0.18));
+          // Thinner wick per spec — finer than before across all zoom
+          // levels. Bottom floor keeps it pixel-renderable on low DPI.
+          const wickW = Math.max(0.6, Math.min(1.0, bodyW * 0.10));
           const candleH = Math.max(1, yLow - yHigh);
 
           if (x < -candleWidth || x > plotW + candleWidth) return null;
@@ -1087,8 +1089,7 @@ export function CandleChart({
                 top: bodyY - yHigh,
                 height: bodyH,
                 background: fill,
-                border: `0.6px solid ${color}`,
-                boxSizing: "border-box",
+                // No border per spec — body is a solid filled rect.
               }}
             />
           );
