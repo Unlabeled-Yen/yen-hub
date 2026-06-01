@@ -328,9 +328,16 @@ export function Overview() {
             >
               <motion.div
                 ref={readingRef}
-                initial={{ opacity: 0, y: 14 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 1.0, ease: [0.075, 0.82, 0.165, 1], delay: 0.4 }}
+                // Reading panel does its OWN entry (cube barrel roll +
+                // bar pen-draw inside ReadingProgress). The wrapper
+                // used to fade opacity 0→1 over a full second, which
+                // hid the cube spin entirely — by the time the wrapper
+                // was visible, the cube had already settled.
+                // Now: tiny y-drop only, instantly opaque, so the cube
+                // animation is the entrance.
+                initial={{ y: 6 }}
+                animate={{ y: 0 }}
+                transition={{ duration: 0.4, ease: [0.075, 0.82, 0.165, 1] }}
                 className="min-w-0"
               >
                 <ReadingProgress />

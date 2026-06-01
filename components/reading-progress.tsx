@@ -56,14 +56,14 @@ function BookBlock({ b, index }: { b: BookSummary; index: number }) {
   const { author, title } = fromServer ?? parseBook(b.name);
   const pct = b.chapters === 0 ? 0 : b.openedChapters / b.chapters;
   const pctLabel = `${Math.round(pct * 100)}%`;
-  // New choreography: cube spins to settle by t=1.0s, then book article
-  // fade-ins stagger, then progress bars draw — all chained so the last
-  // bar ends at the global T_END = 3.5s.
-  // article fade-in delay  = 1.0 + i * 0.04
-  // bar starts at delay + 0.22 (lead)
-  // bar dur = 2.0
-  // For i=7: 1.0 + 0.28 + 0.22 + 2.0 = 3.50 ✓
-  const delay = 1.0 + index * 0.04;
+  // Choreography: cube barrel-roll runs t=0.3→1.6s (delay 0.3, dur 1.3).
+  // Then book articles fade in + progress bars pen-draw, last bar
+  // landing on T_END = 3.5s.
+  // article fade-in delay  = 1.6 + i * 0.04
+  // bar starts at delay + 0.15 (lead)
+  // bar dur = 1.47
+  // For i=7: 1.6 + 0.28 + 0.15 + 1.47 = 3.50 ✓
+  const delay = 1.6 + index * 0.04;
 
   // Three visual states:
   //   reading: opened > 0 chapters → full brightness, teal progress
@@ -149,7 +149,7 @@ function BookBlock({ b, index }: { b: BookSummary; index: number }) {
             <motion.span
               initial={{ width: 0 }}
               animate={{ width: `${Math.max(2, pct * 100)}%` }}
-              transition={{ duration: 2.0, ease: EASE, delay: delay + 0.22 }}
+              transition={{ duration: 1.47, ease: EASE, delay: delay + 0.15 }}
               style={{
                 display: "block",
                 height: "100%",
@@ -215,13 +215,13 @@ function ReadingCube({ data }: { data: AttentionResponse }) {
   // ref so it doesn't need to re-bind every render. Updated by an effect
   // below once we compute the real page array.
   const populatedRef = useRef(1);
-  // Entrance flag — true during the first ~1.0s while the cube spins
-  // into position. While true, the rotation transition uses a fast
-  // ease-out (the "settle"); after, future face changes use the slower
-  // user-driven rotation curve.
+  // Entrance flag — true after the cube barrel-roll finishes. While
+  // false, rotation transition uses the "settle" curve (delay 0.3s,
+  // dur 1.3s, ease-out); after, future face changes use the slower
+  // user-driven rotation curve. Timer matches: 0.3 + 1.3 = 1.6s.
   const [entered, setEntered] = useState(false);
   useEffect(() => {
-    const t = setTimeout(() => setEntered(true), 1050);
+    const t = setTimeout(() => setEntered(true), 1650);
     return () => clearTimeout(t);
   }, []);
   const [size, setSize] = useState<{ w: number; h: number }>({ w: 470, h: 360 });
@@ -357,7 +357,7 @@ function ReadingCube({ data }: { data: AttentionResponse }) {
             transition={
               entered
                 ? { duration: ROTATION_DURATION, ease: [0.65, 0, 0.35, 1] }
-                : { duration: 1.0, ease: [0.16, 1, 0.3, 1] }
+                : { duration: 1.3, delay: 0.3, ease: [0.16, 1, 0.3, 1] }
             }
             style={{
               position: "absolute",

@@ -185,18 +185,19 @@ function TodoItem({
   const showPriorityDot = clickMode === "promote" && isPriority;
   const clickable = clickMode !== "none";
 
-  // Entry timing: natural typewriter speed. No more end-sync with T_END
-  // — forcing slow items to wait for fast items to "catch up" made the
-  // typing feel artificially sluggish. Items just stagger in and each
-  // types at its own consistent ~30ms/char clip.
-  // Stagger small so it reads as a continuous fall of lines, not a
-  // sequence of beats.
-  const itemDelay = entryPhase ? Math.min(index * 0.06, 2.0) : 0;
-  // Per-item duration scales with text length so short todos finish
-  // quickly and long ones still feel like typing. Clamped so we never
-  // get a 3-second crawl on a 120-char todo.
+  // Entry timing: panel wrapper fades in t=0.5→1.5s; user wants typing
+  // to start ~1s AFTER fade-in completes (so ≈2.5s from page mount).
+  // Items mount ~100ms after page mount when data arrives, so a 2.3s
+  // baseline relative to item mount lands typing at ~2.4s page time.
+  // Past spec was end-sync at T_END=3.5 but it felt artificially slow;
+  // typewriter now runs at a natural rate and ends whenever it ends.
+  const TYPE_BASELINE = 2.3;
+  const itemDelay = entryPhase ? TYPE_BASELINE + Math.min(index * 0.06, 2.0) : 0;
+  // Per-item duration scales with text length. Bumped per Yen — current
+  // 22ms/char felt too quick. 40ms/char with a 0.9-2.0s clamp gives a
+  // genuine "watching it type" feel without dragging on long todos.
   const charCount = Math.min(t.text.length, 90);
-  const typeDur = entryPhase ? Math.min(Math.max(charCount * 0.022, 0.5), 1.3) : 0;
+  const typeDur = entryPhase ? Math.min(Math.max(charCount * 0.04, 0.9), 2.0) : 0;
 
   return (
     <motion.div
@@ -392,7 +393,10 @@ export function TodoList() {
   useEffect(() => {
     if (!data || entryArmedRef.current) return;
     entryArmedRef.current = true;
-    const id = window.setTimeout(() => setEntryPhase(false), T_END * 1000 + 100);
+    // Long enough to cover the slowest item:
+    //   baseline 2.3s + max stagger 2.0s + max typeDur 2.0s = 6.3s
+    // Add 0.5s buffer so we never cut a cursor blink mid-cycle.
+    const id = window.setTimeout(() => setEntryPhase(false), 6800);
     return () => window.clearTimeout(id);
   }, [data]);
 
