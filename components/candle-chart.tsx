@@ -464,9 +464,11 @@ export function CandleChart({
           </text>
         ))}
 
-        {/* Candles — entry-animated via key change on tf/series swap. The
-            seriesKey embeds first-timestamp + length, so live 60s refetches
-            (same range) don't re-trigger the animation, but tf switches do. */}
+        {/* Candles — each K draws in sequence with a "float-then-settle"
+            keyframe: at its turn it rises ~10px with a scale + glow boost
+            (the "being drawn" moment), then sinks back to its real position.
+            seriesKey re-mounts on tf swap so the animation replays cleanly;
+            stable across 60s polling so live refetches don't disturb. */}
         {visible.map((c, i) => {
           const up = c.c >= c.o;
           const color = up ? UP_COLOR : DOWN_COLOR;
@@ -478,15 +480,30 @@ export function CandleChart({
           const yClose = yOf(c.c);
           const bodyY = Math.min(yOpen, yClose);
           const bodyH = Math.max(0.8, Math.abs(yOpen - yClose));
-          const delay = (i / Math.max(1, visible.length - 1)) * 0.85;
+          // Stagger across the full series — adapt to count so a long
+          // series doesn't take forever and a short one doesn't blur.
+          const STAGGER_TOTAL = 1.8;
+          const stagger =
+            visible.length > 1
+              ? (i / (visible.length - 1)) * STAGGER_TOTAL
+              : 0;
           return (
             <motion.g
               key={`${seriesKey}-${c.t}-${i}`}
-              initial={{ opacity: 0, scale: 0.6 }}
-              animate={{ opacity: 1, scale: 1 }}
+              initial={{ opacity: 0, y: 0, scale: 0.3 }}
+              animate={{
+                // Sequence:
+                //   0%    — invisible at home position
+                //   ~40%  — fully drawn, floated up, slightly enlarged
+                //   100%  — settled back to home, normal scale
+                opacity: [0, 1, 1, 1],
+                y: [0, -10, -10, 0],
+                scale: [0.3, 1.12, 1.12, 1],
+              }}
               transition={{
-                duration: 0.45,
-                delay,
+                duration: 0.7,
+                delay: stagger,
+                times: [0, 0.35, 0.5, 1],
                 ease: [0.22, 0.9, 0.36, 1],
               }}
               style={{
@@ -494,6 +511,28 @@ export function CandleChart({
                 transformBox: "fill-box" as "fill-box",
               }}
             >
+              {/* Glow halo — only visible during the "lifted" phase. A
+                  separate motion.rect underneath the candle that fades in
+                  at the draw moment, then fades out as the K settles. */}
+              <motion.rect
+                initial={{ opacity: 0 }}
+                animate={{ opacity: [0, 0.55, 0.55, 0] }}
+                transition={{
+                  duration: 0.7,
+                  delay: stagger,
+                  times: [0, 0.35, 0.5, 1],
+                  ease: "easeOut",
+                }}
+                x={x - bodyW}
+                y={yHigh - 4}
+                width={bodyW * 2}
+                height={yLow - yHigh + 8}
+                fill={color}
+                style={{
+                  filter: `blur(6px)`,
+                  pointerEvents: "none",
+                }}
+              />
               <line
                 x1={x}
                 x2={x}
@@ -514,50 +553,6 @@ export function CandleChart({
             </motion.g>
           );
         })}
-
-        {/* Entry scan line — sweeps left→right, glows in the up/down accent.
-            Re-mounts whenever seriesKey changes (initial load + tf switch). */}
-        <motion.g key={`scan-${seriesKey}`} pointerEvents="none">
-          <motion.line
-            initial={{
-              x1: PAD_L,
-              x2: PAD_L,
-              opacity: 0,
-            }}
-            animate={{
-              x1: [PAD_L, PAD_L, width - PAD_R],
-              x2: [PAD_L, PAD_L, width - PAD_R],
-              opacity: [0, 1, 0],
-            }}
-            transition={{
-              duration: 1.2,
-              ease: [0.22, 0.9, 0.36, 1],
-              times: [0, 0.08, 1],
-            }}
-            y1={PAD_T}
-            y2={height - PAD_B}
-            stroke={accent}
-            strokeWidth={1.6}
-            style={{
-              filter: `drop-shadow(0 0 10px ${accent}) drop-shadow(0 0 22px ${accent.replace("0.95", "0.45")})`,
-            }}
-          />
-          {/* Bottom horizon flash — short pulse along the time axis */}
-          <motion.line
-            initial={{ opacity: 0 }}
-            animate={{ opacity: [0, 0.6, 0] }}
-            transition={{ duration: 1.0, times: [0, 0.35, 1], ease: "easeOut" }}
-            x1={PAD_L}
-            x2={width - PAD_R}
-            y1={height - PAD_B + 1}
-            y2={height - PAD_B + 1}
-            stroke={accent}
-            strokeWidth={0.8}
-            style={{
-              filter: `drop-shadow(0 0 6px ${accent.replace("0.95", "0.55")})`,
-            }}
-          />
-        </motion.g>
 
         {tickIdxs.map((idx, i) => {
           const c = visible[idx];
