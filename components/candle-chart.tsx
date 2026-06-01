@@ -464,14 +464,10 @@ export function CandleChart({
           </text>
         ))}
 
-        {/* Candles — each K draws in sequence:
-              phase 1 (0–35%):  wick strokes UP from low → high; body grows
-                                UP from the low edge to full height. Group
-                                simultaneously lifts -10px. ⇒ "being drawn"
-              phase 2 (35–55%): held lifted, fully drawn, halo at full glow
-              phase 3 (55–100%): group sinks back to y=0, halo fades out
-            seriesKey re-mounts on tf swap so the animation replays cleanly;
-            stable across 60s polling so live refetches don't disturb. */}
+        {/* Candles — sequential "draw from bottom + lift + settle" animation.
+            Outer group handles vertical lift; inner group handles the
+            scaleY-from-bottom that produces the actual draw effect.
+            seriesKey re-mounts on tf swap → animation replays. */}
         {visible.map((c, i) => {
           const up = c.c >= c.o;
           const color = up ? UP_COLOR : DOWN_COLOR;
@@ -485,38 +481,35 @@ export function CandleChart({
           const bodyH = Math.max(0.8, Math.abs(yOpen - yClose));
           const wickW = Math.max(0.7, Math.min(2, bodyW * 0.15));
 
+          // Stagger total stays modest so the whole reveal completes
+          // before 60s polling could re-fetch; longer than 2.5s feels slow.
           const STAGGER_TOTAL = 1.6;
           const stagger =
             visible.length > 1
               ? (i / (visible.length - 1)) * STAGGER_TOTAL
               : 0;
-          const DUR = 0.7;
-          const DRAW_FRACTION = 0.35; // portion of DUR spent drawing + lifting
+          const DUR = 0.8;
 
           return (
             <motion.g
               key={`${seriesKey}-${c.t}-${i}`}
               initial={{ y: 0 }}
-              animate={{
-                // Lift to -10 over draw phase, hold, sink back home.
-                y: [0, -10, -10, 0],
-              }}
+              animate={{ y: [0, -10, -10, 0] }}
               transition={{
                 duration: DUR,
                 delay: stagger,
-                times: [0, DRAW_FRACTION, 0.55, 1],
+                times: [0, 0.4, 0.6, 1],
                 ease: [0.22, 0.9, 0.36, 1],
               }}
             >
-              {/* Halo — fades in during draw, peaks while lifted, fades out
-                  as the K sinks back. Blurred rect behind the candle. */}
+              {/* Halo — opacity-only, lives with the outer lift group */}
               <motion.rect
                 initial={{ opacity: 0 }}
                 animate={{ opacity: [0, 0.55, 0.55, 0] }}
                 transition={{
                   duration: DUR,
                   delay: stagger,
-                  times: [0, DRAW_FRACTION, 0.55, 1],
+                  times: [0, 0.4, 0.6, 1],
                   ease: "easeOut",
                 }}
                 x={x - bodyW}
@@ -529,61 +522,49 @@ export function CandleChart({
                   pointerEvents: "none",
                 }}
               />
-              {/* Wick — line strokes upward from yLow to yHigh */}
-              <motion.line
-                initial={{ y1: yLow, opacity: 0 }}
-                animate={{ y1: yHigh, opacity: 1 }}
-                transition={{
-                  y1: {
-                    duration: DUR * DRAW_FRACTION,
-                    delay: stagger,
-                    ease: "easeOut",
-                  },
-                  opacity: {
-                    duration: 0.08,
-                    delay: stagger,
-                  },
-                }}
-                x1={x}
-                x2={x}
-                y2={yLow}
-                stroke={color}
-                strokeWidth={wickW}
-              />
-              {/* Body — rect grows upward from bottom edge to full height */}
-              <motion.rect
-                initial={{
-                  y: bodyY + bodyH,
-                  height: 0,
-                  opacity: 0,
-                }}
+              {/* Inner group: scaleY 0→1 with transform-origin at the
+                  candle's LOW edge — wick + body grow upward from yLow.
+                  transformBox:fill-box makes the % origin map to the
+                  inner group's bounding box (bottom-center = low/middle). */}
+              <motion.g
+                initial={{ scaleY: 0, opacity: 0 }}
                 animate={{
-                  y: bodyY,
-                  height: bodyH,
-                  opacity: 1,
+                  scaleY: [0, 1, 1, 1],
+                  opacity: [0, 1, 1, 1],
                 }}
                 transition={{
-                  y: {
-                    duration: DUR * DRAW_FRACTION,
-                    delay: stagger,
-                    ease: "easeOut",
-                  },
-                  height: {
-                    duration: DUR * DRAW_FRACTION,
-                    delay: stagger,
-                    ease: "easeOut",
-                  },
-                  opacity: {
-                    duration: 0.08,
-                    delay: stagger,
-                  },
+                  duration: DUR,
+                  delay: stagger,
+                  times: [0, 0.4, 0.6, 1],
+                  ease: [0.22, 0.9, 0.36, 1],
                 }}
-                x={x - bodyW / 2}
-                width={bodyW}
-                fill={fill}
-                stroke={color}
-                strokeWidth={0.6}
-              />
+                style={{
+                  transformOrigin: "50% 100%",
+                  transformBox: "fill-box" as "fill-box",
+                }}
+              >
+                {/* Wick */}
+                <line
+                  x1={x}
+                  x2={x}
+                  y1={yHigh}
+                  y2={yLow}
+                  stroke={color}
+                  strokeWidth={wickW}
+                  vectorEffect="non-scaling-stroke"
+                />
+                {/* Body */}
+                <rect
+                  x={x - bodyW / 2}
+                  y={bodyY}
+                  width={bodyW}
+                  height={bodyH}
+                  fill={fill}
+                  stroke={color}
+                  strokeWidth={0.6}
+                  vectorEffect="non-scaling-stroke"
+                />
+              </motion.g>
             </motion.g>
           );
         })}
