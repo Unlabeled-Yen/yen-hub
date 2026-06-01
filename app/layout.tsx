@@ -37,6 +37,13 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} ${canopee.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
+        {/* Frost surface — the only element carrying backdrop-filter.
+            Lives BEHIND the page (z:-1, pointer-events:none) and outside
+            the route tree, so it cannot create a containing block for
+            any descendant's position:fixed. Combined with body / html
+            being filter-free, CommandPalette's `fixed` overlay now
+            resolves to the actual viewport. */}
+        <div id="page-frost" aria-hidden />
         {/* Frameless-window drag handle — top 24px strip.
             In Tauri the data-tauri-drag-region attribute makes a region draggable.
             In a regular browser it's harmless. */}

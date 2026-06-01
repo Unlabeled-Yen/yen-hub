@@ -73,24 +73,22 @@
   --font-display: var(--font-canopee);
 }
 
-/* html must be TRANSPARENT for the Tauri window's --bg-alpha to actually
-   let the desktop show through. backdrop-filter is HERE (not on body)
-   because applying it to body created a new containing block for
-   position:fixed descendants — that broke the CommandPalette overlay's
-   "stay at viewport center" promise (it tracked page scroll instead).
-   html is the initial containing block, so fixed positioning still
-   resolves to the viewport while keeping the frost effect. */
+/* html must be TRANSPARENT for the Tauri window's --bg-alpha to let the
+   desktop show through. No backdrop-filter / transform / filter here —
+   any of those would establish a containing block for position:fixed
+   descendants, breaking the CommandPalette overlay's viewport centering. */
 html {
   background: transparent;
   color: var(--fg-0);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
-  backdrop-filter: blur(28px) saturate(0.55);
-  -webkit-backdrop-filter: blur(28px) saturate(0.55);
 }
 
-/* Body — black frosted glass, no backdrop-filter (see html). The
-   gradient + alpha tint paint over the html's blurred backdrop. */
+/* Body — black tint + soft ambient gradient. backdrop-filter is applied
+   to a dedicated `<div id="page-frost">` rendered as a sibling of the
+   route content, so frost reaches the macOS desktop through the Tauri
+   transparent window WITHOUT any ancestor of CommandPalette ever
+   becoming a fixed-positioning containing block. */
 body {
   background:
     radial-gradient(ellipse 60% 40% at 15% 0%,   rgba(255, 255, 255, 0.04), transparent 65%),
@@ -98,6 +96,18 @@ body {
     rgba(0, 0, 0, var(--bg-alpha));
   color: var(--fg-0);
   min-height: 100vh;
+}
+
+/* The actual frosted-glass surface — sits behind everything else in the
+   stack. position:fixed pins it to the viewport so it never scrolls.
+   z:-1 + pointer-events:none keeps it visually behind and inert. */
+#page-frost {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  backdrop-filter: blur(28px) saturate(0.55);
+  -webkit-backdrop-filter: blur(28px) saturate(0.55);
 }
 
 /* No text selection globally — feels app-like, not webby. */
