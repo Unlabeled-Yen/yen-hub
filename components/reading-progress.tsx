@@ -121,28 +121,33 @@ function BookBlock({ b, index }: { b: BookSummary; index: number }) {
         {statusText}
       </div>
 
-      {/* Row 4: progress bar + percentage */}
+      {/* Row 4: progress bar + percentage.
+          For non-reading books we DON'T draw the track — its 6% white left a
+          thin horizontal ghost line under titles that read as visual noise.
+          Keep the layout box (height 3 + flex-1) so all 8 books still align. */}
       <div className="mt-2 flex items-center gap-3">
         <span
           className="relative flex-1"
           style={{
             height: 3,
-            background: "rgba(255,255,255,0.06)",
+            background: isReading ? "rgba(255,255,255,0.06)" : "transparent",
             borderRadius: 1.5,
             overflow: "hidden",
           }}
         >
-          <motion.span
-            initial={{ width: 0 }}
-            animate={{ width: `${Math.max(isReading ? 2 : 0, pct * 100)}%` }}
-            transition={{ duration: 2.2, ease: EASE, delay: delay + 0.25 }}
-            style={{
-              display: "block",
-              height: "100%",
-              background: "rgba(140,220,200,0.85)",
-              borderRadius: 1.5,
-            }}
-          />
+          {isReading ? (
+            <motion.span
+              initial={{ width: 0 }}
+              animate={{ width: `${Math.max(2, pct * 100)}%` }}
+              transition={{ duration: 2.2, ease: EASE, delay: delay + 0.25 }}
+              style={{
+                display: "block",
+                height: "100%",
+                background: "rgba(140,220,200,0.85)",
+                borderRadius: 1.5,
+              }}
+            />
+          ) : null}
         </span>
         <span
           className="text-[10px] text-[var(--fg-2)] tabular-nums"
