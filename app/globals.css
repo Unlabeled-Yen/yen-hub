@@ -113,6 +113,19 @@ body {
   -webkit-backdrop-filter: blur(28px) saturate(0.55);
 }
 
+/* Hide the entire window's scrollbar (keep scroll functionality).
+   The app reads as a polished desktop surface; no chrome rails. */
+html, body {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* legacy Edge */
+}
+html::-webkit-scrollbar,
+body::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
 /* No text selection globally — feels app-like, not webby. */
 html, body {
   -webkit-user-select: none;

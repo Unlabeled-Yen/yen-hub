@@ -64,15 +64,14 @@ export function WorldClock() {
   const ampm = parts.find((p) => p.type === "dayPeriod")?.value ?? "AM";
   // NY_DATE_FMT.format() returns e.g. "Fri, May 31" — strip comma + upper.
   const dateLabel = NY_DATE_FMT.format(now).replace(",", "").toUpperCase();
-  const session = nySession(now);
 
   return (
     <div
       className="fixed z-50 font-mono select-none pointer-events-none"
       style={{
-        top: 14,
-        // Aligned with the US30 panel's right edge (= page's `sm:px-12`
-        // right padding, 48px from viewport).
+        // Dropped down toward the US30 panel header so the time chip
+        // sits visually close to the panel top edge.
+        top: 40,
         right: 48,
         fontSize: 12,
         letterSpacing: "0.22em",
@@ -90,19 +89,7 @@ export function WorldClock() {
       <span style={{ marginLeft: "0.45em", fontSize: 10, opacity: 0.85 }}>
         {ampm}
       </span>
-      {/* CLOSE state is implicit (no chip when market is closed). Only show
-          PRE / OPEN / AFTER — the times Yen actually needs to know. */}
-      {session !== "CLOSE" ? (
-        <span
-          style={{
-            marginLeft: "0.7em",
-            opacity: 0.85,
-            fontSize: 10,
-          }}
-        >
-          {session}
-        </span>
-      ) : null}
+      {/* Market session chip removed per spec — keep the time line clean. */}
     </div>
   );
 }
