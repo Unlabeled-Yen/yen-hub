@@ -429,20 +429,9 @@ export function CommandPalette() {
             willChange: "transform",
           }}
         >
-        {/* Vignette — very soft, very large. Falls off the visible area
-            so no rectangular outline is perceivable; only a gentle
-            "ambient light dimming toward the corners" feel. */}
-        <div
-          aria-hidden
-          className="absolute pointer-events-none"
-          style={{
-            inset: "-300px -260px -340px -260px",
-            background:
-              "radial-gradient(ellipse 60% 45% at center, transparent 55%, rgba(0,0,0,0.10) 75%, rgba(0,0,0,0.22) 92%, rgba(0,0,0,0.28) 100%)",
-            filter: "blur(60px)",
-            zIndex: -1,
-          }}
-        />
+        {/* Vignette removed — it was a soft dark radial behind the chat
+            that moved with motion.div on drag, leaving a visible
+            rectangular halo against the new uniform backdrop blur. */}
         {/* Messages — always rendered. Container height animates between
             full (expanded) and ~24px (collapsed peek). Older turns fade
             out during collapse so only the last line reads as "peek". */}
