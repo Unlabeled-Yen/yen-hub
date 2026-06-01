@@ -464,9 +464,12 @@ export function CandleChart({
           </text>
         ))}
 
-        {/* Candles — each K draws in sequence with a "float-then-settle"
-            keyframe: at its turn it rises ~10px with a scale + glow boost
-            (the "being drawn" moment), then sinks back to its real position.
+        {/* Candles — each K draws in sequence:
+              phase 1 (0–35%):  wick strokes UP from low → high; body grows
+                                UP from the low edge to full height. Group
+                                simultaneously lifts -10px. ⇒ "being drawn"
+              phase 2 (35–55%): held lifted, fully drawn, halo at full glow
+              phase 3 (55–100%): group sinks back to y=0, halo fades out
             seriesKey re-mounts on tf swap so the animation replays cleanly;
             stable across 60s polling so live refetches don't disturb. */}
         {visible.map((c, i) => {
@@ -480,47 +483,40 @@ export function CandleChart({
           const yClose = yOf(c.c);
           const bodyY = Math.min(yOpen, yClose);
           const bodyH = Math.max(0.8, Math.abs(yOpen - yClose));
-          // Stagger across the full series — adapt to count so a long
-          // series doesn't take forever and a short one doesn't blur.
-          const STAGGER_TOTAL = 1.8;
+          const wickW = Math.max(0.7, Math.min(2, bodyW * 0.15));
+
+          const STAGGER_TOTAL = 1.6;
           const stagger =
             visible.length > 1
               ? (i / (visible.length - 1)) * STAGGER_TOTAL
               : 0;
+          const DUR = 0.7;
+          const DRAW_FRACTION = 0.35; // portion of DUR spent drawing + lifting
+
           return (
             <motion.g
               key={`${seriesKey}-${c.t}-${i}`}
-              initial={{ opacity: 0, y: 0, scale: 0.3 }}
+              initial={{ y: 0 }}
               animate={{
-                // Sequence:
-                //   0%    — invisible at home position
-                //   ~40%  — fully drawn, floated up, slightly enlarged
-                //   100%  — settled back to home, normal scale
-                opacity: [0, 1, 1, 1],
+                // Lift to -10 over draw phase, hold, sink back home.
                 y: [0, -10, -10, 0],
-                scale: [0.3, 1.12, 1.12, 1],
               }}
               transition={{
-                duration: 0.7,
+                duration: DUR,
                 delay: stagger,
-                times: [0, 0.35, 0.5, 1],
+                times: [0, DRAW_FRACTION, 0.55, 1],
                 ease: [0.22, 0.9, 0.36, 1],
               }}
-              style={{
-                transformOrigin: `${x}px ${(yHigh + yLow) / 2}px`,
-                transformBox: "fill-box" as "fill-box",
-              }}
             >
-              {/* Glow halo — only visible during the "lifted" phase. A
-                  separate motion.rect underneath the candle that fades in
-                  at the draw moment, then fades out as the K settles. */}
+              {/* Halo — fades in during draw, peaks while lifted, fades out
+                  as the K sinks back. Blurred rect behind the candle. */}
               <motion.rect
                 initial={{ opacity: 0 }}
                 animate={{ opacity: [0, 0.55, 0.55, 0] }}
                 transition={{
-                  duration: 0.7,
+                  duration: DUR,
                   delay: stagger,
-                  times: [0, 0.35, 0.5, 1],
+                  times: [0, DRAW_FRACTION, 0.55, 1],
                   ease: "easeOut",
                 }}
                 x={x - bodyW}
@@ -533,19 +529,57 @@ export function CandleChart({
                   pointerEvents: "none",
                 }}
               />
-              <line
+              {/* Wick — line strokes upward from yLow to yHigh */}
+              <motion.line
+                initial={{ y1: yLow, opacity: 0 }}
+                animate={{ y1: yHigh, opacity: 1 }}
+                transition={{
+                  y1: {
+                    duration: DUR * DRAW_FRACTION,
+                    delay: stagger,
+                    ease: "easeOut",
+                  },
+                  opacity: {
+                    duration: 0.08,
+                    delay: stagger,
+                  },
+                }}
                 x1={x}
                 x2={x}
-                y1={yHigh}
                 y2={yLow}
                 stroke={color}
-                strokeWidth={Math.max(0.7, Math.min(2, bodyW * 0.15))}
+                strokeWidth={wickW}
               />
-              <rect
+              {/* Body — rect grows upward from bottom edge to full height */}
+              <motion.rect
+                initial={{
+                  y: bodyY + bodyH,
+                  height: 0,
+                  opacity: 0,
+                }}
+                animate={{
+                  y: bodyY,
+                  height: bodyH,
+                  opacity: 1,
+                }}
+                transition={{
+                  y: {
+                    duration: DUR * DRAW_FRACTION,
+                    delay: stagger,
+                    ease: "easeOut",
+                  },
+                  height: {
+                    duration: DUR * DRAW_FRACTION,
+                    delay: stagger,
+                    ease: "easeOut",
+                  },
+                  opacity: {
+                    duration: 0.08,
+                    delay: stagger,
+                  },
+                }}
                 x={x - bodyW / 2}
-                y={bodyY}
                 width={bodyW}
-                height={bodyH}
                 fill={fill}
                 stroke={color}
                 strokeWidth={0.6}
