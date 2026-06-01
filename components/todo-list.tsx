@@ -185,11 +185,18 @@ function TodoItem({
   const showPriorityDot = clickMode === "promote" && isPriority;
   const clickable = clickMode !== "none";
 
-  // Entry timing: stagger 0.05s/item capped so very long lists still
-  // start typing within ~1.5s; typeDur = T_END - itemDelay so all items
-  // finish typing simultaneously at T_END.
-  const itemDelay = entryPhase ? Math.min(index * 0.05, 1.5) : 0;
-  const typeDur = entryPhase ? Math.max(0.6, T_END - itemDelay) : 0;
+  // Entry timing: natural typewriter speed. No more end-sync with T_END
+  // — forcing slow items to wait for fast items to "catch up" made the
+  // typing feel artificially sluggish. Items just stagger in and each
+  // types at its own consistent ~30ms/char clip.
+  // Stagger small so it reads as a continuous fall of lines, not a
+  // sequence of beats.
+  const itemDelay = entryPhase ? Math.min(index * 0.06, 2.0) : 0;
+  // Per-item duration scales with text length so short todos finish
+  // quickly and long ones still feel like typing. Clamped so we never
+  // get a 3-second crawl on a 120-char todo.
+  const charCount = Math.min(t.text.length, 90);
+  const typeDur = entryPhase ? Math.min(Math.max(charCount * 0.022, 0.5), 1.3) : 0;
 
   return (
     <motion.div

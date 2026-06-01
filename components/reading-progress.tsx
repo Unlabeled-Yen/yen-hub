@@ -339,12 +339,21 @@ function ReadingCube({ data }: { data: AttentionResponse }) {
           }}
         >
           <motion.div
-            // Entrance: cube starts spun 270° away (3/4 turn) and settles
-            // to the active face in ~1.0s — fast snap with overshoot-free
-            // ease-out. After `entered`, future face changes use the
-            // slower user-driven rotation curve.
-            initial={{ rotateY: 270 }}
-            animate={{ rotateY: -face * 90 }}
+            // Entrance: barrel-roll through ~1.25 turns then settle on
+            // the active face. Uses a KEYFRAMES array (not a single
+            // value) because framer-motion's interpolator normalizes
+            // single-value rotations to their shortest arc — so
+            // `initial: 270, animate: 0` becomes a 90° turn, looking
+            // identical to a regular face change. Keyframes force the
+            // value to actually traverse the listed angles.
+            // After `entered`, face changes use the slower
+            // user-driven rotation curve (single value, no keyframes).
+            initial={{ rotateY: -450 }}
+            animate={
+              entered
+                ? { rotateY: -face * 90 }
+                : { rotateY: [-450, -face * 90] }
+            }
             transition={
               entered
                 ? { duration: ROTATION_DURATION, ease: [0.65, 0, 0.35, 1] }
