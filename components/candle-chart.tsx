@@ -526,10 +526,17 @@ export function CandleChart({
         ) : null}
       </svg>
 
-      {/* Candle bars — HTML divs, focused purely on the draw effect.
-          scaleY 0→1 with transform-origin center-bottom; wick + body
-          emerge from the low edge upward in sequence. No lift, no halo —
-          isolate the draw animation so it's easy to read. */}
+      {/* Candle bars — HTML divs using a reveal-mask approach:
+            outer container = fixed-size candle bbox positioned at (x, yHigh).
+            inner motion.div anchored at the container's bottom, grows in
+            HEIGHT from 0 → candleH. overflow:hidden clips upper portions.
+            content div inside is the full-size candle (wick + body at their
+            true positions) pinned to the bottom — so as the motion.div
+            grows upward, the candle is revealed from low → high, with the
+            body appearing at its true open/close position as the reveal
+            sweep passes over it.
+            Direct height animation is the most reliable in WebKit — same
+            mechanism the attention-grid histogram bars use successfully. */}
       <div
         style={{
           position: "absolute",
@@ -552,58 +559,83 @@ export function CandleChart({
           const candleH = Math.max(1, yLow - yHigh);
 
           // Generous stagger so the K-by-K draw is clearly perceptible.
-          const STAGGER_TOTAL = 1.6;
+          const STAGGER_TOTAL = 1.8;
           const stagger =
             visible.length > 1
               ? (i / (visible.length - 1)) * STAGGER_TOTAL
               : 0;
 
           return (
-            <motion.div
+            <div
               key={`${seriesKey}-${c.t}-${i}`}
-              initial={{ scaleY: 0 }}
-              animate={{ scaleY: 1 }}
-              transition={{
-                duration: 0.4,
-                delay: stagger,
-                ease: [0.22, 0.9, 0.36, 1],
-              }}
               style={{
                 position: "absolute",
                 left: x - bodyW / 2,
                 top: yHigh,
                 width: bodyW,
                 height: candleH,
-                transformOrigin: "center bottom",
                 pointerEvents: "none",
               }}
             >
-              {/* Wick — full-height vertical line */}
-              <div
-                style={{
-                  position: "absolute",
-                  left: "50%",
-                  top: 0,
-                  bottom: 0,
-                  width: wickW,
-                  marginLeft: -wickW / 2,
-                  background: color,
+              {/* Reveal mask — grows in height, anchored at the bottom of
+                  the outer container (i.e. at yLow). Clips the content
+                  above. */}
+              <motion.div
+                initial={{ height: 0 }}
+                animate={{ height: candleH }}
+                transition={{
+                  duration: 0.45,
+                  delay: stagger,
+                  ease: [0.22, 0.9, 0.36, 1],
                 }}
-              />
-              {/* Body — at its true open/close offset within the candle */}
-              <div
                 style={{
                   position: "absolute",
                   left: 0,
                   right: 0,
-                  top: bodyY - yHigh,
-                  height: bodyH,
-                  background: fill,
-                  border: `0.6px solid ${color}`,
-                  boxSizing: "border-box",
+                  bottom: 0,
+                  overflow: "hidden",
                 }}
-              />
-            </motion.div>
+              >
+                {/* Static candle content, full size, pinned to bottom of
+                    the reveal mask — same screen coords as the parent so
+                    the wick + body don't move; they're just unveiled. */}
+                <div
+                  style={{
+                    position: "absolute",
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    height: candleH,
+                  }}
+                >
+                  {/* Wick — thin vertical line spanning the full height */}
+                  <div
+                    style={{
+                      position: "absolute",
+                      left: "50%",
+                      top: 0,
+                      bottom: 0,
+                      width: wickW,
+                      marginLeft: -wickW / 2,
+                      background: color,
+                    }}
+                  />
+                  {/* Body — at its true open/close offset */}
+                  <div
+                    style={{
+                      position: "absolute",
+                      left: 0,
+                      right: 0,
+                      top: bodyY - yHigh,
+                      height: bodyH,
+                      background: fill,
+                      border: `0.6px solid ${color}`,
+                      boxSizing: "border-box",
+                    }}
+                  />
+                </div>
+              </motion.div>
+            </div>
           );
         })}
       </div>
