@@ -115,15 +115,11 @@ const T_END = 3.5;
 // (TypewriterText removed — Yen cancelled the typewriter effect; all
 // item texts now use the same simple opacity fade-in as days-ago.)
 
-// Baseline delay before the first item starts fading in.
-const FADE_BASELINE_MS = 500;
-// Per-item stagger. Slower per Yen — was 60ms, items snapped in too
-// quickly. 120ms gives a clearer cascade.
-const FADE_STAGGER_MS = 120;
-// Cap so very long lists still settle quickly.
+// All scaled up ~1.33× from the previous 15s timer step per Yen.
+const FADE_BASELINE_MS = 700;
+const FADE_STAGGER_MS = 160;
 const STAGGER_CAP = 12;
-// Per-fade duration. Slower per Yen — was 0.35s.
-const FADE_DUR = 0.7;
+const FADE_DUR = 0.95;
 
 function TodoItem({
   t,
@@ -413,7 +409,7 @@ export function TodoList() {
     //   baseline 500ms + 12*120ms = 1940ms + 700ms fade = 2.64s.
     // Add buffer; after flip, newly-mounted items (tab switch) render
     // instantly.
-    const id = window.setTimeout(() => setEntryPhase(false), 15_000);
+    const id = window.setTimeout(() => setEntryPhase(false), 20_000);
     return () => window.clearTimeout(id);
   }, [data, keysReady]);
 
