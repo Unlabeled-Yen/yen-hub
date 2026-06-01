@@ -56,15 +56,14 @@ function BookBlock({ b, index }: { b: BookSummary; index: number }) {
   const { author, title } = fromServer ?? parseBook(b.name);
   const pct = b.chapters === 0 ? 0 : b.openedChapters / b.chapters;
   const pctLabel = `${Math.round(pct * 100)}%`;
-  // Choreography: cube barrel-roll runs t=0→1.3s (no delay; cube spins
-  // during the page fade-in so user doesn't see a static cube before
-  // motion starts). Then progress bars pen-draw, last bar landing on
-  // T_END = 3.5s.
-  // delay  = 1.3 + i * 0.04
+  // Choreography: half-turn cube flip runs t=0→1.6s (no delay; spins
+  // during the page fade-in). Then progress bars pen-draw, last bar
+  // landing on T_END = 3.5s.
+  // delay  = 1.6 + i * 0.04
   // bar starts at delay + 0.15 (lead)
-  // bar dur = 1.77
-  // For i=7: 1.3 + 0.28 + 0.15 + 1.77 = 3.50 ✓
-  const delay = 1.3 + index * 0.04;
+  // bar dur = 1.47
+  // For i=7: 1.6 + 0.28 + 0.15 + 1.47 = 3.50 ✓
+  const delay = 1.6 + index * 0.04;
 
   // Three visual states:
   //   reading: opened > 0 chapters → full brightness, teal progress
@@ -149,7 +148,7 @@ function BookBlock({ b, index }: { b: BookSummary; index: number }) {
             <motion.span
               initial={{ width: 0 }}
               animate={{ width: `${Math.max(2, pct * 100)}%` }}
-              transition={{ duration: 1.77, ease: EASE, delay: delay + 0.15 }}
+              transition={{ duration: 1.47, ease: EASE, delay: delay + 0.15 }}
               style={{
                 display: "block",
                 height: "100%",
@@ -223,7 +222,7 @@ function ReadingCube({ data }: { data: AttentionResponse }) {
   // continuous motion rather than "page appears, pause, then spin."
   const [entered, setEntered] = useState(false);
   useEffect(() => {
-    const t = setTimeout(() => setEntered(true), 1350);
+    const t = setTimeout(() => setEntered(true), 1650);
     return () => clearTimeout(t);
   }, []);
   const [size, setSize] = useState<{ w: number; h: number }>({ w: 470, h: 360 });
@@ -341,24 +340,22 @@ function ReadingCube({ data }: { data: AttentionResponse }) {
           }}
         >
           <motion.div
-            // Entrance: exactly ONE full turn, then settle on the
-            // active face. Uses a KEYFRAMES array (not a single value)
-            // because framer-motion's interpolator normalizes single-
-            // value rotations to their shortest arc — so e.g.
-            // `initial: -360, animate: 0` would compress to no
-            // movement at all. Keyframes force the actual path.
-            // After `entered`, face changes use the slower
-            // user-driven rotation curve (single value, no keyframes).
-            initial={{ rotateY: -360 }}
+            // Entrance: HALF turn (180°) — Yen wanted less rotation
+            // and a more languid feel. Combined with the slower 1.6s
+            // duration below this reads as a calm "page flip" rather
+            // than a barrel roll. Keyframes still required because
+            // framer-motion normalizes single-value rotateY to its
+            // shortest arc.
+            initial={{ rotateY: -180 }}
             animate={
               entered
                 ? { rotateY: -face * 90 }
-                : { rotateY: [-360, -face * 90] }
+                : { rotateY: [-180, -face * 90] }
             }
             transition={
               entered
                 ? { duration: ROTATION_DURATION, ease: [0.65, 0, 0.35, 1] }
-                : { duration: 1.3, ease: [0.16, 1, 0.3, 1] }
+                : { duration: 1.6, ease: [0.16, 1, 0.3, 1] }
             }
             style={{
               position: "absolute",
