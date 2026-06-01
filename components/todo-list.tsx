@@ -217,9 +217,8 @@ const TYPE_BASELINE_MS = 300;
 // long lists don't take forever.
 const STAGGER_MS = 380;
 const STAGGER_CAP = 8;
-// Tiny pause between sub-row segments so the caret visibly hops from
-// one element to the next.
-const SUB_GAP_MS = 80;
+// (SUB_GAP_MS removed — body & filename now type simultaneously per
+// Yen, no chained sub-row gaps needed.)
 
 function TodoItem({
   t,
@@ -294,9 +293,11 @@ function TodoItem({
   const showPriorityDot = clickMode === "promote" && isPriority;
   const clickable = clickMode !== "none";
 
-  // Typewriter sequencing (only when entryPhase is true). Each item gets
-  // a base offset; within it, body → file → days-ago types in order so
-  // the caret visibly hops between elements.
+  // Typewriter sequencing (only when entryPhase is true). Body and
+  // filename type SIMULTANEOUSLY (same startMs) per Yen's spec — they
+  // share itemBase. Days-ago does NOT typewriter; it fades in after
+  // both body & filename finish (the longer of the two determines
+  // when days appears).
   // Stagger drops to a tiny step after the first STAGGER_CAP items so
   // long lists don't snowball into 20+ second intros.
   const cappedI = Math.min(index, STAGGER_CAP);
@@ -306,9 +307,11 @@ function TodoItem({
   const fileText = fileName(t.file);
   const daysText = dayLabel(t.mtimeMs);
   const bodyDurMs = entryPhase ? (bodyText.length / TYPE_CPS) * 1000 : 0;
-  const fileStartMs = itemBase + bodyDurMs + SUB_GAP_MS;
   const fileDurMs = entryPhase ? (fileText.length / TYPE_CPS) * 1000 : 0;
-  const daysStartMs = fileStartMs + fileDurMs + SUB_GAP_MS;
+  // Days-ago fade-in starts after WHICHEVER typewriter finishes last.
+  const daysFadeStartSec = entryPhase
+    ? (itemBase + Math.max(bodyDurMs, fileDurMs) + 60) / 1000
+    : 0;
 
   return (
     <div
@@ -396,25 +399,33 @@ function TodoItem({
           {entryPhase ? (
             <TypewriterText
               text={fileText}
-              startMs={fileStartMs}
+              startMs={itemBase}
               charsPerSec={TYPE_CPS}
             />
           ) : (
             fileText
           )}
         </span>
-        <span style={{ opacity: 0.5 }}>·</span>
-        <span className="tabular-nums whitespace-nowrap">
-          {entryPhase ? (
-            <TypewriterText
-              text={daysText}
-              startMs={daysStartMs}
-              charsPerSec={TYPE_CPS}
-            />
-          ) : (
-            daysText
-          )}
-        </span>
+        {/* Days-ago does NOT typewriter — appears last per Yen. Fades
+            in after both body & filename are done typing. The leading
+            dot separator fades in WITH days so the row stays clean
+            until the last beat. */}
+        <motion.span
+          style={{ opacity: 0.5 }}
+          initial={entryPhase ? { opacity: 0 } : { opacity: 0.5 }}
+          animate={{ opacity: 0.5 }}
+          transition={{ duration: 0.35, ease: EASE, delay: daysFadeStartSec }}
+        >
+          ·
+        </motion.span>
+        <motion.span
+          className="tabular-nums whitespace-nowrap"
+          initial={entryPhase ? { opacity: 0 } : { opacity: 1 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.35, ease: EASE, delay: daysFadeStartSec }}
+        >
+          {daysText}
+        </motion.span>
       </div>
     </div>
   );
@@ -721,17 +732,17 @@ export function TodoList() {
           }}
           title="單擊切換首要 / 總覽，雙擊進入審查"
         >
-          <span>
-            {entryPhase ? (
-              <TypewriterText
-                text={titleText}
-                startMs={0}
-                charsPerSec={TYPE_CPS}
-              />
-            ) : (
-              titleText
-            )}
-          </span>
+          {/* Panel title — original effect per Yen: simple opacity
+              fade-in, no typewriter. The wrapping motion.span lets
+              this fade independently of the (removed) wrapper fade. */}
+          <motion.span
+            initial={entryPhase ? { opacity: 0 } : { opacity: 1 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.5, ease: EASE }}
+            style={{ display: "inline-block" }}
+          >
+            {titleText}
+          </motion.span>
           <span style={{ opacity: 0.4 }}>—</span>
           <span className="tabular-nums">{displayCount}</span>
         </button>
