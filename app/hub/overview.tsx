@@ -195,97 +195,102 @@ export function Overview() {
           close to the US30 panel top edge. */}
       <div className="h-8" data-tauri-drag-region />
 
-      <main className="flex-1 px-8 sm:px-12 py-1">
-        {/* Natural-flow stack — each row sizes to its content, page scrolls
-            if total height exceeds viewport. Reading is naturally sized;
-            TODO's height is mirrored from Reading via JS measurement so
-            the two bottoms always align. */}
-        {/* gap between upper (chart + market) and lower (reading + todo)
-            rows. Tuned to gap-2 (8px) per Yen's call — slab tucked
-            tight against the US30 panel bottom. */}
-        <div className="flex flex-col gap-2 pt-0">
-          {/* Upper row: chart at max-content, market fills the rest */}
-          <div className="grid grid-cols-1 lg:grid-cols-[max-content_1fr] gap-x-10 items-stretch flex-shrink-0">
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ duration: 0.4, ease: "linear", delay: 0 }}
-              className="min-w-0"
-            >
-              <AttentionGrid />
-            </motion.div>
-            <motion.div
-              initial={{ opacity: 0, y: 14 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 1.0, ease: [0.075, 0.82, 0.165, 1], delay: 0.3 }}
-              className="min-w-0 h-full"
-            >
-              <MarketMonitor />
-            </motion.div>
-          </div>
-          {/* Lower row: Reading natural-sized, TODO mirrors via JS.
-              Wrapped in a subtle vertical-gradient panel so the whole
-              attention-pair gets a quiet visual frame. */}
-          <div
-            className="grid grid-cols-1 lg:grid-cols-2 gap-x-10 items-start py-4 -mx-8 sm:-mx-12 px-8 sm:px-12"
-            style={{
-              // Slab vertical padding tightened (py-16 → py-4, ~48px
-              // tighter on each side) so Reading content sits closer to
-              // the US30 panel bottom. Gradient stops unchanged.
-              background:
-                "linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0.65) 10%, rgba(0,0,0,0.65) 90%, rgba(0,0,0,0) 100%)",
-            }}
-          >
-            <motion.div
-              ref={readingRef}
-              initial={{ opacity: 0, y: 14 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 1.0, ease: [0.075, 0.82, 0.165, 1], delay: 0.4 }}
-              className="min-w-0"
-            >
-              <ReadingProgress />
-            </motion.div>
-            <motion.div
-              initial={{ opacity: 0, y: 14 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 1.0, ease: [0.075, 0.82, 0.165, 1], delay: 0.5 }}
-              className="min-w-0"
-              style={{
-                height: `${readingH}px`,
-              }}
-            >
-              <TodoList />
-            </motion.div>
-          </div>
-        </div>
-
-        {/* Bento module placeholders — sit below the fixed-height outer.
-            Scroll the page to reveal them. */}
-        <div
-          className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 auto-rows-[140px] gap-4 mt-6"
-          style={{ perspective: "1600px", perspectiveOrigin: "50% 30%" }}
+      {/* Horizontal carousel: Page 1 = home dashboard, Page 2 = bento
+          modules. CSS scroll-snap handles the swipe — Mac trackpad
+          two-finger horizontal swipe slides between pages. Scrollbar
+          hidden via hub-scrollbar; pages snap to start. */}
+      <div
+        className="flex-1 overflow-x-auto overflow-y-hidden flex hub-scrollbar"
+        style={{
+          scrollSnapType: "x mandatory",
+          scrollBehavior: "smooth",
+        }}
+      >
+        {/* Page 1 — Home (existing content) */}
+        <main
+          className="shrink-0 w-screen px-8 sm:px-12 py-1 overflow-y-auto hub-scrollbar"
+          style={{ scrollSnapAlign: "start" }}
         >
-          {MODULES.map((m, i) => (
-            <motion.div
-              key={m.title}
-              className={spanCls(m.span)}
-              // Rise only — opacity is driven by the page-level fade so
-              // both end together at RISE_DURATION. Strong ease-out:
-              // cards launch upward quickly then settle long and slow.
-              initial={{ y: 75 }}
-              animate={{ y: 0 }}
-              transition={{
-                duration: RISE_DURATION,
-                ease: RISE_EASE,
-                delay: delays[i],
+          <div className="flex flex-col gap-2 pt-0">
+            {/* Upper row: chart at max-content, market fills the rest */}
+            <div className="grid grid-cols-1 lg:grid-cols-[max-content_1fr] gap-x-10 items-stretch flex-shrink-0">
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.4, ease: "linear", delay: 0 }}
+                className="min-w-0"
+              >
+                <AttentionGrid />
+              </motion.div>
+              <motion.div
+                initial={{ opacity: 0, y: 14 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 1.0, ease: [0.075, 0.82, 0.165, 1], delay: 0.3 }}
+                className="min-w-0 h-full"
+              >
+                <MarketMonitor />
+              </motion.div>
+            </div>
+            {/* Lower row: Reading + TODO inside the dark slab */}
+            <div
+              className="grid grid-cols-1 lg:grid-cols-2 gap-x-10 items-start py-4 -mx-8 sm:-mx-12 px-8 sm:px-12"
+              style={{
+                background:
+                  "linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0.65) 10%, rgba(0,0,0,0.65) 90%, rgba(0,0,0,0) 100%)",
               }}
-              style={{ willChange: "transform" }}
             >
-              <ModuleCard title={m.title} hint={m.hint} />
-            </motion.div>
-          ))}
-        </div>
-      </main>
+              <motion.div
+                ref={readingRef}
+                initial={{ opacity: 0, y: 14 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 1.0, ease: [0.075, 0.82, 0.165, 1], delay: 0.4 }}
+                className="min-w-0"
+              >
+                <ReadingProgress />
+              </motion.div>
+              <motion.div
+                initial={{ opacity: 0, y: 14 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 1.0, ease: [0.075, 0.82, 0.165, 1], delay: 0.5 }}
+                className="min-w-0"
+                style={{ height: `${readingH}px` }}
+              >
+                <TodoList />
+              </motion.div>
+            </div>
+          </div>
+        </main>
+
+        {/* Page 2 — Bento modules. Lives here on its own page so the
+            home dashboard reads clean without anything beneath. Swipe
+            right (two-finger trackpad) to reach. */}
+        <main
+          className="shrink-0 w-screen px-8 sm:px-12 py-1 overflow-y-auto hub-scrollbar"
+          style={{ scrollSnapAlign: "start" }}
+        >
+          <div
+            className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 auto-rows-[140px] gap-4"
+            style={{ perspective: "1600px", perspectiveOrigin: "50% 30%" }}
+          >
+            {MODULES.map((m, i) => (
+              <motion.div
+                key={m.title}
+                className={spanCls(m.span)}
+                initial={{ y: 75 }}
+                animate={{ y: 0 }}
+                transition={{
+                  duration: RISE_DURATION,
+                  ease: RISE_EASE,
+                  delay: delays[i],
+                }}
+                style={{ willChange: "transform" }}
+              >
+                <ModuleCard title={m.title} hint={m.hint} />
+              </motion.div>
+            ))}
+          </div>
+        </main>
+      </div>
 
       <CommandPalette />
     </motion.div>
