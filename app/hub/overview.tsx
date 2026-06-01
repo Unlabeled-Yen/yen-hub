@@ -326,34 +326,38 @@ export function Overview() {
               </motion.div>
             </div>
             {/* Lower row: Reading + TODO inside the dark slab.
-                The slab background extends UPWARD into the chart area
-                via negative top margin + matching positive top padding,
-                so the dark gradient visually starts mid-chart while
-                actual reading/todo content stays in place.
-                Gradient: transparent at top (chart mid-line) → opaque
-                by the time it crosses the original slab boundary →
-                stays opaque to bottom (no fade-out at bottom).
-                pointerEvents:none on the slab + auto on direct children
-                lets chart hover/wheel events pass through the
-                transparent extension area to the chart underneath. */}
+                Slab content (reading + todo) stays exactly where it
+                was. To pull the gradient START point upward (per Yen)
+                without moving content, an ABSOLUTE child renders the
+                gradient and extends 260px above the slab into the
+                chart area.
+                  - pointer-events: none on the extension so chart
+                    hover/wheel still works through the transparent
+                    upper portion
+                  - gradient: transparent at top (chart mid-line) →
+                    opaque by ~38% (= 260 / (260+~420) of total) →
+                    opaque to bottom (no fade-out at bottom)
+                Slab itself: position:relative anchors the absolute
+                child; no own background; original padding/grid kept. */}
             <div
-              className="grid grid-cols-1 lg:grid-cols-2 gap-x-10 items-start py-4 -mt-[260px] pt-[260px] -mx-8 sm:-mx-12 px-8 sm:px-12"
-              style={{
-                background:
-                  "linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0.65) 42%, rgba(0,0,0,0.65) 100%)",
-                pointerEvents: "none",
-              }}
+              className="grid grid-cols-1 lg:grid-cols-2 gap-x-10 items-start py-4 -mx-8 sm:-mx-12 px-8 sm:px-12 relative"
             >
               <div
-                ref={readingRef}
-                className="min-w-0"
-                style={{ pointerEvents: "auto" }}
-              >
+                aria-hidden
+                className="absolute left-0 right-0 pointer-events-none"
+                style={{
+                  top: -260,
+                  bottom: 0,
+                  background:
+                    "linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0.65) 38%, rgba(0,0,0,0.65) 100%)",
+                }}
+              />
+              <div ref={readingRef} className="min-w-0 relative">
                 <ReadingProgress />
               </div>
               <div
-                className="min-w-0"
-                style={{ height: `${readingH}px`, pointerEvents: "auto" }}
+                className="min-w-0 relative"
+                style={{ height: `${readingH}px` }}
               >
                 <TodoList />
               </div>
