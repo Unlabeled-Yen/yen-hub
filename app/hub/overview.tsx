@@ -317,8 +317,12 @@ export function Overview() {
           className="shrink-0 w-screen h-full px-8 sm:px-12 py-1 overflow-y-auto hub-scrollbar"
         >
           <div className="flex flex-col gap-2 pt-0">
-            {/* Upper row: chart at max-content, market fills the rest */}
-            <div className="grid grid-cols-1 lg:grid-cols-[max-content_1fr] gap-x-10 items-stretch flex-shrink-0">
+            {/* Upper row: chart at max-content, market fills the rest.
+                `relative z-10` stacks the row above the slab's absolute
+                gradient extension below — without this, the slab's
+                upward fade was covering the bottom of the US30 panel
+                border. */}
+            <div className="grid grid-cols-1 lg:grid-cols-[max-content_1fr] gap-x-10 items-stretch flex-shrink-0 relative z-10">
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
