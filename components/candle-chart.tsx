@@ -909,8 +909,15 @@ export function CandleChart({
                     duration: 0.25,
                     ease: [0.22, 0.9, 0.36, 1],
                   }}
+                  // Use percentages with fill-box so transform-origin
+                  // resolves to the element's own center. The previous
+                  // version used absolute SVG coords as the origin while
+                  // transformBox:fill-box reinterpreted them as offsets
+                  // inside the tiny 44×14 rect — sending origin off the
+                  // map and ballooning the scale into a giant blob in
+                  // the middle of the chart.
                   style={{
-                    transformOrigin: `${labelX + labelW / 2}px ${labelY + labelH / 2}px`,
+                    transformOrigin: "center",
                     transformBox: "fill-box" as "fill-box",
                   }}
                 >
