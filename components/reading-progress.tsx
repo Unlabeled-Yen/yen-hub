@@ -311,7 +311,10 @@ function ReadingCube({ data }: { data: AttentionResponse }) {
                   inset: 0,
                   transform: `rotateY(${faceIndex * 90}deg) translateZ(${depth}px)`,
                   backfaceVisibility: "hidden",
-                  padding: "8px 12px",
+                  // Left-flush the book grid (was "8px 12px"). Keeps the
+                  // right-side breathing room but pulls the leftmost
+                  // column up to the face's left edge per Yen's spec.
+                  padding: "8px 12px 8px 0",
                   display: "flex",
                   flexDirection: "column",
                   justifyContent: "flex-start",
