@@ -781,45 +781,17 @@ export function CandleChart({
             if (!d) return null;
             const stroke = MA_SERIES[si].color;
             const sw = si === MA_SERIES.length - 1 ? 1.35 : 1.05;
-            // Geometric glow — two extra thicker strokes behind the main
-            // line. Works inside clipPath because it's pure geometry
-            // (drop-shadow filters get clipped, these don't).
-            const glowOuter = stroke.replace(/[\d.]+\)$/, "0.18)");
-            const glowInner = stroke.replace(/[\d.]+\)$/, "0.40)");
-            const swOuter = sw + 5;
-            const swInner = sw + 2.5;
             if (penDrawActive) {
-              // Linear ease so the pathLength head matches SMIL
-              // animateMotion's constant-speed leading dot pixel-for-
-              // pixel along the path.
+              // Linear ease so pathLength head + SMIL animateMotion
+              // dot match speed pixel-for-pixel along the path.
               const t = {
                 pathLength: { duration: PEN_DRAW_DUR, ease: "linear" as const },
                 opacity: { duration: 0.18 },
               };
               return (
                 <g key={`ma-${seriesKey}-${MA_SERIES[si].period}`}>
-                  <motion.path
-                    d={d}
-                    fill="none"
-                    stroke={glowOuter}
-                    strokeWidth={swOuter}
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    initial={{ pathLength: 0, opacity: 0 }}
-                    animate={{ pathLength: 1, opacity: 1 }}
-                    transition={t}
-                  />
-                  <motion.path
-                    d={d}
-                    fill="none"
-                    stroke={glowInner}
-                    strokeWidth={swInner}
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    initial={{ pathLength: 0, opacity: 0 }}
-                    animate={{ pathLength: 1, opacity: 1 }}
-                    transition={t}
-                  />
+                  {/* Main stroke only — glow lives on the K bars per
+                      latest spec, not on the lines. */}
                   <motion.path
                     d={d}
                     fill="none"
@@ -831,15 +803,11 @@ export function CandleChart({
                     animate={{ pathLength: 1, opacity: 1 }}
                     transition={t}
                   />
-                  {/* Leading head dot — SVG animateMotion drags a faint
-                      luminous dot along the path in lockstep with the
-                      pen-draw. Disappears when penDrawActive ends and
-                      the whole branch unmounts. */}
-                  <circle
-                    r={2.4}
-                    fill={stroke}
-                    opacity={0.95}
-                  >
+                  {/* Leading head dot — faint luminous marker following
+                      the pen tip. Two layers (sharp inner + soft outer)
+                      give a "lead light" feel, both at same speed via
+                      animateMotion. */}
+                  <circle r={2.4} fill={stroke} opacity={0.95}>
                     <animateMotion
                       dur={`${PEN_DRAW_DUR}s`}
                       path={d}
@@ -848,7 +816,7 @@ export function CandleChart({
                   </circle>
                   <circle
                     r={5}
-                    fill={glowInner}
+                    fill={stroke.replace(/[\d.]+\)$/, "0.40)")}
                     opacity={0.6}
                   >
                     <animateMotion
@@ -914,6 +882,11 @@ export function CandleChart({
                   y2={y}
                   stroke={accent}
                   strokeWidth={0.8}
+                  // Dashed from the very first frame of the sweep — no
+                  // solid-line stage. dasharray is independent of the
+                  // x2 animation, so the dashes just paint along the
+                  // currently-rendered length of the line.
+                  strokeDasharray="3 3"
                   opacity={0.85}
                   initial={{ x2: PAD_L }}
                   animate={{ x2: width - PAD_R }}
@@ -1071,36 +1044,12 @@ export function CandleChart({
               const atrGlowInner = "rgba(255,170,100,0.40)";
               const atrSW = 1.1;
               if (penDrawActive) {
-                // Linear ease — matches the SMIL animateMotion leading
-                // dot speed exactly along the path.
                 const t = {
                   pathLength: { duration: PEN_DRAW_DUR, ease: "linear" as const },
                   opacity: { duration: 0.18 },
                 };
                 return (
                   <g key={`atr-${seriesKey}`}>
-                    <motion.path
-                      d={atrPath}
-                      fill="none"
-                      stroke={atrGlowOuter}
-                      strokeWidth={atrSW + 5}
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      initial={{ pathLength: 0, opacity: 0 }}
-                      animate={{ pathLength: 1, opacity: 1 }}
-                      transition={t}
-                    />
-                    <motion.path
-                      d={atrPath}
-                      fill="none"
-                      stroke={atrGlowInner}
-                      strokeWidth={atrSW + 2.5}
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      initial={{ pathLength: 0, opacity: 0 }}
-                      animate={{ pathLength: 1, opacity: 1 }}
-                      transition={t}
-                    />
                     <motion.path
                       d={atrPath}
                       fill="none"
@@ -1288,42 +1237,80 @@ export function CandleChart({
               candles.length > 1
                 ? (i / (candles.length - 1)) * INITIAL_STAGGER_TOTAL
                 : 0;
-            // Alternate draw direction per spec: even-index (1st, 3rd…)
-            // bottom → top; odd-index (2nd, 4th…) top → bottom. The mask
-            // is just anchored at the opposite edge; the inner static
-            // content pins to the SAME anchor so the visible portion
-            // is contiguous from that anchor outward.
+            // Alternating draw direction + lift-then-sink + halo:
+            //   - even index (1st, 3rd…): bottom → top
+            //   - odd  index (2nd, 4th…): top → bottom
+            //   - outer wrapper lifts y from 0 → -10, holds, sinks back
+            //   - halo blurred rect fades 0 → 0.55 → 0 in sync with lift
+            //   - inner height mask draws the candle in alternating dir
             const drawFromBottom = i % 2 === 0;
+            const liftTimes = [0, 0.4, 0.6, 1] as const;
             return (
               <div key={`${seriesKey}-${c.t}-${i}`} style={posStyle}>
                 <motion.div
-                  initial={{ height: 0 }}
-                  animate={{ height: candleH }}
+                  initial={{ y: 0 }}
+                  animate={{ y: [0, -10, -10, 0] }}
                   transition={{
                     duration: INITIAL_DUR,
                     delay: stagger,
+                    times: [...liftTimes],
                     ease: [0.22, 0.9, 0.36, 1],
                   }}
-                  style={{
-                    position: "absolute",
-                    left: 0,
-                    right: 0,
-                    [drawFromBottom ? "bottom" : "top"]: 0,
-                    overflow: "hidden",
-                  }}
+                  style={{ position: "absolute", inset: 0 }}
                 >
-                  <div
+                  {/* Halo — soft blurred glow behind the candle, peaks
+                      while lifted. Same color as the candle for tonal
+                      cohesion. */}
+                  <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: [0, 0.55, 0.55, 0] }}
+                    transition={{
+                      duration: INITIAL_DUR,
+                      delay: stagger,
+                      times: [...liftTimes],
+                      ease: "easeOut",
+                    }}
+                    style={{
+                      position: "absolute",
+                      left: -bodyW * 0.6,
+                      top: -4,
+                      width: bodyW * 2.2,
+                      height: candleH + 8,
+                      background: color,
+                      filter: "blur(7px)",
+                      pointerEvents: "none",
+                    }}
+                  />
+                  {/* Reveal mask — height grows from anchored edge. */}
+                  <motion.div
+                    initial={{ height: 0 }}
+                    animate={{ height: candleH }}
+                    transition={{
+                      duration: INITIAL_DUR,
+                      delay: stagger,
+                      ease: [0.22, 0.9, 0.36, 1],
+                    }}
                     style={{
                       position: "absolute",
                       left: 0,
                       right: 0,
                       [drawFromBottom ? "bottom" : "top"]: 0,
-                      height: candleH,
+                      overflow: "hidden",
                     }}
                   >
-                    {wick}
-                    {body}
-                  </div>
+                    <div
+                      style={{
+                        position: "absolute",
+                        left: 0,
+                        right: 0,
+                        [drawFromBottom ? "bottom" : "top"]: 0,
+                        height: candleH,
+                      }}
+                    >
+                      {wick}
+                      {body}
+                    </div>
+                  </motion.div>
                 </motion.div>
               </div>
             );

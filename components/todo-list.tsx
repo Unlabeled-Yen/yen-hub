@@ -406,10 +406,41 @@ export function TodoList() {
     }
   }
 
-  function cycleTab() {
-    const i = TAB_ORDER.indexOf(tab);
-    setTab(TAB_ORDER[(i + 1) % TAB_ORDER.length]);
+  // Tab cycling:
+  //   Single click → toggle between priority ↔ category. Quick everyday
+  //   path between the two main work surfaces.
+  //   Double click → jump to 審查 (review). Behind a deliberate gesture
+  //   so it doesn't appear in the casual cycle.
+  // Implementation: schedule the single-click action on a short timer;
+  // a second click within the window cancels the timer and triggers
+  // the double-click action instead.
+  const clickTimerRef = useRef<number | null>(null);
+  function onTitleClick() {
+    if (clickTimerRef.current !== null) return; // double-handler will fire
+    clickTimerRef.current = window.setTimeout(() => {
+      clickTimerRef.current = null;
+      setTab((prev) => {
+        // Single-click target: priority ↔ category. From review goes
+        // back to priority (the default surface).
+        if (prev === "priority") return "category";
+        return "priority";
+      });
+    }, 240);
   }
+  function onTitleDoubleClick() {
+    if (clickTimerRef.current !== null) {
+      window.clearTimeout(clickTimerRef.current);
+      clickTimerRef.current = null;
+    }
+    setTab("review");
+  }
+  useEffect(() => {
+    return () => {
+      if (clickTimerRef.current !== null) {
+        window.clearTimeout(clickTimerRef.current);
+      }
+    };
+  }, []);
 
   // Pool computation -------------------------------------------------
   const items = data?.items ?? [];
@@ -488,7 +519,8 @@ export function TodoList() {
       <header className="flex items-center justify-between gap-4 font-mono flex-shrink-0 pb-4 mb-1">
         <button
           type="button"
-          onClick={cycleTab}
+          onClick={onTitleClick}
+          onDoubleClick={onTitleDoubleClick}
           className="flex items-baseline gap-3 text-[12px] tracking-[0.30em] uppercase cursor-pointer select-none"
           style={{
             color: titleColor,
@@ -499,7 +531,7 @@ export function TodoList() {
             textShadow: titleShadow,
             transition: "color 280ms, text-shadow 280ms",
           }}
-          title="點擊切換 首要 → 總覽 → 審查"
+          title="單擊切換首要 / 總覽，雙擊進入審查"
         >
           <span>{titleText}</span>
           <span style={{ opacity: 0.4 }}>—</span>
