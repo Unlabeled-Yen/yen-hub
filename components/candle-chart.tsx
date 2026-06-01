@@ -26,7 +26,14 @@
  */
 
 import { motion } from "motion/react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 export type Candle = { t: number; o: number; h: number; l: number; c: number };
 
@@ -198,24 +205,38 @@ export function CandleChart({
   // firstShownRef stays true after the very first time candles arrive.
   // isInitialReveal = the slow / glow / staggered draw (login → home).
   // Subsequent reveals (tf swap) are just a fast opacity fade.
-  // revealActive ends after the longest stagger+duration so static plain
-  // divs take over once the animation is done — keeps zoom/pan smooth.
+  //
+  // Layout-phase: useLayoutEffect runs synchronously after commit, before
+  // the browser paints. The state updates here flush in the same paint
+  // window, so the browser never sees the brief plain-div render that
+  // sits between "candles arrived" and "reveal turned on" — no flicker.
+  //
+  // Strict-mode safe: lastSeriesKeyRef guards against double-invocation
+  // mutating firstShownRef out from under us.
   const firstShownRef = useRef(false);
+  const lastSeriesKeyRef = useRef<string | null>(null);
   const [revealActive, setRevealActive] = useState(false);
   const [isInitialReveal, setIsInitialReveal] = useState(true);
   const seriesKey = `${timeframe}-${candles.length}-${candles[0]?.t ?? 0}`;
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (candles.length === 0) return;
+    if (lastSeriesKeyRef.current === seriesKey) return;
+    lastSeriesKeyRef.current = seriesKey;
     const wasInitial = !firstShownRef.current;
     firstShownRef.current = true;
     setIsInitialReveal(wasInitial);
     setRevealActive(true);
-    const totalMs = wasInitial
+  }, [seriesKey, candles.length]);
+  // End-of-reveal scheduler — a normal effect is fine here, paint timing
+  // doesn't matter for switching back to plain divs.
+  useEffect(() => {
+    if (!revealActive) return;
+    const totalMs = isInitialReveal
       ? (INITIAL_STAGGER_TOTAL + INITIAL_DUR) * 1000 + 200
       : FAST_DUR * 1000 + 80;
     const t = window.setTimeout(() => setRevealActive(false), totalMs);
     return () => window.clearTimeout(t);
-  }, [seriesKey, candles.length]);
+  }, [revealActive, isInitialReveal, seriesKey]);
 
   // Hover -------------------------------------------------------------
   const [hoverGlobalIdx, setHoverGlobalIdx] = useState<number | null>(null);
