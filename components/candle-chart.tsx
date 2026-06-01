@@ -771,6 +771,10 @@ export function CandleChart({
             if (!d) return null;
             const stroke = MA_SERIES[si].color;
             const sw = si === MA_SERIES.length - 1 ? 1.35 : 1.05;
+            // Match-color glow — drop-shadow uses the line's own stroke
+            // so each MA gets its own halo tint. Two-layer (tight + soft)
+            // gives the line a luminous "neon" feel on the dark panel.
+            const glow = `drop-shadow(0 0 2px ${stroke}) drop-shadow(0 0 6px ${stroke.replace(/[\d.]+\)$/, "0.45)")})`;
             if (penDrawActive) {
               return (
                 <motion.path
@@ -787,6 +791,7 @@ export function CandleChart({
                     pathLength: { duration: PEN_DRAW_DUR, ease: "easeOut" },
                     opacity: { duration: 0.18 },
                   }}
+                  style={{ filter: glow }}
                 />
               );
             }
@@ -799,6 +804,7 @@ export function CandleChart({
                 strokeWidth={sw}
                 strokeLinecap="round"
                 strokeLinejoin="round"
+                style={{ filter: glow }}
               />
             );
           })}
@@ -939,32 +945,40 @@ export function CandleChart({
                 ATR is supplementary context. On the first reveal,
                 strokes left → right (pathLength animation), same timing
                 as the MA lines. */}
-            {penDrawActive ? (
-              <motion.path
-                key={`atr-${seriesKey}`}
-                d={atrPath}
-                fill="none"
-                stroke="rgba(255,170,100,0.85)"
-                strokeWidth={1.1}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                initial={{ pathLength: 0, opacity: 0 }}
-                animate={{ pathLength: 1, opacity: 1 }}
-                transition={{
-                  pathLength: { duration: PEN_DRAW_DUR, ease: "easeOut" },
-                  opacity: { duration: 0.18 },
-                }}
-              />
-            ) : (
-              <path
-                d={atrPath}
-                fill="none"
-                stroke="rgba(255,170,100,0.85)"
-                strokeWidth={1.1}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            )}
+            {(() => {
+              const atrStroke = "rgba(255,170,100,0.85)";
+              // Two-layer warm glow mirroring the MA halo style.
+              const atrGlow =
+                "drop-shadow(0 0 2px rgba(255,170,100,0.85)) drop-shadow(0 0 6px rgba(255,170,100,0.45))";
+              return penDrawActive ? (
+                <motion.path
+                  key={`atr-${seriesKey}`}
+                  d={atrPath}
+                  fill="none"
+                  stroke={atrStroke}
+                  strokeWidth={1.1}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  initial={{ pathLength: 0, opacity: 0 }}
+                  animate={{ pathLength: 1, opacity: 1 }}
+                  transition={{
+                    pathLength: { duration: PEN_DRAW_DUR, ease: "easeOut" },
+                    opacity: { duration: 0.18 },
+                  }}
+                  style={{ filter: atrGlow }}
+                />
+              ) : (
+                <path
+                  d={atrPath}
+                  fill="none"
+                  stroke={atrStroke}
+                  strokeWidth={1.1}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  style={{ filter: atrGlow }}
+                />
+              );
+            })()}
             {/* Right-axis price labels for the ATR scale */}
             <text
               x={width - PAD_R + 6}
@@ -1114,26 +1128,8 @@ export function CandleChart({
                 : 0;
             return (
               <div key={`${seriesKey}-${c.t}-${i}`} style={posStyle}>
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: [0, 0.55, 0] }}
-                  transition={{
-                    duration: INITIAL_DUR,
-                    delay: stagger,
-                    times: [0, 0.5, 1],
-                    ease: "easeOut",
-                  }}
-                  style={{
-                    position: "absolute",
-                    left: -bodyW * 0.6,
-                    top: -4,
-                    width: bodyW * 2.2,
-                    height: candleH + 8,
-                    background: color,
-                    filter: "blur(7px)",
-                    pointerEvents: "none",
-                  }}
-                />
+                {/* K-candle halo removed per spec — moved to the MA / ATR
+                    lines instead so the candles read clean and crisp. */}
                 <motion.div
                   initial={{ height: 0 }}
                   animate={{ height: candleH }}
