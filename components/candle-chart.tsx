@@ -789,8 +789,11 @@ export function CandleChart({
             const swOuter = sw + 5;
             const swInner = sw + 2.5;
             if (penDrawActive) {
+              // Linear ease so the pathLength head matches SMIL
+              // animateMotion's constant-speed leading dot pixel-for-
+              // pixel along the path.
               const t = {
-                pathLength: { duration: PEN_DRAW_DUR, ease: "easeOut" as const },
+                pathLength: { duration: PEN_DRAW_DUR, ease: "linear" as const },
                 opacity: { duration: 0.18 },
               };
               return (
@@ -857,33 +860,18 @@ export function CandleChart({
                 </g>
               );
             }
+            // Static (post-reveal): just the main stroke, no glow halo.
+            // Glow is reserved for the transition moment per spec.
             return (
-              <g key={`ma-${MA_SERIES[si].period}`}>
-                <path
-                  d={d}
-                  fill="none"
-                  stroke={glowOuter}
-                  strokeWidth={swOuter}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-                <path
-                  d={d}
-                  fill="none"
-                  stroke={glowInner}
-                  strokeWidth={swInner}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-                <path
-                  d={d}
-                  fill="none"
-                  stroke={stroke}
-                  strokeWidth={sw}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </g>
+              <path
+                key={`ma-${MA_SERIES[si].period}`}
+                d={d}
+                fill="none"
+                stroke={stroke}
+                strokeWidth={sw}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
             );
           })}
           {/* Hover markers on each MA line */}
@@ -1083,8 +1071,10 @@ export function CandleChart({
               const atrGlowInner = "rgba(255,170,100,0.40)";
               const atrSW = 1.1;
               if (penDrawActive) {
+                // Linear ease — matches the SMIL animateMotion leading
+                // dot speed exactly along the path.
                 const t = {
-                  pathLength: { duration: PEN_DRAW_DUR, ease: "easeOut" as const },
+                  pathLength: { duration: PEN_DRAW_DUR, ease: "linear" as const },
                   opacity: { duration: 0.18 },
                 };
                 return (
@@ -1139,33 +1129,16 @@ export function CandleChart({
                   </g>
                 );
               }
+              // Static: main stroke only — glow lives in the transition.
               return (
-                <g>
-                  <path
-                    d={atrPath}
-                    fill="none"
-                    stroke={atrGlowOuter}
-                    strokeWidth={atrSW + 5}
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                  <path
-                    d={atrPath}
-                    fill="none"
-                    stroke={atrGlowInner}
-                    strokeWidth={atrSW + 2.5}
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                  <path
-                    d={atrPath}
-                    fill="none"
-                    stroke={atrStroke}
-                    strokeWidth={atrSW}
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </g>
+                <path
+                  d={atrPath}
+                  fill="none"
+                  stroke={atrStroke}
+                  strokeWidth={atrSW}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
               );
             })()}
             {/* Right-axis price labels for the ATR scale */}
@@ -1315,10 +1288,14 @@ export function CandleChart({
               candles.length > 1
                 ? (i / (candles.length - 1)) * INITIAL_STAGGER_TOTAL
                 : 0;
+            // Alternate draw direction per spec: even-index (1st, 3rd…)
+            // bottom → top; odd-index (2nd, 4th…) top → bottom. The mask
+            // is just anchored at the opposite edge; the inner static
+            // content pins to the SAME anchor so the visible portion
+            // is contiguous from that anchor outward.
+            const drawFromBottom = i % 2 === 0;
             return (
               <div key={`${seriesKey}-${c.t}-${i}`} style={posStyle}>
-                {/* K-candle halo removed per spec — moved to the MA / ATR
-                    lines instead so the candles read clean and crisp. */}
                 <motion.div
                   initial={{ height: 0 }}
                   animate={{ height: candleH }}
@@ -1331,7 +1308,7 @@ export function CandleChart({
                     position: "absolute",
                     left: 0,
                     right: 0,
-                    bottom: 0,
+                    [drawFromBottom ? "bottom" : "top"]: 0,
                     overflow: "hidden",
                   }}
                 >
@@ -1340,7 +1317,7 @@ export function CandleChart({
                       position: "absolute",
                       left: 0,
                       right: 0,
-                      bottom: 0,
+                      [drawFromBottom ? "bottom" : "top"]: 0,
                       height: candleH,
                     }}
                   >
