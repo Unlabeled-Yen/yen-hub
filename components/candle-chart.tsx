@@ -902,23 +902,12 @@ export function CandleChart({
                   }}
                 />
                 <motion.g
-                  initial={{ opacity: 0, scale: 0.7 }}
-                  animate={{ opacity: 1, scale: 1 }}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
                   transition={{
                     delay: PRICE_LINE_DELAY + PRICE_LINE_DUR - 0.1,
                     duration: 0.25,
                     ease: [0.22, 0.9, 0.36, 1],
-                  }}
-                  // Use percentages with fill-box so transform-origin
-                  // resolves to the element's own center. The previous
-                  // version used absolute SVG coords as the origin while
-                  // transformBox:fill-box reinterpreted them as offsets
-                  // inside the tiny 44×14 rect — sending origin off the
-                  // map and ballooning the scale into a giant blob in
-                  // the middle of the chart.
-                  style={{
-                    transformOrigin: "center",
-                    transformBox: "fill-box" as "fill-box",
                   }}
                 >
                   <rect
