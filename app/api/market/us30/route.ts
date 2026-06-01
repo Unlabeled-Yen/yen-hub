@@ -228,11 +228,18 @@ export async function GET(req: NextRequest) {
   try {
     const q = await fetchAny(tf);
     cache.set(tf, { quote: q, at: Date.now() });
+    console.log(
+      `[us30] tf=${tf} source=${q.source} candles=${q.candles.length} price=${q.price}`,
+    );
     return NextResponse.json(q);
   } catch (e) {
     if (cached && Date.now() - cached.at < STALE_OK_MS) {
+      console.log(`[us30] tf=${tf} serving stale ${cached.quote.source}`);
       return NextResponse.json({ ...cached.quote, stale: true });
     }
+    console.log(
+      `[us30] tf=${tf} FAIL ${e instanceof Error ? e.message : e}`,
+    );
     return NextResponse.json(
       { error: e instanceof Error ? e.message : String(e) },
       { status: 502 },
