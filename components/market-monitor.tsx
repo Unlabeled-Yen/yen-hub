@@ -15,6 +15,7 @@
 import { motion } from "motion/react";
 import { useEffect, useState } from "react";
 import { CandleChart, type Candle } from "./candle-chart";
+import { WorldClock } from "./world-clock";
 
 const EASE: [number, number, number, number] = [0.075, 0.82, 0.165, 1];
 
@@ -122,13 +123,16 @@ export function MarketMonitor() {
       aria-label="market monitor"
       data-tauri-drag-region
     >
+      {/* Two rows above the panel border:
+            Row 1 — NY clock (right-aligned, scrolls with page)
+            Row 2 — Market section header + K-hover time */}
+      <div className="flex justify-end mb-1 flex-shrink-0">
+        <WorldClock />
+      </div>
       <header className="flex items-center gap-3 text-[11px] tracking-[0.30em] uppercase text-[var(--fg-2)] mb-4 flex-shrink-0">
         <span>Market</span>
         <span style={{ opacity: 0.4 }}>—</span>
         <span style={{ opacity: 0.6 }}>US30 · VIX · 波動率</span>
-        {/* Hovered K-bar date/time — appears on the right side of the
-            header (i.e. outside the panel's bordered card, above and to
-            the right). Only shown while the user is hovering a candle. */}
         {hoverTime !== null ? (
           <span
             className="ml-auto text-[10px] tracking-[0.18em]"

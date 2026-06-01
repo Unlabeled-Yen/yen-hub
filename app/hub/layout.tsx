@@ -1,21 +1,13 @@
 /**
- * /hub layout — wraps all hub routes with the world clock badge.
- *
- * Any future /hub/* page automatically inherits the badge in the top-right
- * corner. Auth gating is still per-page (see /hub/page.tsx).
+ * /hub layout — currently a passthrough. WorldClock used to be mounted
+ * here as a viewport-fixed badge but was moved INTO MarketMonitor so it
+ * scrolls with the US30 panel and sits right above the hover-time row.
  */
-
-import { WorldClock } from "@/components/world-clock";
 
 export default function HubLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  return (
-    <>
-      <WorldClock />
-      {children}
-    </>
-  );
+  return <>{children}</>;
 }

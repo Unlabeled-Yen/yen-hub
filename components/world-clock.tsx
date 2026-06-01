@@ -67,12 +67,11 @@ export function WorldClock() {
 
   return (
     <div
-      className="fixed z-50 font-mono select-none pointer-events-none"
+      className="font-mono select-none pointer-events-none whitespace-nowrap"
       style={{
-        // Dropped down toward the US30 panel header so the time chip
-        // sits visually close to the panel top edge.
-        top: 40,
-        right: 48,
+        // Inline (no longer fixed) — mounted inside MarketMonitor so it
+        // scrolls with the page and sits right above the K-hover time
+        // row instead of staying glued to the viewport.
         fontSize: 12,
         letterSpacing: "0.22em",
         fontWeight: 700,
