@@ -56,6 +56,11 @@ const MIN_YSCALE_FACTOR = 0.2;
 const MAX_YSCALE_FACTOR = 50;
 const HOVER_DELAY_MS = 2000;
 
+// ATR sub-pane geometry. Lives under the candle plot, shares the x-axis.
+const ATR_H = 42; // pane height in px
+const ATR_GAP = 6; // gap between candle plot and ATR pane
+const ATR_PERIOD = 14;
+
 const INITIAL_DUR = 0.85;
 const INITIAL_STAGGER_TOTAL = 2.6;
 const FAST_DUR = 0.22;
@@ -162,8 +167,12 @@ export function CandleChart({
   }, []);
 
   const plotW = Math.max(0, width - PAD_L - PAD_R);
-  const plotH = Math.max(0, height - PAD_T - PAD_B);
+  // Candle plot height excludes the ATR pane + its gap underneath, so the
+  // x-axis (time labels) stays at the very bottom (height - PAD_B).
+  const plotH = Math.max(0, height - PAD_T - PAD_B - ATR_H - ATR_GAP);
   const midY = PAD_T + plotH / 2;
+  const atrTop = PAD_T + plotH + ATR_GAP;
+  const atrBottom = atrTop + ATR_H;
 
   // Auto-fit on new candles (tf swap or fresh mount).
   useEffect(() => {
@@ -365,7 +374,9 @@ export function CandleChart({
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     setHoverPos({ x, y });
-    if (y < PAD_T || y > height - PAD_B || x < PAD_L || x > width - PAD_R) {
+    // Hover region covers candle pane + ATR sub-pane (atrBottom is the
+    // lower edge of the ATR pane). Outside that band → no hover.
+    if (y < PAD_T || y > atrBottom || x < PAD_L || x > width - PAD_R) {
       setHoverGlobalIdx(null);
       return;
     }
@@ -491,6 +502,91 @@ export function CandleChart({
     return first !== last;
   }, [visibleTickIdxs, candles]);
 
+  // ATR(14) — Wilder's TR + simple moving average.
+  // null entries for indices 0..period-2 where the window isn't full yet.
+  const atrValues = useMemo<Array<number | null>>(() => {
+    const N = candles.length;
+    if (N === 0) return [];
+    const trs: number[] = new Array(N);
+    for (let i = 0; i < N; i++) {
+      if (i === 0) {
+        trs[i] = candles[i].h - candles[i].l;
+      } else {
+        const cur = candles[i];
+        const prev = candles[i - 1];
+        trs[i] = Math.max(
+          cur.h - cur.l,
+          Math.abs(cur.h - prev.c),
+          Math.abs(cur.l - prev.c),
+        );
+      }
+    }
+    const out: Array<number | null> = new Array(N).fill(null);
+    let sum = 0;
+    for (let i = 0; i < N; i++) {
+      sum += trs[i];
+      if (i >= ATR_PERIOD) sum -= trs[i - ATR_PERIOD];
+      if (i >= ATR_PERIOD - 1) out[i] = sum / ATR_PERIOD;
+    }
+    return out;
+  }, [candles]);
+
+  // Min/max of ATR over the CURRENTLY visible window — keeps the pane's
+  // y-axis tight to what the user is actually looking at.
+  const atrRange = useMemo(() => {
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (let i = 0; i < atrValues.length; i++) {
+      const v = atrValues[i];
+      if (v === null) continue;
+      const x = xOf(i);
+      if (x < PAD_L - candleWidth || x > width - PAD_R + candleWidth) continue;
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+    }
+    if (!Number.isFinite(lo) || !Number.isFinite(hi)) return null;
+    if (hi === lo) {
+      hi += 1;
+      lo -= 1;
+    }
+    const pad = (hi - lo) * 0.12;
+    return { lo: Math.max(0, lo - pad), hi: hi + pad };
+  }, [atrValues, xOf, candleWidth, width]);
+
+  function atrYOf(v: number): number {
+    if (!atrRange) return atrBottom;
+    const span = atrRange.hi - atrRange.lo;
+    if (span <= 0) return atrBottom;
+    return atrTop + ((atrRange.hi - v) / span) * ATR_H;
+  }
+
+  // SVG path for the ATR line (skips null leading values).
+  const atrPath = useMemo(() => {
+    if (!atrRange) return "";
+    const parts: string[] = [];
+    let started = false;
+    for (let i = 0; i < atrValues.length; i++) {
+      const v = atrValues[i];
+      if (v === null) continue;
+      const x = xOf(i);
+      if (x < PAD_L - candleWidth || x > width - PAD_R + candleWidth) {
+        started = false; // break the line at off-screen gaps
+        continue;
+      }
+      const y = atrYOf(v);
+      parts.push(`${started ? "L" : "M"} ${x.toFixed(2)} ${y.toFixed(2)}`);
+      started = true;
+    }
+    return parts.join(" ");
+    // atrYOf reads atrRange/atrTop/atrBottom which are recomputed each render
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [atrValues, atrRange, xOf, candleWidth, width]);
+
+  const hoveredATR =
+    hoverGlobalIdx !== null && hoverGlobalIdx < atrValues.length
+      ? atrValues[hoverGlobalIdx]
+      : null;
+
   if (candles.length === 0) {
     return (
       <div
@@ -592,9 +688,9 @@ export function CandleChart({
           const last = candles[candles.length - 1];
           if (!last) return null;
           const y = yOf(last.c);
-          // Skip if off-screen vertically (e.g. user panned the price
-          // viewport far away from latest close).
-          if (y < PAD_T - 4 || y > height - PAD_B + 4) return null;
+          // Skip if off-screen vertically (panned away, or below candle
+          // pane into the ATR area).
+          if (y < PAD_T - 4 || y > PAD_T + plotH + 4) return null;
           const labelW = 44;
           const labelH = 14;
           const labelX = width - PAD_R + 4;
@@ -637,11 +733,12 @@ export function CandleChart({
 
         {hovered && hoverX !== null && hoverY !== null && !dragging ? (
           <g pointerEvents="none">
+            {/* Vertical crosshair spans candle pane + ATR pane */}
             <line
               x1={hoverX}
               x2={hoverX}
               y1={PAD_T}
-              y2={height - PAD_B}
+              y2={atrBottom}
               stroke="rgba(255,255,255,0.22)"
               strokeWidth={0.8}
               strokeDasharray="2 3"
@@ -665,6 +762,109 @@ export function CandleChart({
             >
               {fmtPrice(hovered.c)}
             </text>
+          </g>
+        ) : null}
+
+        {/* ATR sub-pane */}
+        {atrRange && atrPath ? (
+          <g pointerEvents="none">
+            {/* Pane top separator + bottom baseline (super faint) */}
+            <line
+              x1={PAD_L}
+              x2={width - PAD_R}
+              y1={atrTop}
+              y2={atrTop}
+              stroke="rgba(255,255,255,0.05)"
+              strokeWidth={1}
+            />
+            <line
+              x1={PAD_L}
+              x2={width - PAD_R}
+              y1={atrBottom}
+              y2={atrBottom}
+              stroke="rgba(255,255,255,0.05)"
+              strokeWidth={1}
+            />
+            {/* Mid grid */}
+            <line
+              x1={PAD_L}
+              x2={width - PAD_R}
+              y1={(atrTop + atrBottom) / 2}
+              y2={(atrTop + atrBottom) / 2}
+              stroke="rgba(255,255,255,0.04)"
+              strokeWidth={1}
+              strokeDasharray="2 4"
+            />
+            {/* The ATR line itself — accent-toned to keep the palette
+                coherent with the K bars, but at a softer opacity since
+                ATR is supplementary context. */}
+            <path
+              d={atrPath}
+              fill="none"
+              stroke="rgba(255,170,100,0.85)"
+              strokeWidth={1.1}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+            {/* Right-axis price labels for the ATR scale */}
+            <text
+              x={width - PAD_R + 6}
+              y={atrTop + 7}
+              fontSize={8.5}
+              fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
+              fill={AXIS_FG}
+              letterSpacing="0.04em"
+            >
+              {fmtPrice(atrRange.hi)}
+            </text>
+            <text
+              x={width - PAD_R + 6}
+              y={atrBottom - 1}
+              fontSize={8.5}
+              fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
+              fill={AXIS_FG}
+              letterSpacing="0.04em"
+            >
+              {fmtPrice(atrRange.lo)}
+            </text>
+            {/* Pane label */}
+            <text
+              x={PAD_L + 2}
+              y={atrTop + 9}
+              fontSize={8.5}
+              fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
+              fill={AXIS_FG}
+              letterSpacing="0.18em"
+              fontWeight={500}
+            >
+              ATR(14)
+            </text>
+            {/* Hover marker on the ATR line at the hovered candle */}
+            {hoverGlobalIdx !== null &&
+            hoveredATR !== null &&
+            hoverX !== null &&
+            !dragging ? (
+              <>
+                <circle
+                  cx={hoverX}
+                  cy={atrYOf(hoveredATR)}
+                  r={2.2}
+                  fill="rgba(255,170,100,1)"
+                  stroke="rgba(0,0,0,0.6)"
+                  strokeWidth={0.5}
+                />
+                <text
+                  x={width - PAD_R + 6}
+                  y={atrYOf(hoveredATR) + 3}
+                  fontSize={9}
+                  fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
+                  fill="rgba(255,170,100,0.95)"
+                  fontWeight={600}
+                >
+                  {fmtPrice(hoveredATR)}
+                </text>
+              </>
+            ) : null}
           </g>
         ) : null}
       </svg>
@@ -860,6 +1060,12 @@ export function CandleChart({
             <span style={{ opacity: 0.55, color: "var(--fg-1)" }}>C</span>{" "}
             {fmtPrice(hovered.c)}
           </span>
+          {hoveredATR !== null ? (
+            <span style={{ color: "rgba(255,170,100,0.95)" }}>
+              <span style={{ opacity: 0.55, color: "var(--fg-1)" }}>ATR</span>{" "}
+              {fmtPrice(hoveredATR)}
+            </span>
+          ) : null}
         </div>
       ) : null}
 
