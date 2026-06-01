@@ -1,28 +1,25 @@
 "use client";
 
 /**
- * CandleChart — Yen Hub flavored OHLC candlestick chart.
+ * CandleChart — Yen Hub OHLC candlestick chart.
  *
- * Interaction model (per Yen's spec, 2026-06-01):
- *   - Drag on the right price-axis strip ↑↓ → vertical zoom (K taller /
- *     shorter). Anchor = mean close of the latest 5 candles, kept at its
- *     current screen y.
- *   - Mouse wheel ↑ → K-to-K spacing widens (zoom IN on time).
- *     Mouse wheel ↓ → spacing narrows, clamped to baseline default.
- *     Anchor = horizontal centroid of the latest 5 candles, kept at its
- *     current screen x.
- *   - Drag on the main canvas area → horizontal pan ONLY (vertical drag
- *     ignored). xStart shifts; yCenter does not.
- *   - Double-click → reset everything to auto-fit defaults.
- *   - Hover ≥ 2s on a candle → "deep hover" pill with the full timestamp.
+ * Interaction model (per Yen's spec):
+ *   - Drag on the right price-axis strip ↑↓ → vertical zoom. Anchor =
+ *     mean close of the latest 5 candles, kept at its current screen y.
+ *   - Mouse wheel ↑ widens K-to-K spacing (zoom IN on time); ↓ narrows,
+ *     clamped to the baseline default. Anchor = horizontal centroid of
+ *     the latest 5 candles. Wheel handler is attached via DOM API with
+ *     `passive: false` so preventDefault actually stops page scroll.
+ *   - Drag on the main canvas → horizontal pan only.
+ *   - Double-click → reset to auto-fit.
+ *   - Hover ≥ 2s on a candle → "deep hover" pill with full timestamp.
  *
- * Coordinate system (pure state, not bbox-derived):
- *   xStart       : decimal index of the candle at the chart's LEFT edge
- *   candleWidth  : px per candle slot (≥ baseline)
- *   yCenter      : price at the vertical center of the plot
- *   yScale       : px per $1 of price
- *   xOf(i)       = PAD_L + (i - xStart + 0.5) * candleWidth
- *   yOf(p)       = midY + (yCenter - p) * yScale
+ * Reveal animation:
+ *   First time the chart sees candles (login → home transition) → slow,
+ *   staggered draw-from-bottom with glow halo. Subsequent series swaps
+ *   (timeframe switch) → fast opacity fade. After the reveal window
+ *   closes the candles render as plain static divs (no motion overhead),
+ *   so zoom/pan stays smooth.
  *
  * Time encoding: API stamps NY clock time as UTC ms; all `toLocaleString`
  * here pin timeZone:"UTC" so labels show the raw NY time.
@@ -45,12 +42,16 @@ const DOWN_FILL = "rgba(235,225,185,0.75)";
 const GRID = "rgba(255,255,255,0.05)";
 const AXIS_FG = "rgba(180,180,180,0.55)";
 
-const ANCHOR_TAIL = 5; // "latest N" candles used as the zoom anchor
+const ANCHOR_TAIL = 5;
 const WHEEL_STEP = 1.12;
 const MAX_CANDLE_W = 80;
 const MIN_YSCALE_FACTOR = 0.2;
 const MAX_YSCALE_FACTOR = 50;
 const HOVER_DELAY_MS = 2000;
+
+const INITIAL_DUR = 0.85;
+const INITIAL_STAGGER_TOTAL = 2.6;
+const FAST_DUR = 0.22;
 
 function fmtPrice(n: number): string {
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(n);
@@ -91,7 +92,6 @@ function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
 }
 
-/** Centroid index + mean close price of the trailing-N candles. */
 function latestAnchors(candles: Candle[], n = ANCHOR_TAIL) {
   const N = Math.min(n, candles.length);
   if (N === 0) return { idx: 0, price: 0 };
@@ -119,15 +119,14 @@ export function CandleChart({
   const [yCenter, setYCenter] = useState(0);
   const [yScale, setYScale] = useState(1);
 
-  // Auto-fit baselines used for limits + reset.
   const baseCandleWidthRef = useRef(8);
   const baseYScaleRef = useRef(1);
 
-  // Refs mirror state for window event listeners.
   const xStartRef = useRef(xStart);
   const candleWidthRef = useRef(candleWidth);
   const yCenterRef = useRef(yCenter);
   const yScaleRef = useRef(yScale);
+  const candlesRef = useRef(candles);
   useEffect(() => {
     xStartRef.current = xStart;
   }, [xStart]);
@@ -140,6 +139,9 @@ export function CandleChart({
   useEffect(() => {
     yScaleRef.current = yScale;
   }, [yScale]);
+  useEffect(() => {
+    candlesRef.current = candles;
+  }, [candles]);
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -183,7 +185,6 @@ export function CandleChart({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [candles, plotW, plotH]);
 
-  // Coord helpers using current state
   const xOf = useCallback(
     (i: number) => PAD_L + (i - xStart + 0.5) * candleWidth,
     [xStart, candleWidth],
@@ -193,6 +194,29 @@ export function CandleChart({
     [midY, yCenter, yScale],
   );
 
+  // Reveal cycle ------------------------------------------------------
+  // firstShownRef stays true after the very first time candles arrive.
+  // isInitialReveal = the slow / glow / staggered draw (login → home).
+  // Subsequent reveals (tf swap) are just a fast opacity fade.
+  // revealActive ends after the longest stagger+duration so static plain
+  // divs take over once the animation is done — keeps zoom/pan smooth.
+  const firstShownRef = useRef(false);
+  const [revealActive, setRevealActive] = useState(false);
+  const [isInitialReveal, setIsInitialReveal] = useState(true);
+  const seriesKey = `${timeframe}-${candles.length}-${candles[0]?.t ?? 0}`;
+  useEffect(() => {
+    if (candles.length === 0) return;
+    const wasInitial = !firstShownRef.current;
+    firstShownRef.current = true;
+    setIsInitialReveal(wasInitial);
+    setRevealActive(true);
+    const totalMs = wasInitial
+      ? (INITIAL_STAGGER_TOTAL + INITIAL_DUR) * 1000 + 200
+      : FAST_DUR * 1000 + 80;
+    const t = window.setTimeout(() => setRevealActive(false), totalMs);
+    return () => window.clearTimeout(t);
+  }, [seriesKey, candles.length]);
+
   // Hover -------------------------------------------------------------
   const [hoverGlobalIdx, setHoverGlobalIdx] = useState<number | null>(null);
   const [hoverPos, setHoverPos] = useState<{ x: number; y: number } | null>(
@@ -200,7 +224,6 @@ export function CandleChart({
   );
   const [deepHover, setDeepHover] = useState(false);
   const hoverTimerRef = useRef<number | null>(null);
-
   useEffect(() => {
     setDeepHover(false);
     if (hoverTimerRef.current !== null) {
@@ -230,47 +253,53 @@ export function CandleChart({
     startYCenter: number;
   } | null>(null);
   const [dragging, setDragging] = useState<null | DragKind>(null);
+  const rafRef = useRef<number | null>(null);
+  const lastDragEventRef = useRef<MouseEvent | null>(null);
 
-  const applyDrag = useCallback((e: MouseEvent) => {
+  const performDrag = useCallback(() => {
+    rafRef.current = null;
+    const e = lastDragEventRef.current;
     const ds = dragRef.current;
-    if (!ds) return;
+    if (!e || !ds) return;
     if (ds.kind === "pan") {
-      // Horizontal pan only — vertical motion ignored per spec.
       const dx = e.clientX - ds.startClientX;
       const newXStart =
         ds.startXStart - dx / Math.max(0.5, candleWidthRef.current);
       setXStart(newXStart);
     } else if (ds.kind === "price-zoom") {
-      // Drag UP (negative dy) → K taller (zoom in). Anchor = mean close
-      // of last N candles, kept at its starting screen y.
       const dy = e.clientY - ds.startClientY;
-      const factor = Math.exp(-dy / 180); // smooth exponential feel
+      const factor = Math.exp(-dy / 180);
       const base = baseYScaleRef.current || 1;
       const newYScale = clamp(
         ds.startYScale * factor,
         base * MIN_YSCALE_FACTOR,
         base * MAX_YSCALE_FACTOR,
       );
-      const { price: anchorPrice } = latestAnchors(candles);
-      // Anchor's screen y at the start of the drag — based on starting
-      // yScale and starting yCenter (so the drag is centered on the
-      // pre-gesture position, no drift).
+      const { price: anchorPrice } = latestAnchors(candlesRef.current);
       const startAnchorY =
         midY + (ds.startYCenter - anchorPrice) * ds.startYScale;
-      // Solve newYCenter so anchor stays at startAnchorY under newYScale.
       const newYCenter = (startAnchorY - midY) / newYScale + anchorPrice;
       setYScale(newYScale);
       setYCenter(newYCenter);
     }
-  }, [candles, midY]);
+  }, [midY]);
 
   const onWindowMove = useCallback(
-    (e: MouseEvent) => applyDrag(e),
-    [applyDrag],
+    (e: MouseEvent) => {
+      lastDragEventRef.current = e;
+      if (rafRef.current === null) {
+        rafRef.current = requestAnimationFrame(performDrag);
+      }
+    },
+    [performDrag],
   );
   const onWindowUp = useCallback(() => {
     dragRef.current = null;
     setDragging(null);
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
     window.removeEventListener("mousemove", onWindowMove);
     window.removeEventListener("mouseup", onWindowUp);
   }, [onWindowMove]);
@@ -326,28 +355,33 @@ export function CandleChart({
     setHoverPos(null);
   }
 
-  // Wheel = horizontal zoom, anchored on latest-5 centroid x ---------
-  function onWheel(e: React.WheelEvent<HTMLDivElement>) {
-    if (candles.length === 0) return;
-    if (Math.abs(e.deltaY) < 1) return;
-    e.preventDefault();
-    const oldCW = candleWidthRef.current;
-    const oldXStart = xStartRef.current;
-    const base = baseCandleWidthRef.current;
-    const factor = e.deltaY < 0 ? WHEEL_STEP : 1 / WHEEL_STEP;
-    // Wheel-down floor = baseline (default normal distance), per spec.
-    const newCW = clamp(oldCW * factor, base, MAX_CANDLE_W);
-    if (newCW === oldCW) return;
-    const { idx: anchorIdx } = latestAnchors(candles);
-    // Old screen x of the anchor:
-    //   anchorX = PAD_L + (anchorIdx - oldXStart + 0.5) * oldCW
-    const anchorX = PAD_L + (anchorIdx - oldXStart + 0.5) * oldCW;
-    // Solve newXStart so anchor stays at same screen x under newCW:
-    //   anchorX = PAD_L + (anchorIdx - newXStart + 0.5) * newCW
-    const newXStart = anchorIdx + 0.5 - (anchorX - PAD_L) / newCW;
-    setCandleWidth(newCW);
-    setXStart(newXStart);
-  }
+  // Wheel — attach via DOM API so `passive: false` actually takes effect
+  // and preventDefault stops page scroll. React's onWheel is passive in
+  // modern React, which is why the previous version leaked. The handler
+  // uses refs so it stays stable.
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const handler = (e: WheelEvent) => {
+      const cs = candlesRef.current;
+      if (cs.length === 0) return;
+      if (Math.abs(e.deltaY) < 1) return;
+      e.preventDefault();
+      const oldCW = candleWidthRef.current;
+      const oldXStart = xStartRef.current;
+      const base = baseCandleWidthRef.current;
+      const factor = e.deltaY < 0 ? WHEEL_STEP : 1 / WHEEL_STEP;
+      const newCW = clamp(oldCW * factor, base, MAX_CANDLE_W);
+      if (newCW === oldCW) return;
+      const { idx: anchorIdx } = latestAnchors(cs);
+      const anchorX = PAD_L + (anchorIdx - oldXStart + 0.5) * oldCW;
+      const newXStart = anchorIdx + 0.5 - (anchorX - PAD_L) / newCW;
+      setCandleWidth(newCW);
+      setXStart(newXStart);
+    };
+    el.addEventListener("wheel", handler, { passive: false });
+    return () => el.removeEventListener("wheel", handler);
+  }, []);
 
   function onDoubleClick() {
     if (candles.length === 0 || plotW <= 0 || plotH <= 0) return;
@@ -374,6 +408,7 @@ export function CandleChart({
     return () => {
       window.removeEventListener("mousemove", onWindowMove);
       window.removeEventListener("mouseup", onWindowUp);
+      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
     };
   }, [onWindowMove, onWindowUp]);
 
@@ -395,11 +430,8 @@ export function CandleChart({
       ? UP_COLOR
       : DOWN_COLOR;
 
-  const seriesKey = `${timeframe}-${candles.length}-${candles[0]?.t ?? 0}`;
-
   const bodyW = Math.max(1.5, candleWidth * 0.65);
 
-  // X-axis time tick indices among candles visible on screen
   const visibleTickIdxs = useMemo(() => {
     if (candles.length === 0) return [];
     const out: number[] = [];
@@ -442,8 +474,6 @@ export function CandleChart({
     );
   }
 
-  // Cursor: ns-resize over right price axis (or while price-zoom drag);
-  // grabbing while panning; crosshair otherwise.
   let cursor: string = "crosshair";
   if (dragging === "pan") cursor = "grabbing";
   else if (dragging === "price-zoom") cursor = "ns-resize";
@@ -455,7 +485,6 @@ export function CandleChart({
       onMouseDown={onMouseDown}
       onMouseMove={onMouseMove}
       onMouseLeave={onMouseLeave}
-      onWheel={onWheel}
       onDoubleClick={onDoubleClick}
       style={{
         position: "relative",
@@ -561,7 +590,8 @@ export function CandleChart({
         ) : null}
       </svg>
 
-      {/* Candle layer — HTML divs, clipped to plot area */}
+      {/* Candle layer — clip via overflow:hidden so panning past the plot
+          edges doesn't bleed across the card. */}
       <div
         style={{
           position: "absolute",
@@ -589,75 +619,127 @@ export function CandleChart({
 
           if (x < -candleWidth || x > plotW + candleWidth) return null;
 
-          const STAGGER_TOTAL = 1.6;
-          const stagger =
-            candles.length > 1
-              ? (i / (candles.length - 1)) * STAGGER_TOTAL
-              : 0;
-
-          return (
+          const posStyle: React.CSSProperties = {
+            position: "absolute",
+            left: x - bodyW / 2,
+            top: yHigh,
+            width: bodyW,
+            height: candleH,
+            pointerEvents: "none",
+          };
+          const wick = (
             <div
-              key={`${seriesKey}-${c.t}-${i}`}
               style={{
                 position: "absolute",
-                left: x - bodyW / 2,
-                top: yHigh,
-                width: bodyW,
-                height: candleH,
-                pointerEvents: "none",
+                left: "50%",
+                top: 0,
+                bottom: 0,
+                width: wickW,
+                marginLeft: -wickW / 2,
+                background: color,
               }}
-            >
-              <motion.div
-                initial={{ height: 0 }}
-                animate={{ height: candleH }}
-                transition={{
-                  duration: 0.45,
-                  delay: stagger,
-                  ease: [0.22, 0.9, 0.36, 1],
-                }}
-                style={{
-                  position: "absolute",
-                  left: 0,
-                  right: 0,
-                  bottom: 0,
-                  overflow: "hidden",
-                }}
-              >
-                <div
+            />
+          );
+          const body = (
+            <div
+              style={{
+                position: "absolute",
+                left: 0,
+                right: 0,
+                top: bodyY - yHigh,
+                height: bodyH,
+                background: fill,
+                border: `0.6px solid ${color}`,
+                boxSizing: "border-box",
+              }}
+            />
+          );
+
+          // Static fast path — once the reveal animation window is over,
+          // no motion overhead. Zoom/pan re-renders touch only plain divs.
+          if (!revealActive) {
+            return (
+              <div key={`${seriesKey}-${c.t}-${i}`} style={posStyle}>
+                {wick}
+                {body}
+              </div>
+            );
+          }
+
+          // Reveal active path.
+          if (isInitialReveal) {
+            // Slow, staggered draw-from-bottom with halo (login→home).
+            const stagger =
+              candles.length > 1
+                ? (i / (candles.length - 1)) * INITIAL_STAGGER_TOTAL
+                : 0;
+            return (
+              <div key={`${seriesKey}-${c.t}-${i}`} style={posStyle}>
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: [0, 0.55, 0] }}
+                  transition={{
+                    duration: INITIAL_DUR,
+                    delay: stagger,
+                    times: [0, 0.5, 1],
+                    ease: "easeOut",
+                  }}
+                  style={{
+                    position: "absolute",
+                    left: -bodyW * 0.6,
+                    top: -4,
+                    width: bodyW * 2.2,
+                    height: candleH + 8,
+                    background: color,
+                    filter: "blur(7px)",
+                    pointerEvents: "none",
+                  }}
+                />
+                <motion.div
+                  initial={{ height: 0 }}
+                  animate={{ height: candleH }}
+                  transition={{
+                    duration: INITIAL_DUR,
+                    delay: stagger,
+                    ease: [0.22, 0.9, 0.36, 1],
+                  }}
                   style={{
                     position: "absolute",
                     left: 0,
                     right: 0,
                     bottom: 0,
-                    height: candleH,
+                    overflow: "hidden",
                   }}
                 >
                   <div
                     style={{
                       position: "absolute",
-                      left: "50%",
-                      top: 0,
-                      bottom: 0,
-                      width: wickW,
-                      marginLeft: -wickW / 2,
-                      background: color,
-                    }}
-                  />
-                  <div
-                    style={{
-                      position: "absolute",
                       left: 0,
                       right: 0,
-                      top: bodyY - yHigh,
-                      height: bodyH,
-                      background: fill,
-                      border: `0.6px solid ${color}`,
-                      boxSizing: "border-box",
+                      bottom: 0,
+                      height: candleH,
                     }}
-                  />
-                </div>
-              </motion.div>
-            </div>
+                  >
+                    {wick}
+                    {body}
+                  </div>
+                </motion.div>
+              </div>
+            );
+          }
+
+          // Fast fade — tf switch, no stagger / no halo.
+          return (
+            <motion.div
+              key={`${seriesKey}-${c.t}-${i}`}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: FAST_DUR, ease: "easeOut" }}
+              style={posStyle}
+            >
+              {wick}
+              {body}
+            </motion.div>
           );
         })}
       </div>
