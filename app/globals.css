@@ -74,25 +74,28 @@
 }
 
 /* html must be TRANSPARENT for the Tauri window's --bg-alpha to actually
-   let the desktop show through. If we paint html opaque the alpha layer
-   below is irrelevant. */
+   let the desktop show through. backdrop-filter is HERE (not on body)
+   because applying it to body created a new containing block for
+   position:fixed descendants — that broke the CommandPalette overlay's
+   "stay at viewport center" promise (it tracked page scroll instead).
+   html is the initial containing block, so fixed positioning still
+   resolves to the viewport while keeping the frost effect. */
 html {
   background: transparent;
   color: var(--fg-0);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+  backdrop-filter: blur(28px) saturate(0.55);
+  -webkit-backdrop-filter: blur(28px) saturate(0.55);
 }
 
-/* Body — black frosted glass. backdrop-filter is applied HERE once
-   for the whole window (frosts any desktop / app showing through),
-   so cards can stay filter-free and animate smoothly. */
+/* Body — black frosted glass, no backdrop-filter (see html). The
+   gradient + alpha tint paint over the html's blurred backdrop. */
 body {
   background:
     radial-gradient(ellipse 60% 40% at 15% 0%,   rgba(255, 255, 255, 0.04), transparent 65%),
     radial-gradient(ellipse 70% 50% at 85% 100%, rgba(255, 255, 255, 0.025), transparent 65%),
     rgba(0, 0, 0, var(--bg-alpha));
-  backdrop-filter: blur(28px) saturate(0.55);
-  -webkit-backdrop-filter: blur(28px) saturate(0.55);
   color: var(--fg-0);
   min-height: 100vh;
 }
