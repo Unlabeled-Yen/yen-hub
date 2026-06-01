@@ -276,6 +276,14 @@ function TodoItem({
     if (clickMode === "none" || busy) return;
     setBusy(true);
     if (clickMode === "strike") {
+      // Force a fresh measure right before flipping done. After the
+      // typewriter pass, the outer span's content layout sometimes
+      // hadn't been recaptured (ResizeObserver doesn't always fire on
+      // inline span changes), leaving `rects` stuck at a stale partial
+      // state — which made the strike path render as a single tiny
+      // segment at the start of the text. Remeasuring synchronously
+      // here guarantees the path covers the full current text rects.
+      measure();
       onToggleDone(t, !isDone);
     } else if (clickMode === "promote") {
       onTogglePriority(t, !isPriority);
@@ -618,6 +626,11 @@ export function TodoList() {
     if (clickTimerRef.current !== null) return; // double-handler will fire
     clickTimerRef.current = window.setTimeout(() => {
       clickTimerRef.current = null;
+      // ANY tab switch ends the entry effect — other tabs (總覽 / 審查)
+      // should never replay the typewriter even on first visit. Doing
+      // this BEFORE setTab ensures the freshly-mounted items in the
+      // new tab read entryPhase=false on their first render.
+      setEntryPhase(false);
       setTab((prev) => {
         // Single-click target: priority ↔ category. From review goes
         // back to priority (the default surface).
@@ -631,6 +644,7 @@ export function TodoList() {
       window.clearTimeout(clickTimerRef.current);
       clickTimerRef.current = null;
     }
+    setEntryPhase(false); // see onTitleClick comment
     setTab("review");
   }
   useEffect(() => {
