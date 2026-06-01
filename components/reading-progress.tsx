@@ -200,7 +200,9 @@ const FACE_COUNT = 4;
 const ROTATION_DURATION = 1.4;
 const SWIPE_COOLDOWN_MS = 1100; // > rotation duration to avoid mid-anim retrigger
 const SWIPE_THRESHOLD = 24; // pixels of horizontal scroll to count as a swipe
-const CUBE_HEIGHT = 340; // explicit cube container height — sized so 8 books
+const CUBE_HEIGHT = 380; // explicit cube container height — sized so the
+// 4th row of books (8 books per face, 2 cols × 4 rows) has full breathing
+// room for its progress bar. 340px was clipping the bottom row's bar.
 
 function ReadingCube({ data }: { data: AttentionResponse }) {
   const allBooks = data.library.books ?? data.library.activelyReading;
