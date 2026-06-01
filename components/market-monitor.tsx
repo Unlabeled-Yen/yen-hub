@@ -113,7 +113,11 @@ export function MarketMonitor() {
         transition={{ duration: 0.6, delay: 0.45, ease: EASE }}
         className="relative flex-1 flex flex-col"
         style={{
-          minHeight: 360,
+          // Larger US30 panel per spec — extend vertically without
+          // touching the row below (Reading / TODO sit in a separate
+          // grid row with its own gap-10 spacing, so a taller panel
+          // here just pushes its own row's height up).
+          minHeight: 520,
           borderRadius: 6,
           border: `1px solid ${accentDim}`,
           background: `linear-gradient(180deg, ${accent.replace("0.95", "0.04")} 0%, transparent 100%)`,
@@ -149,7 +153,7 @@ export function MarketMonitor() {
             <CandleChart
               candles={quote.candles}
               timeframe={quote.timeframe}
-              height={200}
+              height={360}
             />
           ) : (
             <div
