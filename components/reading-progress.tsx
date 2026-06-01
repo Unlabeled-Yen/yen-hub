@@ -341,20 +341,19 @@ function ReadingCube({ data }: { data: AttentionResponse }) {
           }}
         >
           <motion.div
-            // Entrance: barrel-roll through ~1.25 turns then settle on
-            // the active face. Uses a KEYFRAMES array (not a single
-            // value) because framer-motion's interpolator normalizes
-            // single-value rotations to their shortest arc — so
-            // `initial: 270, animate: 0` becomes a 90° turn, looking
-            // identical to a regular face change. Keyframes force the
-            // value to actually traverse the listed angles.
+            // Entrance: exactly ONE full turn, then settle on the
+            // active face. Uses a KEYFRAMES array (not a single value)
+            // because framer-motion's interpolator normalizes single-
+            // value rotations to their shortest arc — so e.g.
+            // `initial: -360, animate: 0` would compress to no
+            // movement at all. Keyframes force the actual path.
             // After `entered`, face changes use the slower
             // user-driven rotation curve (single value, no keyframes).
-            initial={{ rotateY: -450 }}
+            initial={{ rotateY: -360 }}
             animate={
               entered
                 ? { rotateY: -face * 90 }
-                : { rotateY: [-450, -face * 90] }
+                : { rotateY: [-360, -face * 90] }
             }
             transition={
               entered
