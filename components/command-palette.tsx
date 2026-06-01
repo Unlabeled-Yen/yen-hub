@@ -373,9 +373,14 @@ export function CommandPalette() {
         </defs>
         <rect width="100%" height="100%" filter="url(#palette-noise)" />
       </svg>
-      {/* Draggable, fading column. Positioned dead-center of the window
-          via left/top 50% + translate(-50%, -50%). User drag can offset
-          from there. */}
+      {/* Centering wrapper — flex centers the motion.div based on its
+          actual rendered size. Done at this layer (NOT via Tailwind
+          translate utilities on motion.div) because motion's style.y
+          and drag transforms would override Tailwind's translate(-50%)
+          and break the centering. */}
+      <div
+        className="absolute inset-0 flex items-center justify-center pointer-events-none"
+      >
       <motion.div
         drag
         dragMomentum={false}
@@ -386,16 +391,16 @@ export function CommandPalette() {
         transition={{
           opacity: { duration: leaving ? FADE_MS / 1000 : 0.3, ease: "easeOut" },
         }}
-        className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-2xl px-8 pointer-events-none"
+        className="w-full max-w-2xl px-8 pointer-events-none"
         style={{
           // Hard ceiling on the whole assembly so it can never overflow
-          // the Tauri webview no matter the message content. Centering
-          // is geometric (translate(-50%, -50%) anchors the assembly's
-          // mid-point at the window's mid-point); the cap guarantees
-          // the top and bottom edges always sit inside the viewport.
+          // the Tauri webview. Flex parent centers; assembly cap keeps
+          // both edges inside the viewport at any window size.
           maxHeight: "85vh",
           cursor: holding ? "grabbing" : "grab",
           // Wheel-tracked vertical offset, additive to motion's drag y.
+          // Lives on motion.div's transform — the flex wrapper does the
+          // centering, this just biases from that anchor.
           y: wheelY,
         }}
         onMouseDown={() => setHolding(true)}
@@ -571,6 +576,7 @@ export function CommandPalette() {
         />
         </div>
       </motion.div>
+      </div>
     </div>
   );
 }
