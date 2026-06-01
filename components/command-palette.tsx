@@ -25,6 +25,7 @@ import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, type UIMessage } from "ai";
 import { motion, useMotionValue } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { IntentCard } from "@/components/agent/intent-card";
 import { sidecarHeaders } from "@/lib/security/sidecar-token";
 import {
@@ -298,7 +299,16 @@ export function CommandPalette() {
     bump();
   }
 
-  return (
+  // Portal directly to document.body — the overview's outermost wrapper
+  // is a motion.div with framer-motion's transform/will-change, which
+  // establishes a containing block for position:fixed descendants. That
+  // turned this overlay's `fixed` into effectively `absolute` of that
+  // wrapper, so the palette tracked page scroll instead of staying
+  // glued to the viewport. document.body has no transform/filter (the
+  // backdrop-filter lives on html now), so a portal there gives the
+  // palette a clean viewport-relative containing block.
+  if (typeof document === "undefined") return null;
+  return createPortal(
     <div
       className="fixed inset-0 z-50"
       onClick={(e) => {
@@ -577,7 +587,8 @@ export function CommandPalette() {
         </div>
       </motion.div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
