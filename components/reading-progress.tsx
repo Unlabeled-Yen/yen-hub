@@ -208,6 +208,10 @@ function ReadingCube({ data }: { data: AttentionResponse }) {
   const allBooks = data.library.books ?? data.library.activelyReading;
   const containerRef = useRef<HTMLDivElement | null>(null);
   const cooldownRef = useRef(0);
+  // How many pages have at least one book — wheel handler reads this via
+  // ref so it doesn't need to re-bind every render. Updated by an effect
+  // below once we compute the real page array.
+  const populatedRef = useRef(1);
   const [size, setSize] = useState<{ w: number; h: number }>({ w: 470, h: 360 });
   const [face, setFace] = useState(0);
 
@@ -239,13 +243,23 @@ function ReadingCube({ data }: { data: AttentionResponse }) {
       if (now < cooldownRef.current) return;
       cooldownRef.current = now + SWIPE_COOLDOWN_MS;
       // Swipe left → next face; swipe right → previous face.
+      // Wrap within POPULATED page range so empty trailing faces never
+      // appear. populatedRef is updated below by an effect — using a ref
+      // keeps this handler stable (no re-bind on every face change).
       const dir = e.deltaX > 0 ? 1 : -1;
-      setFace((f) => (f + dir + FACE_COUNT) % FACE_COUNT);
+      const populated = populatedRef.current || 1;
+      setFace((f) => (f + dir + populated) % populated);
     };
     node.addEventListener("wheel", onWheel, { passive: false });
     return () => node.removeEventListener("wheel", onWheel);
   }, []);
 
+
+  // Build pages then drop empty trailing ones — e.g. if user only has 20
+  // books, page 4 (books 24..31) is empty and shouldn't take a face. The
+  // cube still uses 4 geometric faces internally (FACE_COUNT) so the
+  // rotation arithmetic stays clean; we just clamp navigation + dots to
+  // the populated faces.
   const pages = useMemo(() => {
     const out: BookSummary[][] = [];
     for (let i = 0; i < FACE_COUNT; i++) {
@@ -253,12 +267,24 @@ function ReadingCube({ data }: { data: AttentionResponse }) {
     }
     return out;
   }, [allBooks]);
+  const populatedPageCount = pages.filter((p) => p.length > 0).length;
+  useEffect(() => {
+    populatedRef.current = populatedPageCount;
+  }, [populatedPageCount]);
+
+  // If current face index drifted past the populated range (e.g. data
+  // shrank), snap back. Effect runs after render but before paint so the
+  // dots/header counter stay in sync.
+  useEffect(() => {
+    if (face >= populatedPageCount && populatedPageCount > 0) {
+      setFace(0);
+    }
+  }, [populatedPageCount, face]);
 
   if (allBooks.length === 0) return null;
 
   const readingCount = data.library.activelyReading.length;
   const depth = Math.max(200, size.w / 2);
-  const totalShown = Math.min(allBooks.length, FACE_COUNT * BOOKS_PER_FACE);
 
   return (
     <section className="flex flex-col">
@@ -278,7 +304,7 @@ function ReadingCube({ data }: { data: AttentionResponse }) {
             letterSpacing: "0.16em",
           }}
         >
-          ← swipe → · {face + 1}/{FACE_COUNT}
+          ← swipe → · {face + 1}/{populatedPageCount}
         </span>
       </header>
 
@@ -348,9 +374,11 @@ function ReadingCube({ data }: { data: AttentionResponse }) {
         </div>
       </div>
 
-      {/* Face indicator dots — click to jump */}
+      {/* Face indicator dots — only for populated pages. "20/20" tally
+          removed per spec; the header counter (1/3) already conveys
+          position. */}
       <div className="flex-shrink-0 flex items-center justify-center gap-2 mt-4">
-        {pages.map((_, i) => (
+        {pages.slice(0, populatedPageCount).map((_, i) => (
           <button
             key={i}
             type="button"
@@ -375,12 +403,6 @@ function ReadingCube({ data }: { data: AttentionResponse }) {
             }}
           />
         ))}
-        <span
-          className="font-mono text-[9px] tabular-nums ml-3"
-          style={{ color: "var(--fg-2)", letterSpacing: "0.1em" }}
-        >
-          {totalShown}/{allBooks.length}
-        </span>
       </div>
     </section>
   );
