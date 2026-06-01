@@ -174,11 +174,10 @@ export function Overview() {
   return (
     <motion.div
       className="flex flex-1 flex-col"
-      // Explicit inline opacity 0 stops the SSR-rendered HTML from
-      // painting at full opacity before motion takes over on hydration.
-      // Without this, reload sometimes shows the page contents briefly,
-      // then they vanish and fade back in — that "flash".
-      style={{ opacity: 0 }}
+      // Reverted: inline style.opacity 0 was interfering with motion's
+      // re-render lifecycle (suspected of causing the K-candle blob
+      // bug). Back to motion-only fade — small chance of brief flash
+      // on hydration, acceptable trade-off.
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: RISE_DURATION, ease: "linear" }}
