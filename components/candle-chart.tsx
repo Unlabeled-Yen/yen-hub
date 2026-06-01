@@ -1,24 +1,28 @@
 "use client";
 
 /**
- * CandleChart — TradingView-style candlestick chart, Yen Hub flavored.
+ * CandleChart — Yen Hub flavored OHLC candlestick chart.
  *
- * Interaction model:
- *   - Wheel ↑↓ → vertical (price-axis) zoom, anchored on the latest close.
- *     Most recent price stays under the cursor's y position throughout.
- *   - Drag → free 4-direction pan (left/right shifts time; up/down shifts
- *     vertical center of viewport).
- *   - Double-click → reset zoom & pan, fit all bars.
- *   - Hover ≥ 2s on a candle → "deep hover" pill near cursor with the
- *     bar's full timestamp.
+ * Interaction model (per Yen's spec, 2026-06-01):
+ *   - Drag on the right price-axis strip ↑↓ → vertical zoom (K taller /
+ *     shorter). Anchor = mean close of the latest 5 candles, kept at its
+ *     current screen y.
+ *   - Mouse wheel ↑ → K-to-K spacing widens (zoom IN on time).
+ *     Mouse wheel ↓ → spacing narrows, clamped to baseline default.
+ *     Anchor = horizontal centroid of the latest 5 candles, kept at its
+ *     current screen x.
+ *   - Drag on the main canvas area → horizontal pan ONLY (vertical drag
+ *     ignored). xStart shifts; yCenter does not.
+ *   - Double-click → reset everything to auto-fit defaults.
+ *   - Hover ≥ 2s on a candle → "deep hover" pill with the full timestamp.
  *
- * Coordinate system (pure state, no fitting to bbox):
+ * Coordinate system (pure state, not bbox-derived):
  *   xStart       : decimal index of the candle at the chart's LEFT edge
- *   candleWidth  : px per candle (fixed within a tf; reset on tf swap)
+ *   candleWidth  : px per candle slot (≥ baseline)
  *   yCenter      : price at the vertical center of the plot
  *   yScale       : px per $1 of price
- *   xOf(i)       = PAD_L + (i - xStart) * candleWidth + candleWidth/2
- *   yOf(p)       = PAD_T + plotH/2 + (yCenter - p) * yScale
+ *   xOf(i)       = PAD_L + (i - xStart + 0.5) * candleWidth
+ *   yOf(p)       = midY + (yCenter - p) * yScale
  *
  * Time encoding: API stamps NY clock time as UTC ms; all `toLocaleString`
  * here pin timeZone:"UTC" so labels show the raw NY time.
@@ -34,9 +38,6 @@ const PAD_R = 56;
 const PAD_T = 8;
 const PAD_B = 22;
 
-// Up = warm orange (Yen Hub brand-adjacent). Down = pale cream-mustard
-// (desaturated toward white). The pair reads as "fire vs sand" against
-// near-black — distinct without invoking red/green loss baggage.
 const UP_COLOR = "rgba(255,170,100,0.95)";
 const UP_FILL = "rgba(255,170,100,0.75)";
 const DOWN_COLOR = "rgba(235,225,185,0.95)";
@@ -44,9 +45,11 @@ const DOWN_FILL = "rgba(235,225,185,0.75)";
 const GRID = "rgba(255,255,255,0.05)";
 const AXIS_FG = "rgba(180,180,180,0.55)";
 
-const MIN_YSCALE_FACTOR = 0.2; // can zoom OUT to 20% of auto-fit
-const MAX_YSCALE_FACTOR = 50; // can zoom IN 50× the auto-fit
-const WHEEL_ZOOM_STEP = 1.12; // each wheel notch
+const ANCHOR_TAIL = 5; // "latest N" candles used as the zoom anchor
+const WHEEL_STEP = 1.12;
+const MAX_CANDLE_W = 80;
+const MIN_YSCALE_FACTOR = 0.2;
+const MAX_YSCALE_FACTOR = 50;
 const HOVER_DELAY_MS = 2000;
 
 function fmtPrice(n: number): string {
@@ -88,6 +91,17 @@ function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
 }
 
+/** Centroid index + mean close price of the trailing-N candles. */
+function latestAnchors(candles: Candle[], n = ANCHOR_TAIL) {
+  const N = Math.min(n, candles.length);
+  if (N === 0) return { idx: 0, price: 0 };
+  const startI = candles.length - N;
+  const endI = candles.length - 1;
+  let sum = 0;
+  for (let i = startI; i <= endI; i++) sum += candles[i].c;
+  return { idx: (startI + endI) / 2, price: sum / N };
+}
+
 export function CandleChart({
   candles,
   timeframe,
@@ -100,17 +114,16 @@ export function CandleChart({
   const wrapRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(600);
 
-  // Viewport state — see header comment for math.
   const [xStart, setXStart] = useState(0);
   const [candleWidth, setCandleWidth] = useState(8);
   const [yCenter, setYCenter] = useState(0);
   const [yScale, setYScale] = useState(1);
 
-  // Baseline yScale from auto-fit — used for clamp limits + reset.
+  // Auto-fit baselines used for limits + reset.
+  const baseCandleWidthRef = useRef(8);
   const baseYScaleRef = useRef(1);
 
-  // Refs mirror state for window-attached event handlers to avoid stale
-  // closures.
+  // Refs mirror state for window event listeners.
   const xStartRef = useRef(xStart);
   const candleWidthRef = useRef(candleWidth);
   const yCenterRef = useRef(yCenter);
@@ -143,7 +156,7 @@ export function CandleChart({
   const plotH = Math.max(0, height - PAD_T - PAD_B);
   const midY = PAD_T + plotH / 2;
 
-  // Auto-fit on new data (tf swap or fresh mount).
+  // Auto-fit on new candles (tf swap or fresh mount).
   useEffect(() => {
     if (candles.length === 0 || plotW <= 0 || plotH <= 0) return;
     let lo = Infinity;
@@ -160,26 +173,27 @@ export function CandleChart({
     const yMin = lo - pad;
     const yMax = hi + pad;
     const fitYScale = plotH / (yMax - yMin);
+    const fitCandleW = plotW / candles.length;
     baseYScaleRef.current = fitYScale;
+    baseCandleWidthRef.current = fitCandleW;
     setYCenter((yMin + yMax) / 2);
     setYScale(fitYScale);
-    setCandleWidth(plotW / candles.length);
+    setCandleWidth(fitCandleW);
     setXStart(0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [candles, plotW, plotH]);
 
-  // Helpers ------------------------------------------------------------
+  // Coord helpers using current state
   const xOf = useCallback(
-    (globalIdx: number) =>
-      PAD_L + (globalIdx - xStart) * candleWidth + candleWidth / 2,
+    (i: number) => PAD_L + (i - xStart + 0.5) * candleWidth,
     [xStart, candleWidth],
   );
   const yOf = useCallback(
-    (price: number) => midY + (yCenter - price) * yScale,
+    (p: number) => midY + (yCenter - p) * yScale,
     [midY, yCenter, yScale],
   );
 
-  // Hover --------------------------------------------------------------
+  // Hover -------------------------------------------------------------
   const [hoverGlobalIdx, setHoverGlobalIdx] = useState<number | null>(null);
   const [hoverPos, setHoverPos] = useState<{ x: number; y: number } | null>(
     null,
@@ -205,61 +219,88 @@ export function CandleChart({
     };
   }, [hoverGlobalIdx]);
 
-  // Drag (window-attached so the gesture survives leaving the panel).
+  // Drag --------------------------------------------------------------
+  type DragKind = "pan" | "price-zoom";
   const dragRef = useRef<{
+    kind: DragKind;
     startClientX: number;
     startClientY: number;
     startXStart: number;
+    startYScale: number;
     startYCenter: number;
   } | null>(null);
-  const [dragging, setDragging] = useState(false);
+  const [dragging, setDragging] = useState<null | DragKind>(null);
 
-  const applyDrag = useCallback(
-    (e: MouseEvent) => {
-      const ds = dragRef.current;
-      if (!ds) return;
+  const applyDrag = useCallback((e: MouseEvent) => {
+    const ds = dragRef.current;
+    if (!ds) return;
+    if (ds.kind === "pan") {
+      // Horizontal pan only — vertical motion ignored per spec.
       const dx = e.clientX - ds.startClientX;
-      const dy = e.clientY - ds.startClientY;
-      // drag right → see earlier candles (xStart decreases)
       const newXStart =
         ds.startXStart - dx / Math.max(0.5, candleWidthRef.current);
-      // drag down → shift price viewport up (look at higher prices)
-      const newYCenter =
-        ds.startYCenter + dy / Math.max(0.0001, yScaleRef.current);
       setXStart(newXStart);
+    } else if (ds.kind === "price-zoom") {
+      // Drag UP (negative dy) → K taller (zoom in). Anchor = mean close
+      // of last N candles, kept at its starting screen y.
+      const dy = e.clientY - ds.startClientY;
+      const factor = Math.exp(-dy / 180); // smooth exponential feel
+      const base = baseYScaleRef.current || 1;
+      const newYScale = clamp(
+        ds.startYScale * factor,
+        base * MIN_YSCALE_FACTOR,
+        base * MAX_YSCALE_FACTOR,
+      );
+      const { price: anchorPrice } = latestAnchors(candles);
+      // Anchor's screen y at the start of the drag — based on starting
+      // yScale and starting yCenter (so the drag is centered on the
+      // pre-gesture position, no drift).
+      const startAnchorY =
+        midY + (ds.startYCenter - anchorPrice) * ds.startYScale;
+      // Solve newYCenter so anchor stays at startAnchorY under newYScale.
+      const newYCenter = (startAnchorY - midY) / newYScale + anchorPrice;
+      setYScale(newYScale);
       setYCenter(newYCenter);
-    },
-    [],
-  );
+    }
+  }, [candles, midY]);
 
   const onWindowMove = useCallback(
-    (e: MouseEvent) => {
-      applyDrag(e);
-    },
+    (e: MouseEvent) => applyDrag(e),
     [applyDrag],
   );
   const onWindowUp = useCallback(() => {
     dragRef.current = null;
-    setDragging(false);
+    setDragging(null);
     window.removeEventListener("mousemove", onWindowMove);
     window.removeEventListener("mouseup", onWindowUp);
   }, [onWindowMove]);
 
+  function inPriceAxis(localX: number) {
+    return localX >= width - PAD_R;
+  }
+
   function onMouseDown(e: React.MouseEvent<HTMLDivElement>) {
+    const el = wrapRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const kind: DragKind = inPriceAxis(x) ? "price-zoom" : "pan";
     dragRef.current = {
+      kind,
       startClientX: e.clientX,
       startClientY: e.clientY,
       startXStart: xStart,
+      startYScale: yScale,
       startYCenter: yCenter,
     };
-    setDragging(true);
+    setDragging(kind);
     setHoverGlobalIdx(null);
     window.addEventListener("mousemove", onWindowMove);
     window.addEventListener("mouseup", onWindowUp);
   }
 
   function onMouseMove(e: React.MouseEvent<HTMLDivElement>) {
-    if (dragRef.current) return; // window listener owns it
+    if (dragRef.current) return;
     const el = wrapRef.current;
     if (!el) return;
     const rect = el.getBoundingClientRect();
@@ -285,29 +326,27 @@ export function CandleChart({
     setHoverPos(null);
   }
 
-  // Wheel = vertical zoom anchored on latest close ---------------------
+  // Wheel = horizontal zoom, anchored on latest-5 centroid x ---------
   function onWheel(e: React.WheelEvent<HTMLDivElement>) {
     if (candles.length === 0) return;
     if (Math.abs(e.deltaY) < 1) return;
     e.preventDefault();
-    const latest = candles[candles.length - 1].c;
-    const oldYScale = yScaleRef.current;
-    const oldYCenter = yCenterRef.current;
-    // Where is the anchor price on screen right now?
-    const oldAnchorY = midY + (oldYCenter - latest) * oldYScale;
-    const factor = e.deltaY < 0 ? WHEEL_ZOOM_STEP : 1 / WHEEL_ZOOM_STEP;
-    const base = baseYScaleRef.current || 1;
-    const newYScale = clamp(
-      oldYScale * factor,
-      base * MIN_YSCALE_FACTOR,
-      base * MAX_YSCALE_FACTOR,
-    );
-    if (newYScale === oldYScale) return;
-    // Solve newYCenter so anchor stays at oldAnchorY:
-    //   midY + (newYCenter - latest) * newYScale = oldAnchorY
-    const newYCenter = (oldAnchorY - midY) / newYScale + latest;
-    setYScale(newYScale);
-    setYCenter(newYCenter);
+    const oldCW = candleWidthRef.current;
+    const oldXStart = xStartRef.current;
+    const base = baseCandleWidthRef.current;
+    const factor = e.deltaY < 0 ? WHEEL_STEP : 1 / WHEEL_STEP;
+    // Wheel-down floor = baseline (default normal distance), per spec.
+    const newCW = clamp(oldCW * factor, base, MAX_CANDLE_W);
+    if (newCW === oldCW) return;
+    const { idx: anchorIdx } = latestAnchors(candles);
+    // Old screen x of the anchor:
+    //   anchorX = PAD_L + (anchorIdx - oldXStart + 0.5) * oldCW
+    const anchorX = PAD_L + (anchorIdx - oldXStart + 0.5) * oldCW;
+    // Solve newXStart so anchor stays at same screen x under newCW:
+    //   anchorX = PAD_L + (anchorIdx - newXStart + 0.5) * newCW
+    const newXStart = anchorIdx + 0.5 - (anchorX - PAD_L) / newCW;
+    setCandleWidth(newCW);
+    setXStart(newXStart);
   }
 
   function onDoubleClick() {
@@ -321,11 +360,13 @@ export function CandleChart({
     const pad = (hi - lo) * 0.05;
     const yMin = lo - pad;
     const yMax = hi + pad;
-    const fit = plotH / (yMax - yMin);
-    baseYScaleRef.current = fit;
+    const fitYScale = plotH / (yMax - yMin);
+    const fitCandleW = plotW / candles.length;
+    baseYScaleRef.current = fitYScale;
+    baseCandleWidthRef.current = fitCandleW;
     setYCenter((yMin + yMax) / 2);
-    setYScale(fit);
-    setCandleWidth(plotW / candles.length);
+    setYScale(fitYScale);
+    setCandleWidth(fitCandleW);
     setXStart(0);
   }
 
@@ -344,7 +385,6 @@ export function CandleChart({
   const hoverX = hoverGlobalIdx !== null ? xOf(hoverGlobalIdx) : null;
   const hoverY = hovered && hoverX !== null ? yOf(hovered.c) : null;
 
-  // Grid labels — three price levels from current viewport
   const viewYTop = yCenter + plotH / 2 / Math.max(0.0001, yScale);
   const viewYBottom = yCenter - plotH / 2 / Math.max(0.0001, yScale);
   const gridPrices = [viewYTop, yCenter, viewYBottom];
@@ -355,14 +395,11 @@ export function CandleChart({
       ? UP_COLOR
       : DOWN_COLOR;
 
-  // Entry-animation key: changes only on structural series swap.
   const seriesKey = `${timeframe}-${candles.length}-${candles[0]?.t ?? 0}`;
 
-  // Body geometry helper — uniform body width across all candles
   const bodyW = Math.max(1.5, candleWidth * 0.65);
 
-  // X-axis time tick indices: pick 5 evenly across candles that land in
-  // the visible plot horizontally.
+  // X-axis time tick indices among candles visible on screen
   const visibleTickIdxs = useMemo(() => {
     if (candles.length === 0) return [];
     const out: number[] = [];
@@ -405,6 +442,13 @@ export function CandleChart({
     );
   }
 
+  // Cursor: ns-resize over right price axis (or while price-zoom drag);
+  // grabbing while panning; crosshair otherwise.
+  let cursor: string = "crosshair";
+  if (dragging === "pan") cursor = "grabbing";
+  else if (dragging === "price-zoom") cursor = "ns-resize";
+  else if (hoverPos && inPriceAxis(hoverPos.x)) cursor = "ns-resize";
+
   return (
     <div
       ref={wrapRef}
@@ -417,12 +461,11 @@ export function CandleChart({
         position: "relative",
         width: "100%",
         height,
-        cursor: dragging ? "grabbing" : "crosshair",
+        cursor,
         userSelect: "none",
         touchAction: "none",
       }}
     >
-      {/* Static SVG layer — grid + axis labels + hover crosshair */}
       <svg
         width={width}
         height={height}
@@ -518,9 +561,7 @@ export function CandleChart({
         ) : null}
       </svg>
 
-      {/* Candle layer — HTML divs with reveal-from-bottom entry animation.
-          overflow:hidden clips anything beyond the plot region so panning
-          off the edges doesn't bleed into the chart card. */}
+      {/* Candle layer — HTML divs, clipped to plot area */}
       <div
         style={{
           position: "absolute",
@@ -536,7 +577,7 @@ export function CandleChart({
           const up = c.c >= c.o;
           const color = up ? UP_COLOR : DOWN_COLOR;
           const fill = up ? UP_FILL : DOWN_FILL;
-          const x = xOf(i) - PAD_L; // relative to clip container
+          const x = xOf(i) - PAD_L;
           const yHigh = yOf(c.h) - PAD_T;
           const yLow = yOf(c.l) - PAD_T;
           const yOpen = yOf(c.o) - PAD_T;
@@ -546,7 +587,6 @@ export function CandleChart({
           const wickW = Math.max(1, Math.min(2, bodyW * 0.18));
           const candleH = Math.max(1, yLow - yHigh);
 
-          // Cull off-screen for cheap render (purely optimization).
           if (x < -candleWidth || x > plotW + candleWidth) return null;
 
           const STAGGER_TOTAL = 1.6;
@@ -622,7 +662,6 @@ export function CandleChart({
         })}
       </div>
 
-      {/* Hover OHLC strip (top-left) */}
       {hovered && !dragging ? (
         <div
           style={{
@@ -663,7 +702,6 @@ export function CandleChart({
         </div>
       ) : null}
 
-      {/* Deep hover pill (2s) */}
       {hovered && deepHover && hoverPos && !dragging ? (
         <motion.div
           initial={{ opacity: 0, y: -4, scale: 0.96 }}
@@ -703,7 +741,7 @@ export function CandleChart({
           pointerEvents: "none",
         }}
       >
-        WHEEL: HEIGHT ZOOM · DRAG: 4-WAY PAN · 2×CLICK RESET
+        WHEEL: K SPACING · DRAG ←→: PAN · RIGHT-AXIS ↑↓: HEIGHT · 2×CLICK RESET
       </div>
     </div>
   );
