@@ -184,8 +184,15 @@ export function CandleChart({
   const atrTop = PAD_T + plotH + ATR_GAP;
   const atrBottom = atrTop + ATR_H;
 
-  // Auto-fit on new candles (tf swap or fresh mount).
-  useEffect(() => {
+  // Auto-fit on new candles (tf swap or fresh mount). useLayoutEffect
+  // (not useEffect) — the state updates here must flush BEFORE paint,
+  // otherwise the first render after a tf change uses stale yScale/
+  // yCenter from the previous timeframe. That stale state pushes
+  // yOf(latest close) out of bounds, the price line's `y < PAD_T -4 ||
+  // y > PAD_T + plotH + 4` guard skips rendering, and the user sees the
+  // price index line vanish on tf swap (1D / 2H specifically because
+  // their price ranges differ most from 15M's intraday band).
+  useLayoutEffect(() => {
     if (candles.length === 0 || plotW <= 0 || plotH <= 0) return;
     let lo = Infinity;
     let hi = -Infinity;
