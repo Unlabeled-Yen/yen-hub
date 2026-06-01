@@ -38,7 +38,7 @@ function fmtPrice(n: number): string {
   }).format(n);
 }
 
-function fmtTimeForTf(t: number, tf: "5m" | "1h" | "1d"): string {
+function fmtTimeForTf(t: number, tf: "15m" | "2h" | "1d"): string {
   const d = new Date(t);
   if (tf === "1d") {
     return d.toLocaleDateString("en-US", {
@@ -61,7 +61,7 @@ export function CandleChart({
   height = 200,
 }: {
   candles: Candle[];
-  timeframe: "5m" | "1h" | "1d";
+  timeframe: "15m" | "2h" | "1d";
   height?: number;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);

@@ -18,7 +18,7 @@ import { CandleChart, type Candle } from "./candle-chart";
 
 const EASE: [number, number, number, number] = [0.075, 0.82, 0.165, 1];
 
-type Timeframe = "5m" | "1h" | "1d";
+type Timeframe = "15m" | "2h" | "1d";
 
 type Quote = {
   symbol: string;
@@ -29,7 +29,7 @@ type Quote = {
   candles: Candle[];
   marketState: string;
   updatedAt: number;
-  source?: "yahoo" | "stooq";
+  source?: "twelvedata" | "stooq";
   timeframe: Timeframe;
   stale?: boolean;
 };
@@ -63,10 +63,10 @@ function stateLabel(s: string): string {
   }
 }
 
-const TIMEFRAMES: Timeframe[] = ["5m", "1h", "1d"];
+const TIMEFRAMES: Timeframe[] = ["15m", "2h", "1d"];
 
 export function MarketMonitor() {
-  const [tf, setTf] = useState<Timeframe>("5m");
+  const [tf, setTf] = useState<Timeframe>("15m");
   const [quote, setQuote] = useState<Quote | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -259,7 +259,7 @@ export function MarketMonitor() {
           <span>
             {quote?.source === "stooq"
               ? `Stooq · ^DJI · ${tf}`
-              : `Yahoo · ^DJI · ${tf}`}
+              : `Twelve Data · DIA×100 · ${tf}`}
           </span>
           <span>
             {quote

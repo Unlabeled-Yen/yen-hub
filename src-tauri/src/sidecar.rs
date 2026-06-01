@@ -98,6 +98,7 @@ pub fn launch(app: &AppHandle, window: WebviewWindow) -> Result<(), String> {
     let vault_path = std::env::var("YEN_VAULT_PATH")
         .unwrap_or_else(|_| "/Users/yen/Desktop/Yen/Yen_Vault".to_string());
     let anthropic_key = std::env::var("ANTHROPIC_API_KEY").unwrap_or_default();
+    let twelve_data_key = std::env::var("TWELVE_DATA_KEY").unwrap_or_default();
 
     let mut sidecar = app
         .shell()
@@ -112,6 +113,9 @@ pub fn launch(app: &AppHandle, window: WebviewWindow) -> Result<(), String> {
 
     if !anthropic_key.is_empty() {
         sidecar = sidecar.env("ANTHROPIC_API_KEY", anthropic_key);
+    }
+    if !twelve_data_key.is_empty() {
+        sidecar = sidecar.env("TWELVE_DATA_KEY", twelve_data_key);
     }
 
     let (mut rx, _child) = sidecar.spawn().map_err(|e| format!("spawn: {e}"))?;
