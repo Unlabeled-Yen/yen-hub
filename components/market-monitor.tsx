@@ -25,6 +25,7 @@ type Quote = {
   series: number[];
   marketState: string;
   updatedAt: number;
+  stale?: boolean;
 };
 
 const fmtPrice = new Intl.NumberFormat("en-US", {
@@ -160,9 +161,22 @@ export function MarketMonitor() {
           </div>
           {quote ? (
             <span
-              className="text-[9px] tracking-[0.22em] uppercase"
+              className="text-[9px] tracking-[0.22em] uppercase flex items-center gap-1.5"
               style={{ color: "var(--fg-2)" }}
             >
+              {quote.stale ? (
+                <span
+                  title="stale (upstream rate-limited)"
+                  style={{
+                    display: "inline-block",
+                    width: 6,
+                    height: 6,
+                    borderRadius: 3,
+                    background: "rgba(255,180,80,0.85)",
+                    boxShadow: "0 0 6px rgba(255,180,80,0.5)",
+                  }}
+                />
+              ) : null}
               {stateLabel(quote.marketState)}
             </span>
           ) : null}

@@ -1,23 +1,19 @@
 /**
  * GET /api/market/us30
  *
- * Proxy Yahoo Finance chart endpoint for ^DJI (Dow Jones Industrial Average,
- * the underlier behind US30 CFDs). No API key needed; we fetch server-side
- * to dodge browser CORS and Yahoo's bot UA check.
+ * Proxy Yahoo Finance chart endpoint for ^DJI (Dow Jones / US30 underlier).
+ * No API key. We wrap Yahoo with three layers of resilience because their
+ * free unauthenticated edges 429 aggressively:
  *
- * Returns:
- *   {
- *     symbol: "US30",
- *     price: number,           // latest tick
- *     prev: number,            // previous close (for day-change calc)
- *     change: number,          // price - prev
- *     changePct: number,       // (change / prev) * 100
- *     series: number[],        // intraday closes (nulls dropped)
- *     marketState: "PRE"|"REGULAR"|"POST"|"CLOSED",
- *     updatedAt: number,       // unix ms
- *   }
- *
- * Cached at the edge for 60s — that's plenty for a sidebar tile.
+ *   1. **Module-level fresh cache** — once we have a good response, serve
+ *      it for FRESH_MS without re-fetching. The client polls every 60s; this
+ *      ensures we only hit Yahoo once per minute even with React StrictMode
+ *      double-mounts or multiple tabs.
+ *   2. **Two-host fallback** — try query1 first, then query2. They sit on
+ *      different edges and rate-limit independently.
+ *   3. **Stale-while-error** — on upstream failure (429 or otherwise),
+ *      keep returning the last good quote for up to STALE_OK_MS. Response
+ *      includes `stale: true` so the UI can dim the indicator.
  */
 
 import { NextResponse } from "next/server";
@@ -25,8 +21,31 @@ import { getSession } from "@/lib/auth/session";
 
 export const dynamic = "force-dynamic";
 
-const YAHOO_URL =
-  "https://query1.finance.yahoo.com/v8/finance/chart/%5EDJI?interval=5m&range=1d";
+type Quote = {
+  symbol: string;
+  price: number;
+  prev: number;
+  change: number;
+  changePct: number;
+  series: number[];
+  marketState: string;
+  updatedAt: number;
+  stale?: boolean;
+};
+
+const FRESH_MS = 60_000;
+const STALE_OK_MS = 30 * 60_000;
+
+let cache: { quote: Quote; at: number } | null = null;
+
+const YAHOO_HOSTS = [
+  "https://query1.finance.yahoo.com",
+  "https://query2.finance.yahoo.com",
+];
+const YAHOO_PATH = "/v8/finance/chart/%5EDJI?interval=5m&range=1d";
+
+const UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605 (KHTML, like Gecko) Version/17.0 Safari/605.1.15";
 
 type YahooChart = {
   chart?: {
@@ -46,6 +65,49 @@ type YahooChart = {
   };
 };
 
+async function fetchOneHost(host: string): Promise<Quote> {
+  const res = await fetch(host + YAHOO_PATH, {
+    headers: { "User-Agent": UA, Accept: "application/json" },
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`${host} ${res.status}`);
+  const json = (await res.json()) as YahooChart;
+  const result = json.chart?.result?.[0];
+  if (!result?.meta) {
+    throw new Error(json.chart?.error?.description ?? "no result");
+  }
+  const meta = result.meta;
+  const closes = result.indicators?.quote?.[0]?.close ?? [];
+  const series = closes.filter((v): v is number => typeof v === "number");
+  const price = Number(meta.regularMarketPrice ?? series.at(-1) ?? 0);
+  const prev = Number(meta.chartPreviousClose ?? meta.previousClose ?? price);
+  const change = price - prev;
+  const changePct = prev > 0 ? (change / prev) * 100 : 0;
+  return {
+    symbol: "US30",
+    price,
+    prev,
+    change,
+    changePct,
+    series,
+    marketState: meta.marketState ?? "CLOSED",
+    updatedAt:
+      (meta.regularMarketTime ?? Math.floor(Date.now() / 1000)) * 1000,
+  };
+}
+
+async function fetchYahoo(): Promise<Quote> {
+  let lastErr: unknown = null;
+  for (const host of YAHOO_HOSTS) {
+    try {
+      return await fetchOneHost(host);
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr ?? new Error("all yahoo hosts failed");
+}
+
 export async function GET() {
   if (process.env.DEV_BYPASS_AUTH !== "1") {
     const session = await getSession();
@@ -53,52 +115,24 @@ export async function GET() {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
   }
+
+  // Layer 1: fresh cache hit — no upstream call.
+  if (cache && Date.now() - cache.at < FRESH_MS) {
+    return NextResponse.json(cache.quote);
+  }
+
   try {
-    const res = await fetch(YAHOO_URL, {
-      headers: {
-        // Yahoo serves an empty body to UAs it doesn't like.
-        "User-Agent":
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
-        Accept: "application/json",
-      },
-      // Server-side cache; Next will serve stale up to 60s.
-      next: { revalidate: 60 },
-    });
-    if (!res.ok) {
-      return NextResponse.json(
-        { error: `yahoo ${res.status}` },
-        { status: 502 },
-      );
-    }
-    const json = (await res.json()) as YahooChart;
-    const result = json.chart?.result?.[0];
-    if (!result?.meta) {
-      return NextResponse.json(
-        { error: json.chart?.error?.description ?? "no result" },
-        { status: 502 },
-      );
-    }
-    const meta = result.meta;
-    const closes = result.indicators?.quote?.[0]?.close ?? [];
-    const series = closes.filter((v): v is number => typeof v === "number");
-    const price = Number(meta.regularMarketPrice ?? series.at(-1) ?? 0);
-    const prev = Number(meta.chartPreviousClose ?? meta.previousClose ?? price);
-    const change = price - prev;
-    const changePct = prev > 0 ? (change / prev) * 100 : 0;
-    return NextResponse.json({
-      symbol: "US30",
-      price,
-      prev,
-      change,
-      changePct,
-      series,
-      marketState: meta.marketState ?? "CLOSED",
-      updatedAt: (meta.regularMarketTime ?? Math.floor(Date.now() / 1000)) * 1000,
-    });
+    const q = await fetchYahoo();
+    cache = { quote: q, at: Date.now() };
+    return NextResponse.json(q);
   } catch (e) {
+    // Layer 3: serve stale if recent enough.
+    if (cache && Date.now() - cache.at < STALE_OK_MS) {
+      return NextResponse.json({ ...cache.quote, stale: true });
+    }
     return NextResponse.json(
       { error: e instanceof Error ? e.message : String(e) },
-      { status: 500 },
+      { status: 502 },
     );
   }
 }
