@@ -61,6 +61,10 @@ const ATR_H = 42; // pane height in px
 const ATR_GAP = 6; // gap between candle plot and ATR pane
 const ATR_PERIOD = 14;
 
+// Moving average overlay on the candle pane.
+const MA_PERIOD = 20;
+const MA_COLOR = "rgba(140,200,235,0.9)"; // cool blue — contrasts warm K
+
 const INITIAL_DUR = 0.85;
 const INITIAL_STAGGER_TOTAL = 2.6;
 const FAST_DUR = 0.22;
@@ -587,6 +591,44 @@ export function CandleChart({
       ? atrValues[hoverGlobalIdx]
       : null;
 
+  // MA20 — SMA of close prices, rolling 20-bar window.
+  const ma20Values = useMemo<Array<number | null>>(() => {
+    const N = candles.length;
+    if (N === 0) return [];
+    const out: Array<number | null> = new Array(N).fill(null);
+    let sum = 0;
+    for (let i = 0; i < N; i++) {
+      sum += candles[i].c;
+      if (i >= MA_PERIOD) sum -= candles[i - MA_PERIOD].c;
+      if (i >= MA_PERIOD - 1) out[i] = sum / MA_PERIOD;
+    }
+    return out;
+  }, [candles]);
+
+  const ma20Path = useMemo(() => {
+    const parts: string[] = [];
+    let started = false;
+    for (let i = 0; i < ma20Values.length; i++) {
+      const v = ma20Values[i];
+      if (v === null) continue;
+      const x = xOf(i);
+      // Off-screen horizontally → break the polyline at the gap.
+      if (x < PAD_L - candleWidth * 2 || x > width - PAD_R + candleWidth * 2) {
+        started = false;
+        continue;
+      }
+      const y = yOf(v);
+      parts.push(`${started ? "L" : "M"} ${x.toFixed(2)} ${y.toFixed(2)}`);
+      started = true;
+    }
+    return parts.join(" ");
+  }, [ma20Values, xOf, yOf, candleWidth, width]);
+
+  const hoveredMA =
+    hoverGlobalIdx !== null && hoverGlobalIdx < ma20Values.length
+      ? ma20Values[hoverGlobalIdx]
+      : null;
+
   if (candles.length === 0) {
     return (
       <div
@@ -631,6 +673,14 @@ export function CandleChart({
           pointerEvents: "none",
         }}
       >
+        <defs>
+          {/* Clip overlay lines (MA, latest-price extension, etc.) to the
+              candle plot area so they don't bleed into the ATR pane or
+              right price axis when the user pans. */}
+          <clipPath id="candle-plot-clip">
+            <rect x={PAD_L} y={PAD_T} width={plotW} height={plotH} />
+          </clipPath>
+        </defs>
         {gridPrices.map((p, i) => (
           <line
             key={`g-${i}`}
@@ -680,6 +730,51 @@ export function CandleChart({
             </text>
           );
         })}
+
+        {/* MA(20) overlay — SMA of close prices over the last 20 bars.
+            Clipped to the candle plot so the line never bleeds into the
+            ATR pane or right axis during pan. Drawn before the latest-
+            price line so the price ribbon sits visually on top. */}
+        {ma20Path ? (
+          <g pointerEvents="none" clipPath="url(#candle-plot-clip)">
+            <path
+              d={ma20Path}
+              fill="none"
+              stroke={MA_COLOR}
+              strokeWidth={1.25}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+            {/* Hover marker — small dot on the MA line at the hovered bar */}
+            {hoveredMA !== null &&
+            hoverGlobalIdx !== null &&
+            !dragging ? (
+              <circle
+                cx={xOf(hoverGlobalIdx)}
+                cy={yOf(hoveredMA)}
+                r={2.4}
+                fill={MA_COLOR}
+                stroke="rgba(0,0,0,0.6)"
+                strokeWidth={0.5}
+              />
+            ) : null}
+          </g>
+        ) : null}
+        {/* MA legend chip — bottom-left of the candle pane */}
+        {ma20Path ? (
+          <text
+            x={PAD_L + 2}
+            y={PAD_T + plotH - 4}
+            fontSize={8.5}
+            fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
+            fill={MA_COLOR}
+            letterSpacing="0.18em"
+            fontWeight={500}
+            pointerEvents="none"
+          >
+            MA(20)
+          </text>
+        ) : null}
 
         {/* Latest-price reference line + label on the right axis.
             Always visible (independent of hover) — a TradingView-style
@@ -1060,6 +1155,12 @@ export function CandleChart({
             <span style={{ opacity: 0.55, color: "var(--fg-1)" }}>C</span>{" "}
             {fmtPrice(hovered.c)}
           </span>
+          {hoveredMA !== null ? (
+            <span style={{ color: MA_COLOR }}>
+              <span style={{ opacity: 0.55, color: "var(--fg-1)" }}>MA20</span>{" "}
+              {fmtPrice(hoveredMA)}
+            </span>
+          ) : null}
           {hoveredATR !== null ? (
             <span style={{ color: "rgba(255,170,100,0.95)" }}>
               <span style={{ opacity: 0.55, color: "var(--fg-1)" }}>ATR</span>{" "}
