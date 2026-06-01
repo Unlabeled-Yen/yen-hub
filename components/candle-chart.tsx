@@ -790,8 +790,8 @@ export function CandleChart({
               };
               return (
                 <g key={`ma-${seriesKey}-${MA_SERIES[si].period}`}>
-                  {/* Main stroke only — glow lives on the K bars per
-                      latest spec, not on the lines. */}
+                  {/* Just the pen-draw stroke — leading head dot
+                      removed per spec. */}
                   <motion.path
                     d={d}
                     fill="none"
@@ -803,28 +803,6 @@ export function CandleChart({
                     animate={{ pathLength: 1, opacity: 1 }}
                     transition={t}
                   />
-                  {/* Leading head dot — faint luminous marker following
-                      the pen tip. Two layers (sharp inner + soft outer)
-                      give a "lead light" feel, both at same speed via
-                      animateMotion. */}
-                  <circle r={2.4} fill={stroke} opacity={0.95}>
-                    <animateMotion
-                      dur={`${PEN_DRAW_DUR}s`}
-                      path={d}
-                      fill="freeze"
-                    />
-                  </circle>
-                  <circle
-                    r={5}
-                    fill={stroke.replace(/[\d.]+\)$/, "0.40)")}
-                    opacity={0.6}
-                  >
-                    <animateMotion
-                      dur={`${PEN_DRAW_DUR}s`}
-                      path={d}
-                      fill="freeze"
-                    />
-                  </circle>
                 </g>
               );
             }
@@ -1040,8 +1018,6 @@ export function CandleChart({
                 as the MA lines. */}
             {(() => {
               const atrStroke = "rgba(255,170,100,0.85)";
-              const atrGlowOuter = "rgba(255,170,100,0.18)";
-              const atrGlowInner = "rgba(255,170,100,0.40)";
               const atrSW = 1.1;
               if (penDrawActive) {
                 const t = {
@@ -1061,20 +1037,6 @@ export function CandleChart({
                       animate={{ pathLength: 1, opacity: 1 }}
                       transition={t}
                     />
-                    <circle r={2.4} fill={atrStroke} opacity={0.95}>
-                      <animateMotion
-                        dur={`${PEN_DRAW_DUR}s`}
-                        path={atrPath}
-                        fill="freeze"
-                      />
-                    </circle>
-                    <circle r={5} fill={atrGlowInner} opacity={0.6}>
-                      <animateMotion
-                        dur={`${PEN_DRAW_DUR}s`}
-                        path={atrPath}
-                        fill="freeze"
-                      />
-                    </circle>
                   </g>
                 );
               }
@@ -1258,12 +1220,11 @@ export function CandleChart({
                   }}
                   style={{ position: "absolute", inset: 0 }}
                 >
-                  {/* Halo — soft blurred glow behind the candle, peaks
-                      while lifted. Same color as the candle for tonal
-                      cohesion. */}
+                  {/* Halo — barely-there blur, peaks at 0.11 (down ~80%
+                      from earlier). Just a faint reminder, not a glow. */}
                   <motion.div
                     initial={{ opacity: 0 }}
-                    animate={{ opacity: [0, 0.55, 0.55, 0] }}
+                    animate={{ opacity: [0, 0.11, 0.11, 0] }}
                     transition={{
                       duration: INITIAL_DUR,
                       delay: stagger,
