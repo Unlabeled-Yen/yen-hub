@@ -119,14 +119,19 @@ export function MarketMonitor() {
 
   return (
     <section
-      className="font-mono flex flex-col h-full"
+      className="relative font-mono flex flex-col h-full"
       aria-label="market monitor"
       data-tauri-drag-region
     >
-      {/* Two rows above the panel border:
-            Row 1 — NY clock (right-aligned, scrolls with page)
-            Row 2 — Market section header + K-hover time */}
-      <div className="flex justify-end mb-1 flex-shrink-0">
+      {/* NY clock floats ABOVE the section via absolute positioning, so
+          it doesn't add a row to the flex flow. The panel top can then
+          align with AttentionGrid's chart top (both share row-top via
+          items-stretch). Scrolls with the page because the parent
+          section is in normal flow. */}
+      <div
+        className="absolute right-0 flex"
+        style={{ top: -22 }}
+      >
         <WorldClock />
       </div>
       <header className="flex items-center gap-3 text-[11px] tracking-[0.30em] uppercase text-[var(--fg-2)] mb-4 flex-shrink-0">
