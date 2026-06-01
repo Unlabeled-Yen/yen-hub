@@ -118,7 +118,7 @@ const T_END = 3.5;
 // Yen prefers short fade + long stagger — each item snaps in
 // individually but with a clear gap between items, not a slow blur.
 const FADE_BASELINE_MS = 400;
-const FADE_STAGGER_MS = 550;
+const FADE_STAGGER_MS = 450;
 const STAGGER_CAP = 15;
 const FADE_DUR = 0.35;
 

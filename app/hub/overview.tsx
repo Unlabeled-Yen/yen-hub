@@ -325,22 +325,36 @@ export function Overview() {
                 <MarketMonitor />
               </motion.div>
             </div>
-            {/* Lower row: Reading + TODO inside the dark slab */}
+            {/* Lower row: Reading + TODO inside the dark slab.
+                The slab background extends UPWARD into the chart area
+                via negative top margin + matching positive top padding,
+                so the dark gradient visually starts mid-chart while
+                actual reading/todo content stays in place.
+                Gradient: transparent at top (chart mid-line) → opaque
+                by the time it crosses the original slab boundary →
+                stays opaque to bottom (no fade-out at bottom).
+                pointerEvents:none on the slab + auto on direct children
+                lets chart hover/wheel events pass through the
+                transparent extension area to the chart underneath. */}
             <div
-              className="grid grid-cols-1 lg:grid-cols-2 gap-x-10 items-start py-4 -mx-8 sm:-mx-12 px-8 sm:px-12"
+              className="grid grid-cols-1 lg:grid-cols-2 gap-x-10 items-start py-4 -mt-[260px] pt-[260px] -mx-8 sm:-mx-12 px-8 sm:px-12"
               style={{
                 background:
-                  "linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0.65) 10%, rgba(0,0,0,0.65) 90%, rgba(0,0,0,0) 100%)",
+                  "linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0.65) 42%, rgba(0,0,0,0.65) 100%)",
+                pointerEvents: "none",
               }}
             >
-              {/* No wrapper fade/translate per Yen — both panels go
-                  STRAIGHT into their own entry effects (Reading: cube
-                  barrel-roll, TodoList: typewriter). Previous opacity
-                  fades hid the cube/typewriter from view until 1.5s+. */}
-              <div ref={readingRef} className="min-w-0">
+              <div
+                ref={readingRef}
+                className="min-w-0"
+                style={{ pointerEvents: "auto" }}
+              >
                 <ReadingProgress />
               </div>
-              <div className="min-w-0" style={{ height: `${readingH}px` }}>
+              <div
+                className="min-w-0"
+                style={{ height: `${readingH}px`, pointerEvents: "auto" }}
+              >
                 <TodoList />
               </div>
             </div>
