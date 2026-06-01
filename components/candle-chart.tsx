@@ -218,7 +218,14 @@ export function CandleChart({
     const yMin = lo - pad;
     const yMax = hi + pad;
     const fitYScale = plotH / (yMax - yMin);
-    const fitCandleW = plotW / candles.length;
+    // CRITICAL: clamp to MAX_CANDLE_W. Stooq fallback returns only 1
+    // candle → plotW / 1 = ~1100 → single body 715px wide as a giant
+    // orange blob across the chart. Cap at MAX so even degenerate
+    // counts render a reasonable single candle.
+    const fitCandleW = Math.min(
+      plotW / candles.length,
+      MAX_CANDLE_W,
+    );
     baseYScaleRef.current = fitYScale;
     baseCandleWidthRef.current = fitCandleW;
     setYCenter((yMin + yMax) / 2);
@@ -498,7 +505,11 @@ export function CandleChart({
     const yMin = lo - pad;
     const yMax = hi + pad;
     const fitYScale = plotH / (yMax - yMin);
-    const fitCandleW = plotW / candles.length;
+    // Same cap as the autofit useLayoutEffect — see comment there.
+    const fitCandleW = Math.min(
+      plotW / candles.length,
+      MAX_CANDLE_W,
+    );
     baseYScaleRef.current = fitYScale;
     baseCandleWidthRef.current = fitCandleW;
     setYCenter((yMin + yMax) / 2);
