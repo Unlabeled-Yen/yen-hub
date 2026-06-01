@@ -116,12 +116,14 @@ const T_END = 3.5;
 // item texts now use the same simple opacity fade-in as days-ago.)
 
 // Baseline delay before the first item starts fading in.
-const FADE_BASELINE_MS = 300;
-// Per-item stagger so items don't all flash in simultaneously. Modest
-// since this is just a fade, not a slow typewriter.
-const FADE_STAGGER_MS = 60;
+const FADE_BASELINE_MS = 500;
+// Per-item stagger. Slower per Yen — was 60ms, items snapped in too
+// quickly. 120ms gives a clearer cascade.
+const FADE_STAGGER_MS = 120;
 // Cap so very long lists still settle quickly.
 const STAGGER_CAP = 12;
+// Per-fade duration. Slower per Yen — was 0.35s.
+const FADE_DUR = 0.7;
 
 function TodoItem({
   t,
@@ -257,7 +259,7 @@ function TodoItem({
             ref={textRef}
             initial={entryPhase ? { opacity: 0 } : { opacity: dimText ? 0.55 : 1 }}
             animate={{ opacity: dimText ? 0.55 : 1 }}
-            transition={{ duration: 0.35, ease: EASE, delay: fadeDelaySec }}
+            transition={{ duration: FADE_DUR, ease: EASE, delay: fadeDelaySec }}
             style={{
               color: dimText ? "var(--fg-2)" : "var(--fg-0)",
               display: "inline",
@@ -301,14 +303,14 @@ function TodoItem({
           className="truncate flex-1 min-w-0"
           initial={entryPhase ? { opacity: 0 } : { opacity: 1 }}
           animate={{ opacity: 1 }}
-          transition={{ duration: 0.35, ease: EASE, delay: fadeDelaySec }}
+          transition={{ duration: FADE_DUR, ease: EASE, delay: fadeDelaySec }}
         >
           {fileText}
         </motion.span>
         <motion.span
           initial={entryPhase ? { opacity: 0 } : { opacity: 0.5 }}
           animate={{ opacity: 0.5 }}
-          transition={{ duration: 0.35, ease: EASE, delay: fadeDelaySec }}
+          transition={{ duration: FADE_DUR, ease: EASE, delay: fadeDelaySec }}
         >
           ·
         </motion.span>
@@ -316,7 +318,7 @@ function TodoItem({
           className="tabular-nums whitespace-nowrap"
           initial={entryPhase ? { opacity: 0 } : { opacity: 1 }}
           animate={{ opacity: 1 }}
-          transition={{ duration: 0.35, ease: EASE, delay: fadeDelaySec }}
+          transition={{ duration: FADE_DUR, ease: EASE, delay: fadeDelaySec }}
         >
           {daysText}
         </motion.span>
@@ -407,11 +409,11 @@ export function TodoList() {
     // burn the 12s timer during SHA-1 hashing while nothing is visible.
     if (!data || !keysReady || entryArmedRef.current) return;
     entryArmedRef.current = true;
-    // Cover the longest fade-in chain:
-    //   baseline 300ms + 12*60ms = 1020ms + 350ms fade = 1.37s.
+    // Cover the longest fade-in chain (slower per Yen):
+    //   baseline 500ms + 12*120ms = 1940ms + 700ms fade = 2.64s.
     // Add buffer; after flip, newly-mounted items (tab switch) render
     // instantly.
-    const id = window.setTimeout(() => setEntryPhase(false), 2000);
+    const id = window.setTimeout(() => setEntryPhase(false), 3500);
     return () => window.clearTimeout(id);
   }, [data, keysReady]);
 
