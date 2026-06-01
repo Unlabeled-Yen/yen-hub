@@ -257,12 +257,41 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(cached.quote);
   }
 
+  // Source preference: Twelve Data (rich OHLC) → cached stale TD →
+  // Stooq (single-bar fallback). Stale TD always wins over fresh Stooq
+  // because Stooq only returns 1 candle which trashes the chart.
+  const key = process.env.TWELVE_DATA_KEY ?? "";
+  if (key) {
+    try {
+      const q = await fetchTwelveData(tf, key);
+      cache.set(tf, { quote: q, at: Date.now() });
+      console.log(
+        `[us30] tf=${tf} source=${q.source} candles=${q.candles.length} price=${q.price.toFixed(2)}`,
+      );
+      return NextResponse.json(q);
+    } catch (e) {
+      console.log(
+        `[us30] tf=${tf} td failed: ${e instanceof Error ? e.message : e}`,
+      );
+    }
+  }
+
+  // TD failed (or no key). Prefer last good TD cache (stale) over Stooq's
+  // skinny single-bar payload, as long as the cache itself was TD.
+  if (
+    cached &&
+    cached.quote.source === "twelvedata" &&
+    Date.now() - cached.at < STALE_OK_MS
+  ) {
+    console.log(`[us30] tf=${tf} serving stale TD (${cached.quote.candles.length} candles)`);
+    return NextResponse.json({ ...cached.quote, stale: true });
+  }
+
+  // Last resort: Stooq. Single candle but at least a price.
   try {
-    const q = await fetchAny(tf);
+    const q = await fetchStooq(tf);
     cache.set(tf, { quote: q, at: Date.now() });
-    console.log(
-      `[us30] tf=${tf} source=${q.source} candles=${q.candles.length} price=${q.price.toFixed(2)}`,
-    );
+    console.log(`[us30] tf=${tf} source=stooq candles=1 price=${q.price.toFixed(2)}`);
     return NextResponse.json(q);
   } catch (e) {
     if (cached && Date.now() - cached.at < STALE_OK_MS) {
