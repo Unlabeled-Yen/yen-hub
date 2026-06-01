@@ -112,113 +112,16 @@ type ClickMode = "strike" | "promote" | "none";
 // the page reads as one breath instead of three separate openings.
 const T_END = 3.5;
 
-/**
- * TypewriterText — per-character substring reveal with a blinking
- * caret that's truly anchored to the last visible character (not the
- * full text's right edge, which was the bug with the previous
- * clip-path approach).
- *
- * `startMs` is relative to mount. Speed is `charsPerSec`.
- * When the last char is written, the caret unmounts immediately
- * (no fade-out) per Yen's spec ("打完字 字元後直線就要馬上消失").
- *
- * `onComplete` lets the parent chain the next typewriter (e.g. main
- * text → file name → days-ago) deterministically.
- */
-function TypewriterText({
-  text,
-  startMs,
-  charsPerSec,
-  className,
-  style,
-  showCursor = true,
-  cursorColor = "rgba(255,184,120,0.95)",
-  onComplete,
-}: {
-  text: string;
-  startMs: number;
-  charsPerSec: number;
-  className?: string;
-  style?: React.CSSProperties;
-  showCursor?: boolean;
-  cursorColor?: string;
-  onComplete?: () => void;
-}) {
-  const [n, setN] = useState(0);
-  const [done, setDone] = useState(false);
-  // Re-run when the text identity changes (tab swap / list re-fetch).
-  useEffect(() => {
-    setN(0);
-    setDone(false);
-    const total = text.length;
-    if (total === 0) {
-      setDone(true);
-      onComplete?.();
-      return;
-    }
-    const msPerChar = 1000 / charsPerSec;
-    const startAt = performance.now() + startMs;
-    let raf = 0;
-    let cancelled = false;
-    const tick = () => {
-      if (cancelled) return;
-      const now = performance.now();
-      if (now < startAt) {
-        raf = requestAnimationFrame(tick);
-        return;
-      }
-      const elapsed = now - startAt;
-      const target = Math.min(total, Math.floor(elapsed / msPerChar) + 1);
-      setN(target);
-      if (target < total) {
-        raf = requestAnimationFrame(tick);
-      } else {
-        setDone(true);
-        onComplete?.();
-      }
-    };
-    raf = requestAnimationFrame(tick);
-    return () => {
-      cancelled = true;
-      cancelAnimationFrame(raf);
-    };
-  }, [text, startMs, charsPerSec, onComplete]);
+// (TypewriterText removed — Yen cancelled the typewriter effect; all
+// item texts now use the same simple opacity fade-in as days-ago.)
 
-  return (
-    <span className={className} style={style}>
-      {text.slice(0, n)}
-      {!done && showCursor ? (
-        <motion.span
-          aria-hidden
-          animate={{ opacity: [1, 0, 1] }}
-          transition={{ duration: 0.65, repeat: Infinity, ease: "linear" }}
-          style={{
-            display: "inline-block",
-            width: 1.5,
-            height: "0.85em",
-            marginLeft: 1,
-            verticalAlign: "text-bottom",
-            background: cursorColor,
-            boxShadow: `0 0 4px ${cursorColor}`,
-          }}
-        />
-      ) : null}
-    </span>
-  );
-}
-
-// Typing speed — applies to all TypewriterText instances. Yen wanted
-// slower than the previous clip-path speed. 16 chars/sec = ~62ms/char.
-const TYPE_CPS = 16;
-// Baseline before the panel's typewriter sequence begins. The wrapper
-// no longer fades opacity, so this is the only breath before typing.
-const TYPE_BASELINE_MS = 300;
-// Between-item stagger for the body row. Capped after a few items so
-// long lists don't take forever.
-const STAGGER_MS = 380;
-const STAGGER_CAP = 8;
-// (SUB_GAP_MS removed — body & filename now type simultaneously per
-// Yen, no chained sub-row gaps needed.)
+// Baseline delay before the first item starts fading in.
+const FADE_BASELINE_MS = 300;
+// Per-item stagger so items don't all flash in simultaneously. Modest
+// since this is just a fade, not a slow typewriter.
+const FADE_STAGGER_MS = 60;
+// Cap so very long lists still settle quickly.
+const STAGGER_CAP = 12;
 
 function TodoItem({
   t,
@@ -301,25 +204,20 @@ function TodoItem({
   const showPriorityDot = clickMode === "promote" && isPriority;
   const clickable = clickMode !== "none";
 
-  // Typewriter sequencing (only when entryPhase is true). Body and
-  // filename type SIMULTANEOUSLY (same startMs) per Yen's spec — they
-  // share itemBase. Days-ago does NOT typewriter; it fades in after
-  // both body & filename finish (the longer of the two determines
-  // when days appears).
-  // Stagger drops to a tiny step after the first STAGGER_CAP items so
-  // long lists don't snowball into 20+ second intros.
+  // Fade-in stagger. Stagger drops to a tiny step after the first
+  // STAGGER_CAP items so long lists don't take forever.
   const cappedI = Math.min(index, STAGGER_CAP);
   const overflowI = Math.max(0, index - STAGGER_CAP);
-  const itemBase = TYPE_BASELINE_MS + cappedI * STAGGER_MS + overflowI * 80;
+  const itemBase =
+    FADE_BASELINE_MS + cappedI * FADE_STAGGER_MS + overflowI * 20;
   const bodyText = trunc(t.text, 90);
   const fileText = fileName(t.file);
   const daysText = dayLabel(t.mtimeMs);
-  const bodyDurMs = entryPhase ? (bodyText.length / TYPE_CPS) * 1000 : 0;
-  const fileDurMs = entryPhase ? (fileText.length / TYPE_CPS) * 1000 : 0;
-  // Days-ago fade-in starts after WHICHEVER typewriter finishes last.
-  const daysFadeStartSec = entryPhase
-    ? (itemBase + Math.max(bodyDurMs, fileDurMs) + 60) / 1000
-    : 0;
+  // Typewriter cancelled per Yen. Body / filename / days ALL share
+  // the same simple opacity fade-in pattern (same as the original
+  // days-ago animation). One delay per item; the three texts fade in
+  // together at fadeDelaySec.
+  const fadeDelaySec = entryPhase ? itemBase / 1000 : 0;
 
   return (
     <div
@@ -352,27 +250,21 @@ function TodoItem({
         ) : null}
         <div className="relative min-w-0 flex-1">
           {/* Body span doubles as the strike-path anchor (textRef +
-              measure()), so we keep it as the wrapping element. When
-              entryPhase, render via TypewriterText; otherwise plain. */}
-          <span
+              measure()). Simple opacity fade-in (matching days-ago).
+              The textRef stays on the inline <span> so the strike
+              measurement still works. */}
+          <motion.span
             ref={textRef}
+            initial={entryPhase ? { opacity: 0 } : { opacity: dimText ? 0.55 : 1 }}
+            animate={{ opacity: dimText ? 0.55 : 1 }}
+            transition={{ duration: 0.35, ease: EASE, delay: fadeDelaySec }}
             style={{
               color: dimText ? "var(--fg-2)" : "var(--fg-0)",
-              opacity: dimText ? 0.55 : 1,
-              transition: "color 350ms, opacity 350ms",
               display: "inline",
             }}
           >
-            {entryPhase ? (
-              <TypewriterText
-                text={bodyText}
-                startMs={itemBase}
-                charsPerSec={TYPE_CPS}
-              />
-            ) : (
-              bodyText
-            )}
-          </span>
+            {bodyText}
+          </motion.span>
           {showStrike ? (
             <svg
               className="absolute inset-0 pointer-events-none"
@@ -403,26 +295,20 @@ function TodoItem({
         </div>
       </div>
       <div className="text-[10px] text-[var(--fg-2)] mt-1 flex items-center gap-2 min-w-0 pl-[1px]">
-        <span className="truncate flex-1 min-w-0">
-          {entryPhase ? (
-            <TypewriterText
-              text={fileText}
-              startMs={itemBase}
-              charsPerSec={TYPE_CPS}
-            />
-          ) : (
-            fileText
-          )}
-        </span>
-        {/* Days-ago does NOT typewriter — appears last per Yen. Fades
-            in after both body & filename are done typing. The leading
-            dot separator fades in WITH days so the row stays clean
-            until the last beat. */}
+        {/* All three sub-row pieces share the same fade-in pattern as
+            days-ago — typewriter cancelled per Yen. */}
         <motion.span
-          style={{ opacity: 0.5 }}
+          className="truncate flex-1 min-w-0"
+          initial={entryPhase ? { opacity: 0 } : { opacity: 1 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.35, ease: EASE, delay: fadeDelaySec }}
+        >
+          {fileText}
+        </motion.span>
+        <motion.span
           initial={entryPhase ? { opacity: 0 } : { opacity: 0.5 }}
           animate={{ opacity: 0.5 }}
-          transition={{ duration: 0.35, ease: EASE, delay: daysFadeStartSec }}
+          transition={{ duration: 0.35, ease: EASE, delay: fadeDelaySec }}
         >
           ·
         </motion.span>
@@ -430,7 +316,7 @@ function TodoItem({
           className="tabular-nums whitespace-nowrap"
           initial={entryPhase ? { opacity: 0 } : { opacity: 1 }}
           animate={{ opacity: 1 }}
-          transition={{ duration: 0.35, ease: EASE, delay: daysFadeStartSec }}
+          transition={{ duration: 0.35, ease: EASE, delay: fadeDelaySec }}
         >
           {daysText}
         </motion.span>
@@ -521,18 +407,11 @@ export function TodoList() {
     // burn the 12s timer during SHA-1 hashing while nothing is visible.
     if (!data || !keysReady || entryArmedRef.current) return;
     entryArmedRef.current = true;
-    // Long enough to cover even the slowest item in a long priority
-    // list. Typing per item runs:
-    //   itemBase (~300ms baseline + up to 8*380ms stagger ≈ 3.3s)
-    //     + body (≤90 chars / 16cps ≈ 5.6s)
-    //     + file (≤30 chars ≈ 1.9s)
-    //     + days-ago (≤6 chars ≈ 0.4s)
-    //   ≈ 11s worst case.
-    // After this flips false, NEWLY-mounted items render instantly
-    // (tab switches feel snappy). Already-mounted items keep typing
-    // because the cursor state is driven by TypewriterText's internal
-    // `done` flag, not entryPhase.
-    const id = window.setTimeout(() => setEntryPhase(false), 12_000);
+    // Cover the longest fade-in chain:
+    //   baseline 300ms + 12*60ms = 1020ms + 350ms fade = 1.37s.
+    // Add buffer; after flip, newly-mounted items (tab switch) render
+    // instantly.
+    const id = window.setTimeout(() => setEntryPhase(false), 2000);
     return () => window.clearTimeout(id);
   }, [data, keysReady]);
 
