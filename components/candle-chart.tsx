@@ -3,36 +3,37 @@
 /**
  * CandleChart — TradingView-style candlestick chart.
  *
- * Layout model:
- *   Each candle takes a fixed pixel slot (`candleWidth`). Body/wick scale
- *   uniformly with that, so adjacency *visually never changes* — the same
- *   gap-to-body ratio holds at any zoom level.
+ * Layout: each candle takes a fixed pixel slot (`candleWidth`). Body/wick
+ * scale uniformly with slot, so adjacency visually never changes.
  *
- * Interactions:
- *   - Drag main area → pan time (left/right)
- *   - Wheel anywhere → pan time (horizontal scroll)
- *   - Drag bottom time-axis strip ↑ / ↓ → time scale tighter / looser
- *     (i.e. each candle wider / narrower; total visible count adapts)
- *   - Drag right price-axis strip ↑ / ↓ → vertical zoom in / out
- *   - Double-click main → reset both axes (fit all bars)
- *   - Double-click an axis → reset that axis only
- *   - Hover a candle ≥ 2s → "deep hover" pill near cursor with the bar's
- *     full timestamp (in addition to the always-on OHLC strip on top)
+ * Single fluid gesture on the chart body:
+ *   - Horizontal drag → pan time (left/right)
+ *   - Vertical drag   → zoom *anchored on the candle you clicked*
+ *                       (drag DOWN = K wider, in; drag UP = K narrower, out)
+ *   - Diagonal       → both at once, smoothly
+ *   While dragging, the cursor can leave the chart panel — window-level
+ *   listeners track it.
  *
- * Time handling:
- *   API encodes NY clock time as UTC ms. All `toLocaleString` here use
- *   timeZone:"UTC" so the displayed label matches the raw NY time.
+ * Other:
+ *   - Wheel anywhere → horizontal pan
+ *   - Double-click → reset (fit all bars)
+ *   - Hover ≥ 2s on a candle → "deep hover" pill near cursor with
+ *     the bar's full timestamp
+ *   - Always-on OHLC strip top-left while hovering
+ *
+ * Time encoding: API stamps NY clock time as UTC ms; all `toLocaleString`
+ * here pin timeZone:"UTC" to display the literal NY time.
  */
 
 import { motion } from "motion/react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 export type Candle = { t: number; o: number; h: number; l: number; c: number };
 
 const PAD_L = 8;
 const PAD_R = 56;
 const PAD_T = 8;
-const PAD_B = 22; // bottom time-axis drag strip lives here
+const PAD_B = 22;
 
 const UP_COLOR = "rgba(255,184,120,0.95)";
 const UP_FILL = "rgba(255,184,120,0.75)";
@@ -43,10 +44,8 @@ const AXIS_FG = "rgba(180,180,180,0.55)";
 
 const MIN_CANDLE_W = 1.5;
 const MAX_CANDLE_W = 80;
-const DEFAULT_CANDLE_W = 8;
-const MIN_PRICE_PAD = 0.02; // 2% of range
-const MAX_PRICE_PAD = 3.0; // 300%
 const HOVER_DELAY_MS = 2000;
+const ZOOM_PIXELS_PER_E = 220; // softer = drag further to zoom 1 e-fold
 
 function fmtPrice(n: number): string {
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(n);
@@ -94,14 +93,16 @@ function pickTickIndices(n: number, k: number): number[] {
   return Array.from(new Set(out));
 }
 
-type DragKind = "pan" | "time-zoom" | "price-zoom";
 type DragState = {
-  kind: DragKind;
-  startX: number;
-  startY: number;
+  startClientX: number;
+  startClientY: number;
   startCandleWidth: number;
-  startStartIdx: number;
-  startPricePadMult: number;
+  // The global candle index under the cursor at mousedown — we keep this
+  // candle's screen x fixed throughout the drag.
+  anchorGlobalIdx: number;
+  // The screen-x (relative to plot area, i.e. minus PAD_L) of that anchor
+  // at mousedown.
+  anchorPlotX: number;
   moved: boolean;
 };
 
@@ -115,55 +116,31 @@ export function CandleChart({
   height?: number;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
   const [width, setWidth] = useState(600);
 
-  // Time-axis state ----------------------------------------------------
-  // `candleWidth` is the absolute pixel slot per candle. Auto-fits all
-  // bars on initial mount and whenever a fresh candle series arrives.
-  const [candleWidth, setCandleWidth] = useState(DEFAULT_CANDLE_W);
+  const [candleWidth, setCandleWidth] = useState(8);
   const [startIdx, setStartIdx] = useState(0);
 
-  // Price-axis state ---------------------------------------------------
-  // `pricePadMult` scales the up/down padding around the [hi, lo] range,
-  // i.e. y-axis "looseness". 0.05 ~= breathing room, 1.0 ~= 100% padding
-  // (more vertical space → candles look smaller).
-  const [pricePadMult, setPricePadMult] = useState(0.05);
+  // Refs mirror state for use inside event listeners attached to window —
+  // those closures would otherwise capture stale state.
+  const candleWidthRef = useRef(candleWidth);
+  const startIdxRef = useRef(startIdx);
+  useEffect(() => {
+    candleWidthRef.current = candleWidth;
+  }, [candleWidth]);
+  useEffect(() => {
+    startIdxRef.current = startIdx;
+  }, [startIdx]);
 
-  // Auto-fit on new data: pick candleWidth so all bars fill the plot.
+  // Auto-fit on new data.
   useEffect(() => {
     const plotW = Math.max(0, width - PAD_L - PAD_R);
     if (candles.length === 0 || plotW <= 0) return;
     const fit = plotW / candles.length;
     setCandleWidth(Math.max(MIN_CANDLE_W, Math.min(MAX_CANDLE_W, fit)));
     setStartIdx(0);
-    setPricePadMult(0.05);
   }, [candles, width]);
-
-  // Drag + hover -------------------------------------------------------
-  const dragRef = useRef<DragState | null>(null);
-  const [hoverGlobalIdx, setHoverGlobalIdx] = useState<number | null>(null);
-  const [hoverPos, setHoverPos] = useState<{ x: number; y: number } | null>(
-    null,
-  );
-  const [deepHover, setDeepHover] = useState(false);
-  const hoverTimerRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    setDeepHover(false);
-    if (hoverTimerRef.current !== null) {
-      window.clearTimeout(hoverTimerRef.current);
-      hoverTimerRef.current = null;
-    }
-    if (hoverGlobalIdx === null) return;
-    hoverTimerRef.current = window.setTimeout(() => {
-      setDeepHover(true);
-    }, HOVER_DELAY_MS);
-    return () => {
-      if (hoverTimerRef.current !== null) {
-        window.clearTimeout(hoverTimerRef.current);
-      }
-    };
-  }, [hoverGlobalIdx]);
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -185,10 +162,9 @@ export function CandleChart({
   );
   const clampedStart = Math.max(
     0,
-    Math.min(candles.length - visibleCount, startIdx),
+    Math.min(Math.max(0, candles.length - visibleCount), startIdx),
   );
-  const endIdx = clampedStart + visibleCount;
-  const visible = candles.slice(clampedStart, endIdx);
+  const visible = candles.slice(clampedStart, clampedStart + visibleCount);
 
   const layout = useMemo(() => {
     if (visible.length === 0) return null;
@@ -209,17 +185,15 @@ export function CandleChart({
       }
     }
     const rng = hi - lo;
-    const pricePad = rng * pricePadMult;
+    const pricePad = rng * 0.05;
     const yMax = hi + pricePad;
     const yMin = lo - pricePad;
     const ySpan = yMax - yMin;
-
     const xOf = (i: number) => PAD_L + candleWidth * (i + 0.5);
     const yOf = (price: number) =>
       PAD_T + ((yMax - price) / ySpan) * plotH;
-
     return { bodyW, yMax, yMin, ySpan, xOf, yOf };
-  }, [visible, candleWidth, pricePadMult, plotH]);
+  }, [visible, candleWidth, plotH]);
 
   const spansMultipleDays = useMemo(() => {
     if (visible.length < 2) return false;
@@ -229,6 +203,176 @@ export function CandleChart({
       .slice(0, 10);
     return first !== last;
   }, [visible]);
+
+  // Hover state --------------------------------------------------------
+  const [hoverGlobalIdx, setHoverGlobalIdx] = useState<number | null>(null);
+  const [hoverPos, setHoverPos] = useState<{ x: number; y: number } | null>(
+    null,
+  );
+  const [deepHover, setDeepHover] = useState(false);
+  const hoverTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    setDeepHover(false);
+    if (hoverTimerRef.current !== null) {
+      window.clearTimeout(hoverTimerRef.current);
+      hoverTimerRef.current = null;
+    }
+    if (hoverGlobalIdx === null) return;
+    hoverTimerRef.current = window.setTimeout(
+      () => setDeepHover(true),
+      HOVER_DELAY_MS,
+    );
+    return () => {
+      if (hoverTimerRef.current !== null) {
+        window.clearTimeout(hoverTimerRef.current);
+      }
+    };
+  }, [hoverGlobalIdx]);
+
+  // Drag handling via window listeners --------------------------------
+  // Attached on mousedown, detached on mouseup. This decouples drag from
+  // the chart's hover area — the cursor can leave the panel entirely and
+  // the drag keeps tracking.
+  const dragRef = useRef<DragState | null>(null);
+  const [dragging, setDragging] = useState(false);
+
+  const applyDrag = useCallback(
+    (e: MouseEvent) => {
+      const ds = dragRef.current;
+      if (!ds) return;
+      const dx = e.clientX - ds.startClientX;
+      const dy = e.clientY - ds.startClientY;
+      if (Math.abs(dx) > 2 || Math.abs(dy) > 2) ds.moved = true;
+
+      // Vertical → zoom (anchor stays put). Drag DOWN → K wider.
+      const newCandleWidth = Math.max(
+        MIN_CANDLE_W,
+        Math.min(
+          MAX_CANDLE_W,
+          ds.startCandleWidth * Math.exp(dy / ZOOM_PIXELS_PER_E),
+        ),
+      );
+
+      // Horizontal → pan, measured in candle slots at the *new* width.
+      const panCandles = -dx / Math.max(MIN_CANDLE_W, newCandleWidth);
+
+      // Compute startIdx so anchorGlobalIdx maps to ds.anchorPlotX.
+      //   anchorVisIdx_after = ds.anchorPlotX / newCandleWidth - 0.5
+      //   startIdx_after = anchorGlobalIdx - anchorVisIdx_after + panCandles
+      const anchorVisIdxAfter = ds.anchorPlotX / newCandleWidth - 0.5;
+      let ns = Math.round(
+        ds.anchorGlobalIdx - anchorVisIdxAfter + panCandles,
+      );
+      // Clamp to valid window.
+      const vc = Math.max(
+        1,
+        Math.min(
+          candles.length,
+          Math.floor(plotW / Math.max(MIN_CANDLE_W, newCandleWidth)),
+        ),
+      );
+      ns = Math.max(0, Math.min(Math.max(0, candles.length - vc), ns));
+
+      setCandleWidth(newCandleWidth);
+      setStartIdx(ns);
+    },
+    [candles.length, plotW],
+  );
+
+  const onWindowMove = useCallback(
+    (e: MouseEvent) => {
+      applyDrag(e);
+    },
+    [applyDrag],
+  );
+
+  const onWindowUp = useCallback(() => {
+    dragRef.current = null;
+    setDragging(false);
+    window.removeEventListener("mousemove", onWindowMove);
+    window.removeEventListener("mouseup", onWindowUp);
+  }, [onWindowMove]);
+
+  function onMouseDown(e: React.MouseEvent<SVGSVGElement>) {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const plotX = x - PAD_L;
+    const visIdx = Math.max(
+      0,
+      Math.min(visible.length - 1, Math.floor(plotX / Math.max(1, candleWidth))),
+    );
+    dragRef.current = {
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      startCandleWidth: candleWidth,
+      anchorGlobalIdx: clampedStart + visIdx,
+      anchorPlotX: plotX,
+      moved: false,
+    };
+    setDragging(true);
+    window.addEventListener("mousemove", onWindowMove);
+    window.addEventListener("mouseup", onWindowUp);
+  }
+
+  function onMouseMove(e: React.MouseEvent<SVGSVGElement>) {
+    if (dragRef.current) return; // window listener owns it
+    const svg = svgRef.current;
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    setHoverPos({ x, y });
+    if (y < PAD_T || y > height - PAD_B || x < PAD_L || x > width - PAD_R) {
+      setHoverGlobalIdx(null);
+      return;
+    }
+    const idx = Math.floor((x - PAD_L) / Math.max(1, candleWidth));
+    if (idx >= 0 && idx < visible.length) {
+      setHoverGlobalIdx(clampedStart + idx);
+    } else {
+      setHoverGlobalIdx(null);
+    }
+  }
+
+  function onMouseLeave() {
+    setHoverGlobalIdx(null);
+    setHoverPos(null);
+  }
+
+  function onWheel(e: React.WheelEvent<SVGSVGElement>) {
+    const dx = e.deltaY + e.deltaX;
+    if (Math.abs(dx) < 1) return;
+    e.preventDefault();
+    const cur = candleWidthRef.current;
+    const candleDelta = Math.round(dx / Math.max(8, cur));
+    if (candleDelta === 0) return;
+    const vc = Math.max(
+      1,
+      Math.min(
+        candles.length,
+        Math.floor(plotW / Math.max(MIN_CANDLE_W, cur)),
+      ),
+    );
+    let ns = startIdxRef.current + candleDelta;
+    ns = Math.max(0, Math.min(Math.max(0, candles.length - vc), ns));
+    setStartIdx(ns);
+  }
+
+  function onDoubleClick() {
+    const fit = plotW / Math.max(1, candles.length);
+    setCandleWidth(Math.max(MIN_CANDLE_W, Math.min(MAX_CANDLE_W, fit)));
+    setStartIdx(0);
+  }
+
+  useEffect(() => {
+    return () => {
+      window.removeEventListener("mousemove", onWindowMove);
+      window.removeEventListener("mouseup", onWindowUp);
+    };
+  }, [onWindowMove, onWindowUp]);
 
   if (!layout || visible.length === 0) {
     return (
@@ -245,154 +389,22 @@ export function CandleChart({
   const { yMax, yMin, xOf, yOf, bodyW } = layout;
   const mid = (yMax + yMin) / 2;
 
-  // Geometry helpers ---------------------------------------------------
-  function clientPos(e: React.MouseEvent<SVGSVGElement>) {
-    const rect = e.currentTarget.getBoundingClientRect();
-    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
-  }
-  function inTimeAxis(y: number) {
-    return y >= height - PAD_B;
-  }
-  function inPriceAxis(x: number) {
-    return x >= width - PAD_R;
-  }
-  function clientToVisibleIdx(x: number): number {
-    const idx = Math.floor((x - PAD_L) / candleWidth);
-    return Math.max(0, Math.min(visible.length - 1, idx));
-  }
-
-  // Event handlers -----------------------------------------------------
-  function onMouseDown(e: React.MouseEvent<SVGSVGElement>) {
-    const { x, y } = clientPos(e);
-    const kind: DragKind = inTimeAxis(y)
-      ? "time-zoom"
-      : inPriceAxis(x)
-        ? "price-zoom"
-        : "pan";
-    dragRef.current = {
-      kind,
-      startX: e.clientX,
-      startY: e.clientY,
-      startCandleWidth: candleWidth,
-      startStartIdx: clampedStart,
-      startPricePadMult: pricePadMult,
-      moved: false,
-    };
-  }
-
-  function onMouseMove(e: React.MouseEvent<SVGSVGElement>) {
-    const ds = dragRef.current;
-    const { x, y } = clientPos(e);
-    setHoverPos({ x, y });
-
-    if (ds) {
-      if (
-        Math.abs(e.clientX - ds.startX) > 2 ||
-        Math.abs(e.clientY - ds.startY) > 2
-      ) {
-        ds.moved = true;
-      }
-      if (ds.kind === "pan") {
-        const dx = e.clientX - ds.startX;
-        const candleDelta = -Math.round(dx / Math.max(MIN_CANDLE_W, candleWidth));
-        let ns = ds.startStartIdx + candleDelta;
-        ns = Math.max(0, Math.min(candles.length - visibleCount, ns));
-        setStartIdx(ns);
-      } else if (ds.kind === "time-zoom") {
-        // Drag down (positive dy) → candles wider (zoom in time).
-        const dy = e.clientY - ds.startY;
-        const factor = Math.exp(dy / 120); // smooth exponential feel
-        const next = Math.max(
-          MIN_CANDLE_W,
-          Math.min(MAX_CANDLE_W, ds.startCandleWidth * factor),
-        );
-        setCandleWidth(next);
-      } else if (ds.kind === "price-zoom") {
-        // Drag down → more padding → candles look smaller (zoom out vert).
-        const dy = e.clientY - ds.startY;
-        const factor = Math.exp(dy / 140);
-        const next = Math.max(
-          MIN_PRICE_PAD,
-          Math.min(MAX_PRICE_PAD, ds.startPricePadMult * factor),
-        );
-        setPricePadMult(next);
-      }
-      setHoverGlobalIdx(null);
-      return;
-    }
-
-    if (inTimeAxis(y) || inPriceAxis(x)) {
-      setHoverGlobalIdx(null);
-    } else {
-      const vIdx = clientToVisibleIdx(x);
-      setHoverGlobalIdx(clampedStart + vIdx);
-    }
-  }
-
-  function onMouseUp() {
-    dragRef.current = null;
-  }
-  function onMouseLeave() {
-    dragRef.current = null;
-    setHoverGlobalIdx(null);
-    setHoverPos(null);
-  }
-
-  function onWheel(e: React.WheelEvent<SVGSVGElement>) {
-    // Wheel = horizontal pan (matches TradingView's default vertical-wheel
-    // behaviour). Shift+wheel and trackpad horizontal swipe also routed here.
-    const dx = e.deltaY + e.deltaX;
-    const candleDelta = Math.round(dx / Math.max(8, candleWidth));
-    if (candleDelta === 0) return;
-    e.preventDefault();
-    let ns = clampedStart + candleDelta;
-    ns = Math.max(0, Math.min(candles.length - visibleCount, ns));
-    setStartIdx(ns);
-  }
-
-  function onDoubleClick(e: React.MouseEvent<SVGSVGElement>) {
-    const { x, y } = clientPos(e);
-    if (inTimeAxis(y)) {
-      // Reset time axis only — fit all bars horizontally.
-      const fit = plotW / Math.max(1, candles.length);
-      setCandleWidth(Math.max(MIN_CANDLE_W, Math.min(MAX_CANDLE_W, fit)));
-      setStartIdx(0);
-    } else if (inPriceAxis(x)) {
-      setPricePadMult(0.05);
-    } else {
-      // Reset both
-      const fit = plotW / Math.max(1, candles.length);
-      setCandleWidth(Math.max(MIN_CANDLE_W, Math.min(MAX_CANDLE_W, fit)));
-      setStartIdx(0);
-      setPricePadMult(0.05);
-    }
-  }
-
-  // Hover-derived bits -------------------------------------------------
   const hoverVisibleIdx =
     hoverGlobalIdx !== null ? hoverGlobalIdx - clampedStart : null;
   const hovered =
-    hoverVisibleIdx !== null && hoverVisibleIdx >= 0 && hoverVisibleIdx < visible.length
+    hoverVisibleIdx !== null &&
+    hoverVisibleIdx >= 0 &&
+    hoverVisibleIdx < visible.length
       ? visible[hoverVisibleIdx]
       : null;
-  const hoverX = hovered && hoverVisibleIdx !== null ? xOf(hoverVisibleIdx) : null;
+  const hoverX =
+    hovered && hoverVisibleIdx !== null ? xOf(hoverVisibleIdx) : null;
   const hoverY = hovered && hoverX !== null ? yOf(hovered.c) : null;
 
   const last = visible[visible.length - 1];
   const lastUp = last.c >= last.o;
   const accent = lastUp ? UP_COLOR : DOWN_COLOR;
   const tickIdxs = pickTickIndices(visible.length, 5);
-
-  // Cursor hint --------------------------------------------------------
-  let cursor = "crosshair";
-  if (dragRef.current) {
-    cursor =
-      dragRef.current.kind === "pan"
-        ? "grabbing"
-        : dragRef.current.kind === "time-zoom"
-          ? "ew-resize"
-          : "ns-resize";
-  }
 
   return (
     <div
@@ -404,26 +416,22 @@ export function CandleChart({
       }}
     >
       <svg
+        ref={svgRef}
         width={width}
         height={height}
         viewBox={`0 0 ${width} ${height}`}
-        onMouseMove={onMouseMove}
         onMouseDown={onMouseDown}
-        onMouseUp={onMouseUp}
+        onMouseMove={onMouseMove}
         onMouseLeave={onMouseLeave}
         onWheel={onWheel}
         onDoubleClick={onDoubleClick}
         style={{
-          cursor,
+          cursor: dragging ? "grabbing" : "crosshair",
           display: "block",
           touchAction: "none",
           userSelect: "none",
         }}
       >
-        {/* Axis drag-zone hover affordances — invisible but capture pointer */}
-        {/* (drawn first so candles paint over them where they overlap) */}
-
-        {/* Horizontal grid */}
         {[yMax, mid, yMin].map((p, i) => (
           <line
             key={`g-${i}`}
@@ -436,8 +444,6 @@ export function CandleChart({
             strokeDasharray={i === 1 ? "2 4" : undefined}
           />
         ))}
-
-        {/* Right-side price labels */}
         {[yMax, mid, yMin].map((p, i) => (
           <text
             key={`pl-${i}`}
@@ -452,7 +458,6 @@ export function CandleChart({
           </text>
         ))}
 
-        {/* Candles */}
         {visible.map((c, i) => {
           const up = c.c >= c.o;
           const color = up ? UP_COLOR : DOWN_COLOR;
@@ -487,7 +492,6 @@ export function CandleChart({
           );
         })}
 
-        {/* Bottom time labels */}
         {tickIdxs.map((idx, i) => {
           const c = visible[idx];
           if (!c) return null;
@@ -511,8 +515,7 @@ export function CandleChart({
           );
         })}
 
-        {/* Hover crosshair */}
-        {hovered && hoverX !== null && hoverY !== null ? (
+        {hovered && hoverX !== null && hoverY !== null && !dragging ? (
           <g pointerEvents="none">
             <line
               x1={hoverX}
@@ -546,8 +549,7 @@ export function CandleChart({
         ) : null}
       </svg>
 
-      {/* OHLC strip — always shown on hover, top-left of chart */}
-      {hovered ? (
+      {hovered && !dragging ? (
         <div
           style={{
             position: "absolute",
@@ -587,9 +589,7 @@ export function CandleChart({
         </div>
       ) : null}
 
-      {/* Deep hover pill — appears after 2s of resting on the same candle,
-          right next to the cursor. Bigger, time-only, clear callout. */}
-      {hovered && deepHover && hoverPos ? (
+      {hovered && deepHover && hoverPos && !dragging ? (
         <motion.div
           initial={{ opacity: 0, y: -4, scale: 0.96 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -615,7 +615,6 @@ export function CandleChart({
         </motion.div>
       ) : null}
 
-      {/* Hint — fades on first drag interaction would be nice, kept static */}
       <div
         style={{
           position: "absolute",
@@ -629,7 +628,7 @@ export function CandleChart({
           pointerEvents: "none",
         }}
       >
-        DRAG · AXIS↕ · 2×CLICK
+        DRAG: ←→ PAN · ↑↓ ZOOM · 2×CLICK RESET
       </div>
     </div>
   );
