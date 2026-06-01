@@ -200,7 +200,11 @@ export function Overview() {
             if total height exceeds viewport. Reading is naturally sized;
             TODO's height is mirrored from Reading via JS measurement so
             the two bottoms always align. */}
-        <div className="flex flex-col gap-10 pt-0">
+        {/* gap-10 → gap-3 pulls the Reading / TODO row up so it sits
+            closer to the US30 panel's bottom edge per Yen's spec.
+            Inner slab still has its own py-16 for the gradient fade
+            top/bottom. */}
+        <div className="flex flex-col gap-3 pt-0">
           {/* Upper row: chart at max-content, market fills the rest */}
           <div className="grid grid-cols-1 lg:grid-cols-[max-content_1fr] gap-x-10 items-stretch flex-shrink-0">
             <motion.div
