@@ -35,14 +35,14 @@ const PAD_R = 56;
 const PAD_T = 8;
 const PAD_B = 22;
 
-// Up = soft mint green. Down = soft amethyst violet. Hue gap ~140° on the
-// wheel — max separation that still fits the dark-warm Yen Hub palette.
-// Deliberately no red: violet carries no "loss" baggage and sits visually
-// far from both the green and the warm-cream brand accent.
+// Up = soft mint green; down = mustard amber. The classic finance-terminal
+// non-red palette (think Bloomberg green/amber). Both colors sit clearly
+// against near-black, and the green-vs-mustard hue gap reads as
+// "vegetation vs sand" — unmistakable up/down without any "loss" baggage.
 const UP_COLOR = "rgba(120,220,160,0.95)";
 const UP_FILL = "rgba(120,220,160,0.75)";
-const DOWN_COLOR = "rgba(180,130,235,0.95)";
-const DOWN_FILL = "rgba(180,130,235,0.75)";
+const DOWN_COLOR = "rgba(210,180,90,0.95)";
+const DOWN_FILL = "rgba(210,180,90,0.75)";
 const GRID = "rgba(255,255,255,0.05)";
 const AXIS_FG = "rgba(180,180,180,0.55)";
 

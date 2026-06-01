@@ -85,12 +85,12 @@ export function MarketMonitor() {
   }, [tf]);
 
   const isUp = (quote?.change ?? 0) >= 0;
-  // Up = soft mint green; down = soft amethyst violet. ~140° hue gap so
-  // green/down are unmistakably distinct. Matches the CandleChart palette.
+  // Up = soft mint green; down = mustard amber. Classic Bloomberg-style
+  // green/amber pair, no red baggage. Matches the CandleChart palette.
   const accent = isUp
     ? "rgba(120,220,160,0.95)"
-    : "rgba(180,130,235,0.95)";
-  const accentDim = isUp ? "rgba(120,220,160,0.18)" : "rgba(180,130,235,0.18)";
+    : "rgba(210,180,90,0.95)";
+  const accentDim = isUp ? "rgba(120,220,160,0.18)" : "rgba(210,180,90,0.18)";
 
   return (
     <section
