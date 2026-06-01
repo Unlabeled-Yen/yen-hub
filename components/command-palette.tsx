@@ -26,6 +26,7 @@ import { DefaultChatTransport, type UIMessage } from "ai";
 import { motion } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { IntentCard } from "@/components/agent/intent-card";
+import { sidecarHeaders } from "@/lib/security/sidecar-token";
 import {
   createConversation,
   deriveTitle,
@@ -76,7 +77,13 @@ export function CommandPalette() {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const { messages, sendMessage, status, stop, setMessages } = useChat({
-    transport: new DefaultChatTransport({ api: "/api/chat" }),
+    transport: new DefaultChatTransport({
+      api: "/api/chat",
+      // Stamp the per-startup sidecar token on every /api/chat fetch so
+      // middleware.ts lets it through. Function form so we don't block
+      // first render on the Tauri invoke round-trip.
+      headers: async () => await sidecarHeaders(),
+    }),
   });
 
   // Hydrate conversation on first open
@@ -187,13 +194,16 @@ export function CommandPalette() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [open]);
 
-  // Focus + caret-to-end when the palette opens
+  // Focus + caret-to-end when the palette opens. preventScroll stops
+  // the browser from scrolling an ancestor scroll container to bring
+  // the freshly-focused textarea into view — without this, summoning
+  // the palette while the page is scrolled would yank it back to top.
   useEffect(() => {
     if (!open) return;
     requestAnimationFrame(() => {
       const ta = inputRef.current;
       if (!ta) return;
-      ta.focus();
+      ta.focus({ preventScroll: true });
       const len = ta.value.length;
       ta.setSelectionRange(len, len);
     });
@@ -290,10 +300,10 @@ export function CommandPalette() {
         transition: `background ${FADE_MS}ms ease-out, backdrop-filter ${FADE_MS}ms ease-out, -webkit-backdrop-filter ${FADE_MS}ms ease-out`,
       }}
     >
-      {/* Noise texture overlay — gives the blurred backdrop a subtle
-          film-grain so the surface feels like glass, not a flat tint.
-          SVG turbulence is pixel-density independent; mix-blend-mode
-          overlay keeps it from washing out the underlying colours. */}
+      {/* Noise texture overlay — film-grain on the blurred backdrop so
+          the surface reads as glass not flat tint. mix-blend-mode dropped
+          (it was washing out on the dark backdrop); white noise applied
+          straight at low opacity gives a clear grain. */}
       <svg
         aria-hidden
         style={{
@@ -302,8 +312,7 @@ export function CommandPalette() {
           width: "100%",
           height: "100%",
           pointerEvents: "none",
-          opacity: leaving ? 0 : 0.085,
-          mixBlendMode: "overlay",
+          opacity: leaving ? 0 : 0.18,
           transition: `opacity ${FADE_MS}ms ease-out`,
         }}
         preserveAspectRatio="none"
@@ -312,13 +321,18 @@ export function CommandPalette() {
           <filter id="palette-noise">
             <feTurbulence
               type="fractalNoise"
-              baseFrequency="0.9"
-              numOctaves="2"
+              baseFrequency="0.85"
+              numOctaves="3"
               seed="3"
               stitchTiles="stitch"
             />
+            {/* RGB → white, alpha = original luminance × 0.85.
+                That gives high-contrast monochrome grain. */}
             <feColorMatrix
-              values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.6 0"
+              values="0 0 0 0 1
+                      0 0 0 0 1
+                      0 0 0 0 1
+                      0 0 0 0.85 0"
             />
           </filter>
         </defs>
@@ -374,54 +388,64 @@ export function CommandPalette() {
         {/* Messages — always rendered. Container height animates between
             full (expanded) and ~24px (collapsed peek). Older turns fade
             out during collapse so only the last line reads as "peek". */}
-        {messages.length > 0 && (
-          <motion.div
-            ref={scrollRef}
-            className="pointer-events-auto mb-6"
-            initial={false}
-            animate={{
-              // Three states:
-              //   collapsed (idle) → 36px peek
-              //   userExpanded   → 60vh full
-              //   default        → 96px (~3 lines of conversation text;
-              //                    grows naturally with content up to cap)
-              maxHeight: collapsed
-                ? 36
-                : userExpanded
-                  ? "60vh"
-                  : 96,
-            }}
-            transition={{ duration: collapsed || userExpanded ? 2.5 : 0.45, ease: [0.22, 1, 0.36, 1] }}
-            style={{
-              overflowY: collapsed ? "hidden" : "auto",
-              overflowX: "hidden",
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className={collapsed ? "space-y-0" : "space-y-6"}>
-              {messages.map((m, i) => {
-                const isLast = i === messages.length - 1;
-                return (
-                  <motion.div
-                    key={m.id}
-                    animate={{
-                      opacity: collapsed && !isLast ? 0 : 1,
-                    }}
-                    transition={{ duration: 0.35, ease: "easeOut" }}
-                  >
-                    <Turn role={m.role} parts={m.parts} clamped={collapsed} />
-                  </motion.div>
-                );
-              })}
-              {isThinking && messages[messages.length - 1]?.role === "user" && !collapsed && (
-                <div className="text-[10px] font-mono tracking-[0.32em] text-[var(--fg-2)] uppercase flex items-center gap-2">
-                  <span className="inline-block h-1 w-1 rounded-full bg-[var(--fg-2)] hairline-pulse" />
-                  thinking
-                </div>
-              )}
-            </div>
-          </motion.div>
-        )}
+        {messages.length > 0 && (() => {
+          // Cap by TURN COUNT, not pixel height — the box grows naturally
+          // with content up to N turns regardless of how many lines each
+          // turn occupies. collapsed peek shows just the most recent turn.
+          const visibleTurns = collapsed
+            ? 1
+            : userExpanded
+              ? 10
+              : 3;
+          const visible = messages.slice(-visibleTurns);
+          return (
+            <motion.div
+              ref={scrollRef}
+              className="pointer-events-auto mb-6 hub-scrollbar"
+              initial={false}
+              // Soft height ceiling only as a safety net for extreme
+              // edge cases (10 huge turns at once). 80vh ≈ never hit
+              // under realistic conversation pacing.
+              animate={{
+                maxHeight: collapsed ? 36 : userExpanded ? "70vh" : "40vh",
+              }}
+              transition={{
+                duration: collapsed || userExpanded ? 1.2 : 0.45,
+                ease: [0.22, 1, 0.36, 1],
+              }}
+              style={{
+                overflowY: collapsed ? "hidden" : "auto",
+                overflowX: "hidden",
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className={collapsed ? "space-y-0" : "space-y-6"}>
+                {visible.map((m, i) => {
+                  const isLast = i === visible.length - 1;
+                  return (
+                    <motion.div
+                      key={m.id}
+                      animate={{
+                        opacity: collapsed && !isLast ? 0 : 1,
+                      }}
+                      transition={{ duration: 0.35, ease: "easeOut" }}
+                    >
+                      <Turn role={m.role} parts={m.parts} clamped={collapsed} />
+                    </motion.div>
+                  );
+                })}
+                {isThinking &&
+                  visible[visible.length - 1]?.role === "user" &&
+                  !collapsed && (
+                    <div className="text-[10px] font-mono tracking-[0.32em] text-[var(--fg-2)] uppercase flex items-center gap-2">
+                      <span className="inline-block h-1 w-1 rounded-full bg-[var(--fg-2)] hairline-pulse" />
+                      thinking
+                    </div>
+                  )}
+              </div>
+            </motion.div>
+          );
+        })()}
 
         {/* The command line — subtle bar so it's discoverable but not heavy */}
         <div
