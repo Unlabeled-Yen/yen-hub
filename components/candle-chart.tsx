@@ -35,10 +35,13 @@ const PAD_R = 56;
 const PAD_T = 8;
 const PAD_B = 22;
 
-const UP_COLOR = "rgba(255,184,120,0.95)";
-const UP_FILL = "rgba(255,184,120,0.75)";
-const DOWN_COLOR = "rgba(255,95,85,0.95)";
-const DOWN_FILL = "rgba(255,95,85,0.75)";
+// Up = soft green (the one Yen liked earlier in the project).
+// Down = cool blue, intentionally NOT red — pairs warm/cold against the
+// rest of the Yen Hub palette without screaming "loss".
+const UP_COLOR = "rgba(120,220,160,0.95)";
+const UP_FILL = "rgba(120,220,160,0.75)";
+const DOWN_COLOR = "rgba(120,180,230,0.95)";
+const DOWN_FILL = "rgba(120,180,230,0.75)";
 const GRID = "rgba(255,255,255,0.05)";
 const AXIS_FG = "rgba(180,180,180,0.55)";
 

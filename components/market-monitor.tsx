@@ -85,9 +85,12 @@ export function MarketMonitor() {
   }, [tf]);
 
   const isUp = (quote?.change ?? 0) >= 0;
+  // Up = soft green (Yen liked it earlier); down = cool blue (deliberately
+  // not red). Matches the CandleChart palette.
   const accent = isUp
-    ? "rgba(255, 184, 120, 0.95)" // warm cream — matches the rest of the Yen Hub up-vibe
-    : "rgba(255, 95, 85, 0.95)"; // deep red
+    ? "rgba(120,220,160,0.95)"
+    : "rgba(120,180,230,0.95)";
+  const accentDim = isUp ? "rgba(120,220,160,0.18)" : "rgba(120,180,230,0.18)";
 
   return (
     <section
@@ -109,9 +112,8 @@ export function MarketMonitor() {
         style={{
           minHeight: 360,
           borderRadius: 6,
-          border: `1px solid ${isUp ? "rgba(255,184,120,0.18)" : "rgba(255,95,85,0.18)"}`,
-          background:
-            "linear-gradient(180deg, rgba(255,184,120,0.04) 0%, rgba(255,184,120,0) 100%)",
+          border: `1px solid ${accentDim}`,
+          background: `linear-gradient(180deg, ${accent.replace("0.95", "0.04")} 0%, transparent 100%)`,
           padding: "20px 22px",
           gap: 12,
         }}
