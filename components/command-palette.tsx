@@ -23,7 +23,7 @@
 
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, type UIMessage } from "ai";
-import { motion } from "motion/react";
+import { motion, useMotionValue } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { IntentCard } from "@/components/agent/intent-card";
 import { sidecarHeaders } from "@/lib/security/sidecar-token";
@@ -72,6 +72,26 @@ export function CommandPalette() {
   // next summon starts compact.
   useEffect(() => {
     if (!open) setUserExpanded(false);
+  }, [open]);
+
+  // Wheel-tracking offset. Mouse wheel up/down inside the palette area
+  // translates the whole assembly vertically, so the chat "follows" the
+  // gesture. motion.drag also writes to this motionValue, so drag + wheel
+  // compose naturally.
+  const wheelY = useMotionValue(0);
+  useEffect(() => {
+    if (!open) wheelY.set(0);
+  }, [open, wheelY]);
+
+  // While palette is open, prevent the page behind from scrolling — the
+  // wheel gesture should drive the chat, not the hub overview underneath.
+  useEffect(() => {
+    if (!open) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prevOverflow;
+    };
   }, [open]);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -268,6 +288,16 @@ export function CommandPalette() {
     setTimeout(() => setHolding(false), 50);
   };
 
+  // Backdrop wheel → translate the assembly. Bounded to a reasonable
+  // range so the user can't fling it off-screen. Bump resets the idle
+  // collapse timer.
+  function onPaletteWheel(e: React.WheelEvent<HTMLDivElement>) {
+    const next = wheelY.get() + e.deltaY * 0.6;
+    const clamped = Math.max(-300, Math.min(300, next));
+    wheelY.set(clamped);
+    bump();
+  }
+
   return (
     <div
       className="fixed inset-0 z-50"
@@ -277,6 +307,7 @@ export function CommandPalette() {
           setTimeout(() => setOpen(false), FADE_MS);
         }
       }}
+      onWheel={onPaletteWheel}
       style={{
         // Stronger blur + deeper tint than before. When the user
         // pushes the chat to fully-expanded mode the tint bumps up
@@ -364,6 +395,8 @@ export function CommandPalette() {
           // the top and bottom edges always sit inside the viewport.
           maxHeight: "85vh",
           cursor: holding ? "grabbing" : "grab",
+          // Wheel-tracked vertical offset, additive to motion's drag y.
+          y: wheelY,
         }}
         onMouseDown={() => setHolding(true)}
         onMouseUp={() => setHolding(false)}
@@ -434,6 +467,10 @@ export function CommandPalette() {
                 overflowX: "hidden",
               }}
               onClick={(e) => e.stopPropagation()}
+              // Wheel inside the messages container scrolls its own
+              // content; don't let it bubble up to also translate the
+              // whole chat assembly.
+              onWheel={(e) => e.stopPropagation()}
             >
               <div className={collapsed ? "space-y-0" : "space-y-6"}>
                 {visible.map((m, i) => {
