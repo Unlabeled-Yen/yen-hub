@@ -1,14 +1,20 @@
 "use client";
 
 /**
- * TodoList — Page A 右半的待辦事項面板。
+ * TodoList — Page A 右半的代辦面板。標題點擊 = 切換三個視圖：
  *
- * 兩個 tab：
- *   - 種類：按 zone 分組（Yen Hub / AI建造 / 寫作草稿 / 佇列 / …）
- *   - 急迫：按 file mtime 分三級（< 3 天=急、3-14=中、> 14=低）
+ *   1. 首要代辦 (priority)  ← 預設
+ *      使用者親自從「總覽代辦」勾選的子集。**橘紅劃記功能只在此頁可用**：
+ *      點 item → 切換 done strike (overlay 持久化)。
+ *   2. 總覽代辦 (category)
+ *      所有 active (≤ 7 天) 的代辦，按 category 分組顯示。
+ *      點 item → toggle priority (overlay 持久化)；之後該 item 會出現在
+ *      首要代辦頁。
+ *   3. 審查 (review)
+ *      > 7 天的代辦，不會出現在首要與總覽兩頁，只在此頁。
+ *      讀取為主，不接受點擊互動。
  *
- * 點 TODO → SVG 手寫筆跡劃過文字（toggle，再點一次取消）。劃記狀態存到
- * local overlay（done-store），重啟後還在。vault .md 永遠不被動到。
+ * Hover 2 秒功能、深 hover pill 等都保留 (在哪一頁都看得到)。
  */
 
 import { motion, AnimatePresence } from "motion/react";
@@ -24,32 +30,35 @@ type Todo = {
   mtimeMs: number;
 };
 
-type TodosResponse = { items: Todo[]; doneKeys: string[] };
-
-const EASE: [number, number, number, number] = [0.075, 0.82, 0.165, 1];
-
-const ZONE_LABEL: Record<string, string> = {
-  yenhub: "Yen Hub",
-  workshop: "AI 建造",
-  queue: "佇列",
-  drafts: "寫作草稿",
-  writing: "主筆記",
-  septic: "筆記摘錄",
-  library: "圖書館",
-  indexes: "規約 / 索引",
-  derived: "加工筆記",
-  trading: "交易複盤",
-  other: "其他",
+type TodosResponse = {
+  items: Todo[];
+  doneKeys: string[];
+  priorityKeys: string[];
 };
 
-type Tab = "category" | "urgency";
-type Urgency = "high" | "med" | "low";
+const EASE: [number, number, number, number] = [0.075, 0.82, 0.165, 1];
+const OLD_DAYS = 7;
 
-function urgencyOf(mtimeMs: number): Urgency {
-  const days = (Date.now() - mtimeMs) / 86_400_000;
-  if (days < 3) return "high";
-  if (days < 14) return "med";
-  return "low";
+type Tab = "priority" | "category" | "review";
+const TAB_ORDER: Tab[] = ["priority", "category", "review"];
+const TAB_LABEL: Record<Tab, string> = {
+  priority: "首要代辦",
+  category: "總覽代辦",
+  review: "審查",
+};
+const TAB_COLOR: Record<Tab, string> = {
+  priority: "rgba(255,110,70,1)", // warm red — high attention
+  category: "var(--fg-1)",
+  review: "rgba(160,180,210,0.92)", // cool blue-gray — calm "look at this"
+};
+const TAB_SHADOW: Record<Tab, string> = {
+  priority: "0 0 8px rgba(255,110,70,0.55)",
+  category: "none",
+  review: "0 0 8px rgba(160,180,210,0.35)",
+};
+
+function isOld(t: Todo): boolean {
+  return (Date.now() - t.mtimeMs) / 86_400_000 >= OLD_DAYS;
 }
 
 function dayLabel(ms: number): string {
@@ -74,8 +83,6 @@ function todoId(t: Todo): string {
   return `${t.file}:${t.lineNum}:${t.text}`;
 }
 
-// Mirror of lib/vault/done-store.ts → todoKey().
-// Browser-side sha1 needed because we want optimistic isDone before API roundtrip.
 async function sha1Hex(input: string): Promise<string> {
   const buf = new TextEncoder().encode(input);
   const hash = await crypto.subtle.digest("SHA-1", buf);
@@ -93,22 +100,29 @@ function buildStrikePath(rects: LineRect[]): string {
       const x0 = r.x;
       const x1 = r.x + r.width;
       const mid = r.x + r.width / 2;
-      // Q curve gives a slight wobble — hand-drawn feel instead of a CAD line.
       return `M ${x0} ${y} Q ${mid} ${y - 1.6} ${x1} ${y}`;
     })
     .join(" ");
 }
 
+type ClickMode = "strike" | "promote" | "none";
+
 function TodoItem({
   t,
   index,
   isDone,
-  onToggle,
+  isPriority,
+  clickMode,
+  onToggleDone,
+  onTogglePriority,
 }: {
   t: Todo;
   index: number;
   isDone: boolean;
-  onToggle: (t: Todo, next: boolean) => void;
+  isPriority: boolean;
+  clickMode: ClickMode;
+  onToggleDone: (t: Todo, next: boolean) => void;
+  onTogglePriority: (t: Todo, next: boolean) => void;
 }) {
   const [rects, setRects] = useState<LineRect[]>([]);
   const [size, setSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
@@ -131,8 +145,6 @@ function TodoItem({
     setSize({ w: cRect.width, h: cRect.height });
   }
 
-  // Measure once after mount so the strike SVG is ready whether the item
-  // loads already-done or gets clicked later. Re-measure on window resize.
   useEffect(() => {
     measure();
     const ro = new ResizeObserver(() => measure());
@@ -141,15 +153,25 @@ function TodoItem({
   }, []);
 
   function handleClick() {
-    if (busy) return;
+    if (clickMode === "none" || busy) return;
     setBusy(true);
-    onToggle(t, !isDone);
-    // Lockout until the strike anim finishes so rapid double-click doesn't
-    // toggle mid-stroke.
-    window.setTimeout(() => setBusy(false), 600);
+    if (clickMode === "strike") {
+      onToggleDone(t, !isDone);
+    } else if (clickMode === "promote") {
+      onTogglePriority(t, !isPriority);
+    }
+    window.setTimeout(() => setBusy(false), 500);
   }
 
   const strikePath = useMemo(() => buildStrikePath(rects), [rects]);
+
+  // In Priority view, struck items dim text + show pen stroke.
+  // In Overview, priority-marked items get a subtle warm dot indicator.
+  // In Review, no decoration; read-only.
+  const dimText = clickMode === "strike" && isDone;
+  const showStrike = clickMode === "strike" && isDone && rects.length > 0;
+  const showPriorityDot = clickMode === "promote" && isPriority;
+  const clickable = clickMode !== "none";
 
   return (
     <motion.div
@@ -157,62 +179,74 @@ function TodoItem({
       animate={{ opacity: 1, x: 0 }}
       transition={{ duration: 0.45, delay: index * 0.025, ease: EASE }}
       onClick={handleClick}
-      role="button"
-      tabIndex={0}
+      role={clickable ? "button" : undefined}
+      tabIndex={clickable ? 0 : undefined}
       onKeyDown={(e) => {
+        if (!clickable) return;
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           handleClick();
         }
       }}
-      className="font-mono min-w-0 cursor-pointer select-none group"
+      className={`font-mono min-w-0 select-none group ${clickable ? "cursor-pointer" : ""}`}
     >
-      <div className="relative text-[12px] leading-snug break-words">
-        <motion.span
-          ref={textRef}
-          animate={{
-            color: isDone
-              ? "var(--fg-2)"
-              : "var(--fg-0)",
-            opacity: isDone ? 0.55 : 1,
-          }}
-          transition={{ duration: 0.35, ease: EASE }}
-          style={{ display: "inline" }}
-        >
-          {trunc(t.text, 90)}
-        </motion.span>
-        {rects.length > 0 ? (
-          <svg
-            className="absolute inset-0 pointer-events-none"
-            width={size.w}
-            height={size.h}
-            viewBox={`0 0 ${size.w} ${size.h}`}
-            style={{ overflow: "visible" }}
+      <div className="relative text-[12px] leading-snug break-words flex items-start gap-2">
+        {showPriorityDot ? (
+          <span
             aria-hidden
-          >
-            <motion.path
-              d={strikePath}
-              stroke="rgba(255,160,90,0.95)"
-              strokeWidth={1.6}
-              strokeLinecap="round"
-              fill="none"
-              initial={{ pathLength: 0, opacity: 0 }}
-              animate={{
-                pathLength: isDone ? 1 : 0,
-                opacity: isDone ? 1 : 0,
-              }}
-              transition={{
-                pathLength: { duration: 0.55, ease: [0.22, 0.9, 0.36, 1] },
-                opacity: { duration: 0.25, ease: EASE },
-              }}
-              style={{
-                filter: "drop-shadow(0 0 4px rgba(255,160,90,0.45))",
-              }}
-            />
-          </svg>
+            style={{
+              flexShrink: 0,
+              marginTop: 5,
+              width: 5,
+              height: 5,
+              borderRadius: 999,
+              background: "rgba(255,110,70,0.9)",
+              boxShadow: "0 0 5px rgba(255,110,70,0.5)",
+            }}
+          />
         ) : null}
+        <div className="relative min-w-0 flex-1">
+          <motion.span
+            ref={textRef}
+            animate={{
+              color: dimText ? "var(--fg-2)" : "var(--fg-0)",
+              opacity: dimText ? 0.55 : 1,
+            }}
+            transition={{ duration: 0.35, ease: EASE }}
+            style={{ display: "inline" }}
+          >
+            {trunc(t.text, 90)}
+          </motion.span>
+          {showStrike ? (
+            <svg
+              className="absolute inset-0 pointer-events-none"
+              width={size.w}
+              height={size.h}
+              viewBox={`0 0 ${size.w} ${size.h}`}
+              style={{ overflow: "visible" }}
+              aria-hidden
+            >
+              <motion.path
+                d={strikePath}
+                stroke="rgba(255,160,90,0.95)"
+                strokeWidth={1.6}
+                strokeLinecap="round"
+                fill="none"
+                initial={{ pathLength: 0, opacity: 0 }}
+                animate={{ pathLength: 1, opacity: 1 }}
+                transition={{
+                  pathLength: { duration: 0.55, ease: [0.22, 0.9, 0.36, 1] },
+                  opacity: { duration: 0.25, ease: EASE },
+                }}
+                style={{
+                  filter: "drop-shadow(0 0 4px rgba(255,160,90,0.45))",
+                }}
+              />
+            </svg>
+          ) : null}
+        </div>
       </div>
-      <div className="text-[10px] text-[var(--fg-2)] mt-1 flex items-center gap-2 min-w-0">
+      <div className="text-[10px] text-[var(--fg-2)] mt-1 flex items-center gap-2 min-w-0 pl-[1px]">
         <span className="truncate flex-1 min-w-0">{fileName(t.file)}</span>
         <span style={{ opacity: 0.5 }}>·</span>
         <span className="tabular-nums whitespace-nowrap">
@@ -230,15 +264,21 @@ function GroupBlock({
   todos,
   startIndex,
   doneKeys,
-  onToggle,
+  priorityKeys,
+  clickMode,
+  onToggleDone,
+  onTogglePriority,
 }: {
   title: string;
   count: number;
   color: string;
   todos: Todo[];
   startIndex: number;
-  doneKeys: Map<string, string>; // todoId → keyHash
-  onToggle: (t: Todo, next: boolean) => void;
+  doneKeys: Map<string, string>;
+  priorityKeys: Map<string, string>;
+  clickMode: ClickMode;
+  onToggleDone: (t: Todo, next: boolean) => void;
+  onTogglePriority: (t: Todo, next: boolean) => void;
 }) {
   return (
     <div className="space-y-2.5">
@@ -260,7 +300,10 @@ function GroupBlock({
             t={t}
             index={startIndex + i}
             isDone={doneKeys.has(todoId(t))}
-            onToggle={onToggle}
+            isPriority={priorityKeys.has(todoId(t))}
+            clickMode={clickMode}
+            onToggleDone={onToggleDone}
+            onTogglePriority={onTogglePriority}
           />
         ))}
       </div>
@@ -271,9 +314,9 @@ function GroupBlock({
 export function TodoList() {
   const [data, setData] = useState<TodosResponse | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [tab, setTab] = useState<Tab>("category");
-  // todoId → keyHash. Membership = "currently struck through".
+  const [tab, setTab] = useState<Tab>("priority");
   const [doneMap, setDoneMap] = useState<Map<string, string>>(new Map());
+  const [priorityMap, setPriorityMap] = useState<Map<string, string>>(new Map());
 
   useEffect(() => {
     let cancelled = false;
@@ -290,18 +333,22 @@ export function TodoList() {
         if (cancelled) return;
         setData(json);
 
-        // Restore strike state: for each visible item, compute its sha1 and
-        // check membership in doneKeys.
-        const keySet = new Set(json.doneKeys ?? []);
-        const next = new Map<string, string>();
+        const doneSet = new Set(json.doneKeys ?? []);
+        const prioritySet = new Set(json.priorityKeys ?? []);
+        const nextDone = new Map<string, string>();
+        const nextPriority = new Map<string, string>();
         await Promise.all(
           json.items.map(async (t) => {
             const full = await sha1Hex(`${t.file}\n${t.text}`);
             const k = full.slice(0, 16);
-            if (keySet.has(k)) next.set(todoId(t), k);
+            if (doneSet.has(k)) nextDone.set(todoId(t), k);
+            if (prioritySet.has(k)) nextPriority.set(todoId(t), k);
           }),
         );
-        if (!cancelled) setDoneMap(next);
+        if (!cancelled) {
+          setDoneMap(nextDone);
+          setPriorityMap(nextPriority);
+        }
       } catch (e) {
         if (!cancelled) setErr(e instanceof Error ? e.message : String(e));
       }
@@ -311,21 +358,14 @@ export function TodoList() {
     };
   }, []);
 
-  async function onToggle(t: Todo, next: boolean) {
+  async function onToggleDone(t: Todo, next: boolean) {
     const id = todoId(t);
-    // Optimistic: flip local state immediately so the SVG animates.
     setDoneMap((prev) => {
       const m = new Map(prev);
-      if (next) {
-        // Will be filled with the actual key once sha1 resolves (just below),
-        // but for UI purposes any non-empty value triggers the strike.
-        m.set(id, m.get(id) ?? "pending");
-      } else {
-        m.delete(id);
-      }
+      if (next) m.set(id, m.get(id) ?? "pending");
+      else m.delete(id);
       return m;
     });
-
     try {
       await fetch("/api/vault/todos/complete", {
         method: next ? "POST" : "DELETE",
@@ -338,33 +378,64 @@ export function TodoList() {
         }),
       });
     } catch {
-      /* swallow — visual state already updated; next reload will reconcile */
+      /* swallow */
     }
   }
 
-  const grouped = useMemo(() => {
-    if (!data) return null;
-    const items = data.items;
+  async function onTogglePriority(t: Todo, next: boolean) {
+    const id = todoId(t);
+    setPriorityMap((prev) => {
+      const m = new Map(prev);
+      if (next) m.set(id, m.get(id) ?? "pending");
+      else m.delete(id);
+      return m;
+    });
+    try {
+      await fetch("/api/vault/todos/priority", {
+        method: next ? "POST" : "DELETE",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          file: t.file,
+          lineNum: t.lineNum,
+          text: t.text,
+        }),
+      });
+    } catch {
+      /* swallow */
+    }
+  }
 
+  function cycleTab() {
+    const i = TAB_ORDER.indexOf(tab);
+    setTab(TAB_ORDER[(i + 1) % TAB_ORDER.length]);
+  }
+
+  // Pool computation -------------------------------------------------
+  const items = data?.items ?? [];
+  const active = items.filter((t) => !isOld(t));
+  const reviewPool = items.filter((t) => isOld(t));
+  const priorityPool = active.filter((t) => priorityMap.has(todoId(t)));
+
+  // Category grouping for the Overview tab.
+  const categoryGroups = useMemo(() => {
+    if (!data) return null;
     const byCategory = new Map<string, Todo[]>();
-    for (const t of items) {
+    for (const t of active) {
       const arr = byCategory.get(t.category) ?? [];
       arr.push(t);
       byCategory.set(t.category, arr);
     }
-    const categories = Array.from(byCategory.entries())
+    const sorted = Array.from(byCategory.entries())
       .map(([cat, ts]) => ({ category: cat, todos: ts }))
       .sort((a, b) => {
         if (a.category === "AI 待分類") return 1;
         if (b.category === "AI 待分類") return -1;
         return b.todos.length - a.todos.length;
       });
-
-    const byUrgency: Record<Urgency, Todo[]> = { high: [], med: [], low: [] };
-    for (const t of items) byUrgency[urgencyOf(t.mtimeMs)].push(t);
-
-    return { categories, byUrgency };
-  }, [data]);
+    return sorted;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, priorityMap]);
 
   if (err) {
     return (
@@ -373,7 +444,7 @@ export function TodoList() {
       </div>
     );
   }
-  if (!data || !grouped) {
+  if (!data) {
     return (
       <div className="font-mono text-[12px] text-[var(--fg-2)] tracking-[0.30em] uppercase">
         todos · loading
@@ -381,9 +452,16 @@ export function TodoList() {
     );
   }
 
-  const isUrgent = tab === "urgency";
-  const titleText = isUrgent ? "重要" : "待辦事項";
-  const titleColor = isUrgent ? "rgba(255,110,70,1)" : "var(--fg-1)";
+  const titleText = TAB_LABEL[tab];
+  const titleColor = TAB_COLOR[tab];
+  const titleShadow = TAB_SHADOW[tab];
+  let displayCount = 0;
+  if (tab === "priority") displayCount = priorityPool.length;
+  else if (tab === "category") displayCount = active.length;
+  else displayCount = reviewPool.length;
+
+  const clickMode: ClickMode =
+    tab === "priority" ? "strike" : tab === "category" ? "promote" : "none";
 
   return (
     <section
@@ -410,7 +488,7 @@ export function TodoList() {
       <header className="flex items-center justify-between gap-4 font-mono flex-shrink-0 pb-4 mb-1">
         <button
           type="button"
-          onClick={() => setTab(isUrgent ? "category" : "urgency")}
+          onClick={cycleTab}
           className="flex items-baseline gap-3 text-[12px] tracking-[0.30em] uppercase cursor-pointer select-none"
           style={{
             color: titleColor,
@@ -418,13 +496,14 @@ export function TodoList() {
             background: "none",
             border: "none",
             padding: 0,
-            textShadow: isUrgent ? "0 0 8px rgba(255,110,70,0.55)" : "none",
+            textShadow: titleShadow,
             transition: "color 280ms, text-shadow 280ms",
           }}
+          title="點擊切換 首要 → 總覽 → 審查"
         >
           <span>{titleText}</span>
           <span style={{ opacity: 0.4 }}>—</span>
-          <span className="tabular-nums">{data.items.length}</span>
+          <span className="tabular-nums">{displayCount}</span>
         </button>
         <nav className="flex items-center gap-1" />
       </header>
@@ -440,8 +519,8 @@ export function TodoList() {
               transition={{ duration: 0.3, ease: EASE }}
               className="space-y-6 pb-6"
             >
-              {grouped.categories.slice(0, 12).map((g, gi) => {
-                const startIdx = grouped.categories
+              {categoryGroups?.slice(0, 12).map((g, gi) => {
+                const startIdx = (categoryGroups || [])
                   .slice(0, gi)
                   .reduce((acc, x) => acc + Math.min(x.todos.length, 4), 0);
                 const isAiBucket = g.category === "AI 待分類";
@@ -456,31 +535,83 @@ export function TodoList() {
                     todos={g.todos.slice(0, 4)}
                     startIndex={startIdx}
                     doneKeys={doneMap}
-                    onToggle={onToggle}
+                    priorityKeys={priorityMap}
+                    clickMode={clickMode}
+                    onToggleDone={onToggleDone}
+                    onTogglePriority={onTogglePriority}
                   />
                 );
               })}
             </motion.div>
-          ) : (
+          ) : tab === "priority" ? (
             <motion.div
-              key="urgency"
+              key="priority"
               initial={{ opacity: 0, y: 4 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -4 }}
               transition={{ duration: 0.3, ease: EASE }}
               className="space-y-2.5 pb-6"
             >
-              {(["high", "med", "low"] as Urgency[])
-                .flatMap((u) => grouped.byUrgency[u].slice(0, 8))
-                .map((t, i) => (
-                  <TodoItem
-                    key={todoId(t)}
-                    t={t}
-                    index={i}
-                    isDone={doneMap.has(todoId(t))}
-                    onToggle={onToggle}
-                  />
-                ))}
+              {priorityPool.length === 0 ? (
+                <div
+                  className="font-mono text-[11px] text-[var(--fg-2)] leading-relaxed"
+                  style={{ opacity: 0.7 }}
+                >
+                  尚未挑選首要代辦
+                  <br />
+                  <span style={{ opacity: 0.6 }}>
+                    點標題切到「總覽代辦」，選取重要項目即可加入這裡
+                  </span>
+                </div>
+              ) : (
+                priorityPool
+                  .slice(0, 30)
+                  .map((t, i) => (
+                    <TodoItem
+                      key={todoId(t)}
+                      t={t}
+                      index={i}
+                      isDone={doneMap.has(todoId(t))}
+                      isPriority={true}
+                      clickMode={clickMode}
+                      onToggleDone={onToggleDone}
+                      onTogglePriority={onTogglePriority}
+                    />
+                  ))
+              )}
+            </motion.div>
+          ) : (
+            <motion.div
+              key="review"
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -4 }}
+              transition={{ duration: 0.3, ease: EASE }}
+              className="space-y-2.5 pb-6"
+            >
+              {reviewPool.length === 0 ? (
+                <div
+                  className="font-mono text-[11px] text-[var(--fg-2)]"
+                  style={{ opacity: 0.7 }}
+                >
+                  暫無需要審查的代辦 (超過 7 天)
+                </div>
+              ) : (
+                reviewPool
+                  .slice(0, 30)
+                  .map((t, i) => (
+                    <TodoItem
+                      key={todoId(t)}
+                      t={t}
+                      index={i}
+                      isDone={doneMap.has(todoId(t))}
+                      isPriority={priorityMap.has(todoId(t))}
+                      clickMode={clickMode}
+                      onToggleDone={onToggleDone}
+                      onTogglePriority={onTogglePriority}
+                    />
+                  ))
+              )}
             </motion.div>
           )}
         </AnimatePresence>
