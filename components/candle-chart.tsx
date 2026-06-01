@@ -61,13 +61,14 @@ const ATR_H = 42; // pane height in px
 const ATR_GAP = 6; // gap between candle plot and ATR pane
 const ATR_PERIOD = 14;
 
-// Moving averages — three SMAs in graduated green shades, light → dark
-// matching short → long period. The deepest green is the original "up"
-// green from earlier in the project.
+// Moving averages — three SMAs in graduated muted green shades.
+// Tuned down from the earlier vivid pass per Yen's spec: lower
+// brightness, lower saturation, so the lines read as supplementary
+// without competing with the K bars.
 const MA_SERIES: Array<{ period: number; color: string }> = [
-  { period: 5, color: "rgba(210,250,225,0.85)" }, // lightest, near-white green
-  { period: 10, color: "rgba(160,235,190,0.9)" }, // mid
-  { period: 20, color: "rgba(110,210,150,0.95)" }, // darkest — anchor
+  { period: 5, color: "rgba(165,210,180,0.55)" }, // lightest, faded
+  { period: 10, color: "rgba(125,180,150,0.70)" }, // mid muted
+  { period: 20, color: "rgba(85,150,115,0.85)" }, // darkest — anchor
 ];
 
 const INITIAL_DUR = 0.85;
@@ -235,6 +236,10 @@ export function CandleChart({
   const lastSeriesKeyRef = useRef<string | null>(null);
   const [revealActive, setRevealActive] = useState(false);
   const [isInitialReveal, setIsInitialReveal] = useState(true);
+  // penDrawActive controls the left-to-right "ink stroke" animation on
+  // the overlay lines (MA5/10/20, ATR). Only flips true on the very first
+  // login → home reveal; tf swap doesn't trigger it.
+  const [penDrawActive, setPenDrawActive] = useState(false);
   const seriesKey = `${timeframe}-${candles.length}-${candles[0]?.t ?? 0}`;
   useLayoutEffect(() => {
     if (candles.length === 0) return;
@@ -244,6 +249,7 @@ export function CandleChart({
     firstShownRef.current = true;
     setIsInitialReveal(wasInitial);
     setRevealActive(true);
+    if (wasInitial) setPenDrawActive(true);
   }, [seriesKey, candles.length]);
   // End-of-reveal scheduler — a normal effect is fine here, paint timing
   // doesn't matter for switching back to plain divs.
@@ -255,6 +261,17 @@ export function CandleChart({
     const t = window.setTimeout(() => setRevealActive(false), totalMs);
     return () => window.clearTimeout(t);
   }, [revealActive, isInitialReveal, seriesKey]);
+  // Pen-draw ends after the stroke completes — lines stay rendered as
+  // plain paths afterwards (no motion overhead during zoom/pan).
+  const PEN_DRAW_DUR = 1.5; // seconds — faster than the K reveal (~3.5s)
+  useEffect(() => {
+    if (!penDrawActive) return;
+    const t = window.setTimeout(
+      () => setPenDrawActive(false),
+      PEN_DRAW_DUR * 1000 + 80,
+    );
+    return () => window.clearTimeout(t);
+  }, [penDrawActive]);
 
   // Hover -------------------------------------------------------------
   const [hoverGlobalIdx, setHoverGlobalIdx] = useState<number | null>(null);
@@ -743,25 +760,50 @@ export function CandleChart({
           );
         })}
 
-        {/* MA overlays — three SMAs (period 5/10/20) in graduated green
-            shades. Clipped to the candle plot so lines never bleed into
-            the ATR pane or right axis during pan. */}
+        {/* MA overlays — three SMAs (period 5/10/20) in graduated muted
+            green. Clipped to the candle plot so lines never bleed into
+            the ATR pane or right axis during pan.
+            On the first reveal, each line draws left-to-right via a
+            pathLength 0→1 motion ("ink stroke"). After that they render
+            as plain paths so zoom/pan stays cheap. */}
         <g pointerEvents="none" clipPath="url(#candle-plot-clip)">
-          {maPaths.map((d, si) =>
-            d ? (
+          {maPaths.map((d, si) => {
+            if (!d) return null;
+            const stroke = MA_SERIES[si].color;
+            const sw = si === MA_SERIES.length - 1 ? 1.35 : 1.05;
+            if (penDrawActive) {
+              return (
+                <motion.path
+                  key={`ma-${seriesKey}-${MA_SERIES[si].period}`}
+                  d={d}
+                  fill="none"
+                  stroke={stroke}
+                  strokeWidth={sw}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  initial={{ pathLength: 0, opacity: 0 }}
+                  animate={{ pathLength: 1, opacity: 1 }}
+                  transition={{
+                    pathLength: { duration: PEN_DRAW_DUR, ease: "easeOut" },
+                    opacity: { duration: 0.18 },
+                  }}
+                />
+              );
+            }
+            return (
               <path
                 key={`ma-${MA_SERIES[si].period}`}
                 d={d}
                 fill="none"
-                stroke={MA_SERIES[si].color}
-                strokeWidth={si === MA_SERIES.length - 1 ? 1.35 : 1.05}
+                stroke={stroke}
+                strokeWidth={sw}
                 strokeLinecap="round"
                 strokeLinejoin="round"
               />
-            ) : null,
-          )}
+            );
+          })}
           {/* Hover markers on each MA line */}
-          {hoverGlobalIdx !== null && !dragging
+          {hoverGlobalIdx !== null && !dragging && !penDrawActive
             ? hoveredMAs.map((v, si) =>
                 v !== null ? (
                   <circle
@@ -894,15 +936,35 @@ export function CandleChart({
             />
             {/* The ATR line itself — accent-toned to keep the palette
                 coherent with the K bars, but at a softer opacity since
-                ATR is supplementary context. */}
-            <path
-              d={atrPath}
-              fill="none"
-              stroke="rgba(255,170,100,0.85)"
-              strokeWidth={1.1}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
+                ATR is supplementary context. On the first reveal,
+                strokes left → right (pathLength animation), same timing
+                as the MA lines. */}
+            {penDrawActive ? (
+              <motion.path
+                key={`atr-${seriesKey}`}
+                d={atrPath}
+                fill="none"
+                stroke="rgba(255,170,100,0.85)"
+                strokeWidth={1.1}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                initial={{ pathLength: 0, opacity: 0 }}
+                animate={{ pathLength: 1, opacity: 1 }}
+                transition={{
+                  pathLength: { duration: PEN_DRAW_DUR, ease: "easeOut" },
+                  opacity: { duration: 0.18 },
+                }}
+              />
+            ) : (
+              <path
+                d={atrPath}
+                fill="none"
+                stroke="rgba(255,170,100,0.85)"
+                strokeWidth={1.1}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            )}
             {/* Right-axis price labels for the ATR scale */}
             <text
               x={width - PAD_R + 6}

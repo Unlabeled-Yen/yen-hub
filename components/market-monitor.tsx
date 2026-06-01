@@ -103,18 +103,22 @@ export function MarketMonitor() {
         <span style={{ opacity: 0.6 }}>US30 · VIX · 波動率</span>
       </header>
 
+      {/* Panel + vertical tf-tab strip sit side by side. Tabs live
+          OUTSIDE the panel border per spec — visually attached but not
+          inside the card. */}
+      <div className="relative flex-1 flex" style={{ gap: 8, minHeight: 360 }}>
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ duration: 0.6, delay: 0.45, ease: EASE }}
         className="relative flex-1 flex flex-col"
         style={{
-          minHeight: 360,
           borderRadius: 6,
           border: `1px solid ${accentDim}`,
           background: `linear-gradient(180deg, ${accent.replace("0.95", "0.04")} 0%, transparent 100%)`,
           padding: "20px 22px",
           gap: 12,
+          minWidth: 0,
         }}
       >
         {/* Top row: symbol + state + timeframe switcher */}
@@ -187,70 +191,22 @@ export function MarketMonitor() {
           </div>
         </div>
 
-        {/* Chart + vertical timeframe tab strip on the right. The chart
-            takes flex-1 so it absorbs window width; the tab strip is a
-            fixed slim column hosting 15M / 2H / 1D buttons stacked. */}
-        <div className="flex-1 min-h-0 flex" style={{ gap: 8 }}>
-          <div className="min-w-0 flex-1 flex flex-col">
-            {quote && quote.candles.length > 0 ? (
-              <CandleChart
-                candles={quote.candles}
-                timeframe={quote.timeframe}
-                height={200}
-              />
-            ) : (
-              <div
-                className="flex-1 flex items-center justify-center text-[10px] tracking-[0.28em] uppercase"
-                style={{ color: "var(--fg-2)", opacity: 0.55 }}
-              >
-                {err ? `error · ${err}` : "loading"}
-              </div>
-            )}
-          </div>
-          <nav
-            aria-label="timeframe"
-            style={{
-              width: 38,
-              display: "flex",
-              flexDirection: "column",
-              gap: 4,
-              paddingTop: 2,
-              flexShrink: 0,
-            }}
-          >
-            {TIMEFRAMES.map((t) => {
-              const active = t === tf;
-              return (
-                <button
-                  key={t}
-                  type="button"
-                  onClick={() => setTf(t)}
-                  className="font-mono"
-                  style={{
-                    padding: "8px 0",
-                    fontSize: 10,
-                    letterSpacing: "0.16em",
-                    textTransform: "uppercase",
-                    color: active ? "var(--fg-0)" : "var(--fg-2)",
-                    background: active
-                      ? "rgba(255,184,120,0.10)"
-                      : "transparent",
-                    border: "1px solid",
-                    borderColor: active
-                      ? "rgba(255,184,120,0.35)"
-                      : "rgba(255,255,255,0.05)",
-                    borderRadius: 3,
-                    cursor: "pointer",
-                    transition:
-                      "color 200ms, background 200ms, border-color 200ms",
-                  }}
-                  title={t}
-                >
-                  {t.toUpperCase()}
-                </button>
-              );
-            })}
-          </nav>
+        {/* Candle chart — tabs moved outside the panel (see below). */}
+        <div className="flex-1 min-h-0 flex flex-col">
+          {quote && quote.candles.length > 0 ? (
+            <CandleChart
+              candles={quote.candles}
+              timeframe={quote.timeframe}
+              height={200}
+            />
+          ) : (
+            <div
+              className="flex-1 flex items-center justify-center text-[10px] tracking-[0.28em] uppercase"
+              style={{ color: "var(--fg-2)", opacity: 0.55 }}
+            >
+              {err ? `error · ${err}` : "loading"}
+            </div>
+          )}
         </div>
 
         <div
@@ -286,6 +242,54 @@ export function MarketMonitor() {
           </span>
         </div>
       </motion.div>
+      {/* Vertical tf tabs outside the panel. Aligned to chart-area row
+          (top of panel is ~58px of header+price content before the
+          chart starts), so the tab strip starts near the chart's top. */}
+      <nav
+        aria-label="timeframe"
+        style={{
+          width: 38,
+          display: "flex",
+          flexDirection: "column",
+          gap: 4,
+          paddingTop: 84,
+          flexShrink: 0,
+        }}
+      >
+        {TIMEFRAMES.map((t) => {
+          const active = t === tf;
+          return (
+            <button
+              key={t}
+              type="button"
+              onClick={() => setTf(t)}
+              className="font-mono"
+              style={{
+                padding: "9px 0",
+                fontSize: 10,
+                letterSpacing: "0.16em",
+                textTransform: "uppercase",
+                color: active ? "var(--fg-0)" : "var(--fg-2)",
+                background: active
+                  ? "rgba(255,184,120,0.10)"
+                  : "transparent",
+                border: "1px solid",
+                borderColor: active
+                  ? "rgba(255,184,120,0.35)"
+                  : "rgba(255,255,255,0.06)",
+                borderRadius: 3,
+                cursor: "pointer",
+                transition:
+                  "color 200ms, background 200ms, border-color 200ms",
+              }}
+              title={t}
+            >
+              {t.toUpperCase()}
+            </button>
+          );
+        })}
+      </nav>
+      </div>
     </section>
   );
 }
