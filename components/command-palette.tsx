@@ -179,13 +179,13 @@ export function CommandPalette() {
           if (p < 1) rafIds.push(requestAnimationFrame(animate));
         };
         rafIds.push(requestAnimationFrame(animate));
-        // After the slide lands, breathe ONE quick cycle via the
-        // open-breath class (0.7s total).
+        // After the slide lands, breathe ONE cycle via the
+        // open-breath class (1.2s).
         timeouts.push(
           window.setTimeout(() => {
             setOpenPulse(true);
             timeouts.push(
-              window.setTimeout(() => setOpenPulse(false), 700),
+              window.setTimeout(() => setOpenPulse(false), 1200),
             );
           }, DUR),
         );
