@@ -88,20 +88,11 @@ function severityOf(z: ZoneBreakdown): Severity {
 
 /** Solid color used as the "drawing pen" leading edge for each severity. */
 function penColor(sev: Severity): string {
-  switch (sev) {
-    case "severe":
-      return "rgba(255,110,70,1)";
-    case "heavy":
-      return "rgba(255,150,90,1)";
-    case "mild":
-      return "rgba(255,200,140,1)";
-    case "advance":
-      return "rgba(220,235,245,1)";
-    case "review":
-      return "rgba(160,200,255,1)";
-    default:
-      return "transparent";
-  }
+  // White scanning light for every severity (Yen: restore to white).
+  // Bar body still carries the warm/cool severity color; the pen is
+  // just the moving ink tip, kept neutral for visual consistency.
+  if (sev === "absent") return "transparent";
+  return "rgba(255,255,255,1)";
 }
 
 /** Color for the single bar — severity scales red → orange → pale → neutral.
@@ -271,7 +262,7 @@ function ZoneColumn({
                 aria-hidden
                 className="pointer-events-none absolute inset-0"
                 style={{
-                  opacity: 0.55,
+                  opacity: 0.85,
                   mixBlendMode: "overlay",
                   width: "100%",
                   height: "100%",

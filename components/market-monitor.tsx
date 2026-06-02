@@ -158,48 +158,10 @@ export function MarketMonitor() {
           background: `linear-gradient(180deg, ${accent.replace("0.95", "0.04")} 0%, transparent 100%)`,
           padding: "20px 22px",
           gap: 12,
-          // Stacking context so the paper texture SVG below (z:-1) is
-          // confined here and renders between the panel's background
-          // gradient and its content children.
-          isolation: "isolate",
         }}
       >
-        {/* Paper-fiber texture for the panel background. Sits at
-            z:-1 INSIDE the isolation context of the parent motion.div
-            so the fiber sits between the panel's gradient background
-            and its content (chart, header, tabs).
-            mix-blend-mode: soft-light → texture is FELT as light/dark
-            modulation across the panel without adding any new hue. */}
-        <svg
-          aria-hidden
-          className="pointer-events-none absolute inset-0"
-          style={{
-            opacity: 0.55,
-            mixBlendMode: "soft-light",
-            borderRadius: 6,
-            zIndex: -1,
-          }}
-          preserveAspectRatio="none"
-        >
-          <defs>
-            <filter id="us30-paper">
-              <feTurbulence
-                type="fractalNoise"
-                baseFrequency="0.7"
-                numOctaves="3"
-                seed="11"
-                stitchTiles="stitch"
-              />
-              <feColorMatrix
-                values="0 0 0 0 1
-                        0 0 0 0 1
-                        0 0 0 0 1
-                        0 0 0 1 0"
-              />
-            </filter>
-          </defs>
-          <rect width="100%" height="100%" filter="url(#us30-paper)" />
-        </svg>
+        {/* Paper-fiber texture removed per Yen — panel returns to the
+            plain gradient + border look. */}
         {/* Top US30/DJIA labels + big price-change row removed per spec.
             The chart already exposes the latest price via the right-axis
             colored ribbon, and the panel's accent border / Market header
