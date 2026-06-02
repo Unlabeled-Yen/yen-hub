@@ -164,17 +164,18 @@ export function MarketMonitor() {
           isolation: "isolate",
         }}
       >
-        {/* Paper-fiber texture overlay — sits BEHIND all panel
-            content (zIndex 0) so the chart / labels paint cleanly on
-            top. Without that z-order it covered the chart with a grey
-            block. Opacity dropped 0.45 → 0.10 and mix-blend-mode
-            removed (the high-freq grain was averaging to flat grey at
-            viewing scale, overwhelming the panel). */}
+        {/* Paper-fiber texture for the panel background. Sits at
+            z:-1 INSIDE the isolation context of the parent motion.div
+            so the fiber sits between the panel's gradient background
+            and its content (chart, header, tabs).
+            mix-blend-mode: soft-light → texture is FELT as light/dark
+            modulation across the panel without adding any new hue. */}
         <svg
           aria-hidden
           className="pointer-events-none absolute inset-0"
           style={{
-            opacity: 0.10,
+            opacity: 0.55,
+            mixBlendMode: "soft-light",
             borderRadius: 6,
             zIndex: -1,
           }}
@@ -184,7 +185,7 @@ export function MarketMonitor() {
             <filter id="us30-paper">
               <feTurbulence
                 type="fractalNoise"
-                baseFrequency="0.45"
+                baseFrequency="0.7"
                 numOctaves="3"
                 seed="11"
                 stitchTiles="stitch"

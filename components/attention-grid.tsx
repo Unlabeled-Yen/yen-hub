@@ -242,7 +242,11 @@ function ZoneColumn({
                 pointerEvents: "none",
               }}
             />
-            {/* Fill — emerges right behind the pen (offset reduced 70%) */}
+            {/* Fill — emerges right behind the pen (offset reduced 70%).
+                Inner SVG draws fine white noise over the bar surface
+                with mix-blend-mode: overlay so the grain modulates the
+                bar color (brightens lighter, darkens darker) without
+                introducing any new hue. */}
             <motion.div
               initial={{ height: "0%" }}
               animate={{ height: barPct }}
@@ -260,8 +264,27 @@ function ZoneColumn({
                 borderRadius: 2,
                 filter: barShadow(sev),
                 willChange: "height",
+                overflow: "hidden",
               }}
-            />
+            >
+              <svg
+                aria-hidden
+                className="pointer-events-none absolute inset-0"
+                style={{
+                  opacity: 0.55,
+                  mixBlendMode: "overlay",
+                  width: "100%",
+                  height: "100%",
+                }}
+                preserveAspectRatio="none"
+              >
+                <rect
+                  width="100%"
+                  height="100%"
+                  filter="url(#bar-grain)"
+                />
+              </svg>
+            </motion.div>
           </>
         ) : null}
       </div>
@@ -427,49 +450,39 @@ export function AttentionGrid({
           used to be. Header text was removed per Yen 2026-06-02 because it
           carried no information the chart didn't already convey. */}
       <DuffyBadge />
-      <div
-        className="relative flex items-end"
-        style={{ gap: COL_GAP, paddingTop: 8 }}
-      >
-        {/* Subtle noise wash BEHIND the columns. z:0 + columns wrapped
-            in z:1 so the noise sits underneath instead of greying out
-            the bars. Opacity dropped from 0.18 → 0.04 because at high
-            baseFrequency the noise averages to flat gray at viewing
-            scale (was reading as a solid gray block before). */}
-        <svg
-          aria-hidden
-          className="pointer-events-none absolute inset-0"
-          style={{ opacity: 0.04, zIndex: 0 }}
-          preserveAspectRatio="none"
-        >
-          <defs>
-            <filter id="attn-grain">
-              <feTurbulence
-                type="fractalNoise"
-                baseFrequency="0.85"
-                numOctaves="2"
-                seed="7"
-                stitchTiles="stitch"
-              />
-              <feColorMatrix
-                values="0 0 0 0 1
-                        0 0 0 0 1
-                        0 0 0 0 1
-                        0 0 0 1 0"
-              />
-            </filter>
-          </defs>
-          <rect width="100%" height="100%" filter="url(#attn-grain)" />
-        </svg>
-        <div
-          className="flex items-end relative"
-          style={{ gap: COL_GAP, zIndex: 1 }}
-        >
-          {plotted.map((z, i) => (
-            <ZoneColumn key={z.zone} z={z} scaleMax={scaleMax} index={i} />
-          ))}
-        </div>
+      <div className="flex items-end" style={{ gap: COL_GAP, paddingTop: 8 }}>
+        {plotted.map((z, i) => (
+          <ZoneColumn key={z.zone} z={z} scaleMax={scaleMax} index={i} />
+        ))}
       </div>
+      {/* Shared SVG filter <defs>. The actual `feTurbulence` filter
+          is referenced from each bar's overlay rect via url(#bar-grain).
+          One <defs> file = one filter compiled once, used by every
+          column — cheaper than embedding the same filter N times. */}
+      <svg
+        aria-hidden
+        width="0"
+        height="0"
+        style={{ position: "absolute" }}
+      >
+        <defs>
+          <filter id="bar-grain">
+            <feTurbulence
+              type="fractalNoise"
+              baseFrequency="0.85"
+              numOctaves="2"
+              seed="7"
+              stitchTiles="stitch"
+            />
+            <feColorMatrix
+              values="0 0 0 0 1
+                      0 0 0 0 1
+                      0 0 0 0 1
+                      0 0 0 1 0"
+            />
+          </filter>
+        </defs>
+      </svg>
     </section>
   );
 }
