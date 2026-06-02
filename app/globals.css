@@ -227,6 +227,11 @@ textarea,
 }
 .thinking-pulse { animation: thinking-pulse 2.4s ease-in-out infinite; }
 
+/* Quick double breath played when the palette first opens. Same
+   keyframes as thinking-pulse but compressed (~0.7s/cycle) and runs
+   exactly 2 iterations then stops. */
+.open-breath { animation: thinking-pulse 0.7s ease-in-out 2; }
+
 /* Subtle inner glow for active accents */
 @keyframes glow-pulse {
   0%, 100% { box-shadow: 0 0 0 0 rgba(0, 229, 180, 0); }

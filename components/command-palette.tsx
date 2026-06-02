@@ -179,13 +179,13 @@ export function CommandPalette() {
           if (p < 1) rafIds.push(requestAnimationFrame(animate));
         };
         rafIds.push(requestAnimationFrame(animate));
-        // After the slide lands, breathe two cycles of the
-        // thinking-pulse (period 2.4s → 4.8s total).
+        // After the slide lands, breathe two QUICK cycles via the
+        // open-breath class (0.7s/cycle × 2 = 1.4s total).
         timeouts.push(
           window.setTimeout(() => {
             setOpenPulse(true);
             timeouts.push(
-              window.setTimeout(() => setOpenPulse(false), 4800),
+              window.setTimeout(() => setOpenPulse(false), 1400),
             );
           }, DUR),
         );
@@ -545,7 +545,11 @@ export function CommandPalette() {
             shadow). Replaces the previous separate hairline below. */}
         <div
           className={`pointer-events-auto flex items-end gap-3 rounded-xl px-4 py-3 ${
-            isThinking || openPulse ? "thinking-pulse" : ""
+            openPulse
+              ? "open-breath"
+              : isThinking
+                ? "thinking-pulse"
+                : ""
           }`}
           style={{
             background: "rgba(255, 255, 255, 0.04)",
