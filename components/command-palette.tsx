@@ -150,50 +150,47 @@ export function CommandPalette() {
     if (open) setLeaving(false);
   }, [open]);
 
-  // On open: start the scroll position a bit ABOVE the latest message,
-  // then ease down to it. After it lands, kick a two-cycle breath on
-  // the command line. Together this reads as "the conversation slid
-  // back into view and settled."
+  // On open: slide from ~120px above the latest message down to it,
+  // AND immediately trigger the 1.2s breath on the command line.
+  // (Previously the breath waited for the slide to land via nested
+  // setTimeout — that race made the first open skip the breath.)
   const [openPulse, setOpenPulse] = useState(false);
   useEffect(() => {
     if (!open) {
       setOpenPulse(false);
       return;
     }
+    // Kick the pulse immediately. React will commit `open-breath` on
+    // the next render, the CSS animation starts, 1.2s later we clear.
+    setOpenPulse(true);
+    const pulseOff = window.setTimeout(() => setOpenPulse(false), 1200);
+
+    // Slide-in: scrollTop starts ~120px above bottom, eases to bottom.
+    // Runs in parallel with the pulse.
     const el = scrollRef.current;
-    if (!el) return;
-    // rAF so layout is settled before measuring.
     const rafIds: number[] = [];
-    const timeouts: number[] = [];
-    rafIds.push(
-      requestAnimationFrame(() => {
-        const target = el.scrollHeight;
-        const start = Math.max(0, target - 120); // 120px above bottom
-        el.scrollTop = start;
-        const t0 = performance.now();
-        const DUR = 700;
-        const animate = (now: number) => {
-          const p = Math.min(1, (now - t0) / DUR);
-          const eased = 1 - Math.pow(1 - p, 3); // easeOutCubic
-          el.scrollTop = start + (target - start) * eased;
-          if (p < 1) rafIds.push(requestAnimationFrame(animate));
-        };
-        rafIds.push(requestAnimationFrame(animate));
-        // After the slide lands, breathe ONE cycle via the
-        // open-breath class (1.2s).
-        timeouts.push(
-          window.setTimeout(() => {
-            setOpenPulse(true);
-            timeouts.push(
-              window.setTimeout(() => setOpenPulse(false), 1200),
-            );
-          }, DUR),
-        );
-      }),
-    );
+    if (el) {
+      rafIds.push(
+        requestAnimationFrame(() => {
+          const target = el.scrollHeight;
+          const start = Math.max(0, target - 120);
+          el.scrollTop = start;
+          const t0 = performance.now();
+          const DUR = 700;
+          const animate = (now: number) => {
+            const p = Math.min(1, (now - t0) / DUR);
+            const eased = 1 - Math.pow(1 - p, 3); // easeOutCubic
+            el.scrollTop = start + (target - start) * eased;
+            if (p < 1) rafIds.push(requestAnimationFrame(animate));
+          };
+          rafIds.push(requestAnimationFrame(animate));
+        }),
+      );
+    }
+
     return () => {
+      window.clearTimeout(pulseOff);
       rafIds.forEach((id) => cancelAnimationFrame(id));
-      timeouts.forEach((id) => window.clearTimeout(id));
     };
   }, [open]);
 
