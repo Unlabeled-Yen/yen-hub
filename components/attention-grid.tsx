@@ -262,7 +262,7 @@ function ZoneColumn({
                 aria-hidden
                 className="pointer-events-none absolute inset-0"
                 style={{
-                  opacity: 0.85,
+                  opacity: 1,
                   mixBlendMode: "overlay",
                   width: "100%",
                   height: "100%",
@@ -468,8 +468,8 @@ export function AttentionGrid({
           <filter id="bar-grain">
             <feTurbulence
               type="fractalNoise"
-              baseFrequency="0.85"
-              numOctaves="2"
+              baseFrequency="0.55"
+              numOctaves="3"
               seed="7"
               stitchTiles="stitch"
             />
@@ -477,7 +477,7 @@ export function AttentionGrid({
               values="0 0 0 0 1
                       0 0 0 0 1
                       0 0 0 0 1
-                      0 0 0 1 0"
+                      0 0 0 1.4 0"
             />
           </filter>
         </defs>
