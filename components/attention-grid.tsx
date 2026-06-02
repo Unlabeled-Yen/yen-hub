@@ -431,27 +431,22 @@ export function AttentionGrid({
         className="relative flex items-end"
         style={{ gap: COL_GAP, paddingTop: 8 }}
       >
-        {plotted.map((z, i) => (
-          <ZoneColumn key={z.zone} z={z} scaleMax={scaleMax} index={i} />
-        ))}
-        {/* Fine-grain noise overlay laid over the column chart area.
-            mix-blend-mode: overlay so the grain interacts with both
-            light columns and dark background. pointer-events: none
-            so hovers still hit the columns. */}
+        {/* Subtle noise wash BEHIND the columns. z:0 + columns wrapped
+            in z:1 so the noise sits underneath instead of greying out
+            the bars. Opacity dropped from 0.18 → 0.04 because at high
+            baseFrequency the noise averages to flat gray at viewing
+            scale (was reading as a solid gray block before). */}
         <svg
           aria-hidden
           className="pointer-events-none absolute inset-0"
-          style={{
-            opacity: 0.18,
-            mixBlendMode: "overlay",
-          }}
+          style={{ opacity: 0.04, zIndex: 0 }}
           preserveAspectRatio="none"
         >
           <defs>
             <filter id="attn-grain">
               <feTurbulence
                 type="fractalNoise"
-                baseFrequency="0.9"
+                baseFrequency="0.85"
                 numOctaves="2"
                 seed="7"
                 stitchTiles="stitch"
@@ -460,12 +455,20 @@ export function AttentionGrid({
                 values="0 0 0 0 1
                         0 0 0 0 1
                         0 0 0 0 1
-                        0 0 0 0.9 0"
+                        0 0 0 1 0"
               />
             </filter>
           </defs>
           <rect width="100%" height="100%" filter="url(#attn-grain)" />
         </svg>
+        <div
+          className="flex items-end relative"
+          style={{ gap: COL_GAP, zIndex: 1 }}
+        >
+          {plotted.map((z, i) => (
+            <ZoneColumn key={z.zone} z={z} scaleMax={scaleMax} index={i} />
+          ))}
+        </div>
       </div>
     </section>
   );

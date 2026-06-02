@@ -152,31 +152,31 @@ export function MarketMonitor() {
         transition={{ duration: 0.6, delay: 0.45, ease: EASE }}
         className="relative flex-1 flex flex-col"
         style={{
-          // Larger US30 panel per spec — extend vertically without
-          // touching the row below (Reading / TODO sit in a separate
-          // grid row with its own gap-10 spacing, so a taller panel
-          // here just pushes its own row's height up).
           minHeight: 520,
           borderRadius: 6,
           border: `1px solid ${accentDim}`,
           background: `linear-gradient(180deg, ${accent.replace("0.95", "0.04")} 0%, transparent 100%)`,
           padding: "20px 22px",
           gap: 12,
+          // Stacking context so the paper texture SVG below (z:-1) is
+          // confined here and renders between the panel's background
+          // gradient and its content children.
+          isolation: "isolate",
         }}
       >
-        {/* Paper-fiber texture overlay — fills the whole panel with a
-            soft fibrous grain similar to Yen's personal site. Uses
-            low-frequency fractalNoise (paper has long fibers, not fine
-            dust) and mix-blend-mode: soft-light so the texture is
-            FELT rather than colored (it doesn't tint the panel,
-            only modulates lightness). */}
+        {/* Paper-fiber texture overlay — sits BEHIND all panel
+            content (zIndex 0) so the chart / labels paint cleanly on
+            top. Without that z-order it covered the chart with a grey
+            block. Opacity dropped 0.45 → 0.10 and mix-blend-mode
+            removed (the high-freq grain was averaging to flat grey at
+            viewing scale, overwhelming the panel). */}
         <svg
           aria-hidden
           className="pointer-events-none absolute inset-0"
           style={{
-            opacity: 0.45,
-            mixBlendMode: "soft-light",
+            opacity: 0.10,
             borderRadius: 6,
+            zIndex: -1,
           }}
           preserveAspectRatio="none"
         >
@@ -184,18 +184,16 @@ export function MarketMonitor() {
             <filter id="us30-paper">
               <feTurbulence
                 type="fractalNoise"
-                baseFrequency="0.55"
+                baseFrequency="0.45"
                 numOctaves="3"
                 seed="11"
                 stitchTiles="stitch"
               />
-              {/* Stretch grain horizontally a touch — paper fibers
-                  are oriented, not isotropic. */}
               <feColorMatrix
                 values="0 0 0 0 1
                         0 0 0 0 1
                         0 0 0 0 1
-                        0 0 0 0.85 0"
+                        0 0 0 1 0"
               />
             </filter>
           </defs>
