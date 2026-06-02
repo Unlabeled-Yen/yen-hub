@@ -27,7 +27,7 @@ import { motion, useMotionValue } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { IntentCard } from "@/components/agent/intent-card";
-import { sidecarHeaders } from "@/lib/security/sidecar-token";
+import { getSidecarToken } from "@/lib/security/sidecar-token";
 import {
   createConversation,
   deriveTitle,
@@ -48,13 +48,11 @@ function isEditableTarget(t: EventTarget | null): boolean {
   return false;
 }
 
-/** No-activity grace before the conversation collapses to a single-line
- *  peek of the latest turn. */
-const COLLAPSE_AFTER_MS = 3000;
-
-/** AFTER reaching the collapsed peek, this long until the palette starts
- *  fading away. Resets whenever activity returns. */
-const CLOSE_AFTER_COLLAPSED_MS = 5000;
+/** Single-stage inactivity timeout before the palette starts fading.
+ *  Per Yen — removed the previous "3s → collapse to peek → 5s → close"
+ *  two-stage flow. Now: stays fully expanded the whole time, just auto-
+ *  dismisses after a longer 1-minute idle. */
+const INACTIVITY_CLOSE_MS = 60_000;
 
 /** Fade-out duration before the palette unmounts. */
 const FADE_MS = 1000;
@@ -63,17 +61,16 @@ export function CommandPalette() {
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState("");
   const [convo, setConvo] = useState<Convo | null>(null);
-  const [collapsed, setCollapsed] = useState(false);
+  // `collapsed` retained as a frozen `false` — the conditional branches
+  // below still reference it. Removing it would touch too many call
+  // sites for a behaviour change this small.
+  const collapsed = false;
   const [leaving, setLeaving] = useState(false);
   const [holding, setHolding] = useState(false);
-  // userExpanded: the user has pressed the expand toggle. Overrides the
-  // default "show last ~3 lines" cap and pushes backdrop opacity up.
-  const [userExpanded, setUserExpanded] = useState(false);
-  // Reset the expand state every time the palette fully closes so the
-  // next summon starts compact.
-  useEffect(() => {
-    if (!open) setUserExpanded(false);
-  }, [open]);
+  // Always expanded per Yen — the toggle button was removed and the
+  // collapse-to-peek stage was deleted. Kept as a const for the
+  // conditional branches below.
+  const userExpanded = true;
 
   // Wheel-tracking offset. Mouse wheel up/down inside the palette area
   // translates the whole assembly vertically, so the chat "follows" the
@@ -97,13 +94,22 @@ export function CommandPalette() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // Token is fetched once on mount and stored in a ref so the transport's
+  // headers function is synchronous (async headers tripped a ByteString
+  // conversion bug in the AI SDK v6 request builder when paired with
+  // certain providers).
+  const tokenRef = useRef<string>("");
+  useEffect(() => {
+    void getSidecarToken().then((t) => {
+      tokenRef.current = t;
+    });
+  }, []);
+
   const { messages, sendMessage, status, stop, setMessages } = useChat({
     transport: new DefaultChatTransport({
       api: "/api/chat",
-      // Stamp the per-startup sidecar token on every /api/chat fetch so
-      // middleware.ts lets it through. Function form so we don't block
-      // first render on the Tauri invoke round-trip.
-      headers: async () => await sidecarHeaders(),
+      headers: (): Record<string, string> =>
+        tokenRef.current ? { "X-Yen-Token": tokenRef.current } : {},
     }),
   });
 
@@ -144,44 +150,16 @@ export function CommandPalette() {
     if (open) setLeaving(false);
   }, [open]);
 
-  // Stage 1 — inactivity collapse. Activity resets the timer.
+  // Single-stage inactivity close (was: 3s collapse → 5s close).
+  // Activity (typing / new messages / mouse hold) resets the timer.
   useEffect(() => {
-    setCollapsed(false);
-    if (!open || messages.length === 0 || holding) return;
-    const t = setTimeout(() => setCollapsed(true), COLLAPSE_AFTER_MS);
-    return () => clearTimeout(t);
-  }, [input, status, messages, open, holding]);
-
-  // Stage 2 — once collapsed, start the close timer. Any returned
-  // activity will flip collapsed back to false (above) and clear this.
-  useEffect(() => {
-    if (!collapsed || !open || leaving || holding) return;
+    if (!open || leaving || holding) return;
     const t = setTimeout(() => {
       setLeaving(true);
       setTimeout(() => setOpen(false), FADE_MS);
-    }, CLOSE_AFTER_COLLAPSED_MS);
+    }, INACTIVITY_CLOSE_MS);
     return () => clearTimeout(t);
-  }, [collapsed, open, leaving, holding]);
-
-  // While the container is collapsing, keep the scroll glued to the bottom
-  // so the most-recent line stays visible as height shrinks. Without this,
-  // overflow clips the LAST message out of view because the scroll stays
-  // pinned to where it was when content was tall.
-  useEffect(() => {
-    if (!collapsed) return;
-    let raf = 0;
-    const tick = () => {
-      const el = scrollRef.current;
-      if (el) el.scrollTop = el.scrollHeight;
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    const stop = setTimeout(() => cancelAnimationFrame(raf), 2800);
-    return () => {
-      cancelAnimationFrame(raf);
-      clearTimeout(stop);
-    };
-  }, [collapsed]);
+  }, [input, status, messages, open, leaving, holding]);
 
   // Global keyboard listener — Space-to-summon (was: any-printable-key).
   // Per spec, only the spacebar opens the palette; other characters
@@ -479,6 +457,7 @@ export function CommandPalette() {
               <div className={collapsed ? "space-y-0" : "space-y-6"}>
                 {visible.map((m, i) => {
                   const isLast = i === visible.length - 1;
+                  const isUser = m.role === "user";
                   return (
                     <motion.div
                       key={m.id}
@@ -486,8 +465,17 @@ export function CommandPalette() {
                         opacity: collapsed && !isLast ? 0 : 1,
                       }}
                       transition={{ duration: 0.35, ease: "easeOut" }}
+                      className={`flex ${
+                        isUser ? "justify-end" : "justify-start"
+                      }`}
                     >
-                      <Turn role={m.role} parts={m.parts} clamped={collapsed} />
+                      <div className={isUser ? "max-w-[78%]" : "w-full"}>
+                        <Turn
+                          role={m.role}
+                          parts={m.parts}
+                          clamped={collapsed}
+                        />
+                      </div>
                     </motion.div>
                   );
                 })}
@@ -526,45 +514,8 @@ export function CommandPalette() {
             rows={1}
             className="flex-1 resize-none bg-transparent text-[16px] leading-relaxed text-[var(--fg-0)] placeholder:text-[var(--fg-3)] focus:outline-none"
           />
-          {/* Expand toggle — only meaningful once there's conversation
-              to look at. Press to fully unroll the message log; press
-              again to return to the compact 3-line view. */}
-          {messages.length > 0 ? (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                bump();
-                setUserExpanded((v) => !v);
-              }}
-              title={userExpanded ? "收回對話" : "展開對話"}
-              aria-label={userExpanded ? "collapse chat" : "expand chat"}
-              style={{
-                marginBottom: 4,
-                width: 24,
-                height: 24,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: 14,
-                color: userExpanded
-                  ? "rgba(255,184,120,0.95)"
-                  : "var(--fg-2)",
-                background: "transparent",
-                border: "1px solid",
-                borderColor: userExpanded
-                  ? "rgba(255,184,120,0.40)"
-                  : "rgba(255,255,255,0.08)",
-                borderRadius: 4,
-                cursor: "pointer",
-                transition:
-                  "color 200ms, background 200ms, border-color 200ms",
-                lineHeight: 1,
-              }}
-            >
-              {userExpanded ? "⌃" : "⌄"}
-            </button>
-          ) : null}
+          {/* Expand toggle removed per Yen — palette is now always
+              fully expanded while open. */}
         </div>
 
         {/* Hairline pulse under the input while streaming. */}
@@ -620,40 +571,45 @@ function Turn({
     // Assistant messages may carry Duffy intent sentinels. Split text into
     // (text | intent-card | text | intent-card | …) segments preserving
     // order so context reads naturally.
-    if (!isUser && INTENT_SENTINEL.test(text)) {
-      INTENT_SENTINEL.lastIndex = 0;
-      const segments: Array<
-        { type: "text"; text: string } | { type: "intent"; id: string }
-      > = [];
-      let lastIndex = 0;
-      for (const m of text.matchAll(INTENT_SENTINEL)) {
-        const idx = m.index ?? 0;
-        if (idx > lastIndex) {
-          segments.push({ type: "text", text: text.slice(lastIndex, idx) });
+    //
+    // Note: `matchAll` is safe on a module-scoped /g regex; `.test()` would
+    // advance lastIndex and break across re-renders. Don't use it.
+    if (!isUser) {
+      const matches = [...text.matchAll(INTENT_SENTINEL)];
+      if (matches.length > 0) {
+        const segments: Array<
+          { type: "text"; text: string } | { type: "intent"; id: string }
+        > = [];
+        let lastIndex = 0;
+        for (const m of matches) {
+          const idx = m.index ?? 0;
+          if (idx > lastIndex) {
+            segments.push({ type: "text", text: text.slice(lastIndex, idx) });
+          }
+          segments.push({ type: "intent", id: m[1] });
+          lastIndex = idx + m[0].length;
         }
-        segments.push({ type: "intent", id: m[1] });
-        lastIndex = idx + m[0].length;
+        if (lastIndex < text.length) {
+          segments.push({ type: "text", text: text.slice(lastIndex) });
+        }
+        return (
+          <div className="text-[14px] leading-relaxed">
+            {segments.map((seg, i) =>
+              seg.type === "text" ? (
+                <span
+                  key={i}
+                  className="whitespace-pre-wrap"
+                  style={{ color: "rgba(255, 255, 255, 0.62)" }}
+                >
+                  {seg.text}
+                </span>
+              ) : (
+                <IntentCard key={i} intentId={seg.id} />
+              ),
+            )}
+          </div>
+        );
       }
-      if (lastIndex < text.length) {
-        segments.push({ type: "text", text: text.slice(lastIndex) });
-      }
-      return (
-        <div className="text-[14px] leading-relaxed">
-          {segments.map((seg, i) =>
-            seg.type === "text" ? (
-              <span
-                key={i}
-                className="whitespace-pre-wrap"
-                style={{ color: "rgba(255, 255, 255, 0.62)" }}
-              >
-                {seg.text}
-              </span>
-            ) : (
-              <IntentCard key={i} intentId={seg.id} />
-            ),
-          )}
-        </div>
-      );
     }
 
     return (
@@ -671,9 +627,9 @@ function Turn({
   };
 
   return (
-    <div>
+    <div className={isUser ? "text-right" : ""}>
       <div
-        className="mb-1 text-[10px] font-mono tracking-[0.32em] text-[var(--fg-2)] uppercase overflow-hidden"
+        className="mb-1 text-[10px] font-mono tracking-[0.32em] text-[var(--warn)] uppercase overflow-hidden"
         style={{
           maxHeight: clamped ? 0 : 16,
           opacity: clamped ? 0 : 1,
@@ -681,7 +637,7 @@ function Turn({
           transition: "max-height 1200ms cubic-bezier(0.22, 1, 0.36, 1), opacity 900ms ease-out, margin-bottom 1200ms cubic-bezier(0.22, 1, 0.36, 1)",
         }}
       >
-        {isUser ? "you" : "yen"}
+        {isUser ? "you" : "duffy"}
       </div>
       {renderBody()}
     </div>
