@@ -150,17 +150,51 @@ export function CommandPalette() {
     if (open) setLeaving(false);
   }, [open]);
 
-  // Snap the message log to the bottom on every open. The scroll
-  // container retains its previous scrollTop across close/open cycles,
-  // so without this Yen sometimes reopened to a mid-conversation view.
-  // Uses rAF so the content has a layout pass first.
+  // On open: start the scroll position a bit ABOVE the latest message,
+  // then ease down to it. After it lands, kick a two-cycle breath on
+  // the command line. Together this reads as "the conversation slid
+  // back into view and settled."
+  const [openPulse, setOpenPulse] = useState(false);
   useEffect(() => {
-    if (!open) return;
-    const raf = requestAnimationFrame(() => {
-      const el = scrollRef.current;
-      if (el) el.scrollTop = el.scrollHeight;
-    });
-    return () => cancelAnimationFrame(raf);
+    if (!open) {
+      setOpenPulse(false);
+      return;
+    }
+    const el = scrollRef.current;
+    if (!el) return;
+    // rAF so layout is settled before measuring.
+    const rafIds: number[] = [];
+    const timeouts: number[] = [];
+    rafIds.push(
+      requestAnimationFrame(() => {
+        const target = el.scrollHeight;
+        const start = Math.max(0, target - 120); // 120px above bottom
+        el.scrollTop = start;
+        const t0 = performance.now();
+        const DUR = 700;
+        const animate = (now: number) => {
+          const p = Math.min(1, (now - t0) / DUR);
+          const eased = 1 - Math.pow(1 - p, 3); // easeOutCubic
+          el.scrollTop = start + (target - start) * eased;
+          if (p < 1) rafIds.push(requestAnimationFrame(animate));
+        };
+        rafIds.push(requestAnimationFrame(animate));
+        // After the slide lands, breathe two cycles of the
+        // thinking-pulse (period 2.4s → 4.8s total).
+        timeouts.push(
+          window.setTimeout(() => {
+            setOpenPulse(true);
+            timeouts.push(
+              window.setTimeout(() => setOpenPulse(false), 4800),
+            );
+          }, DUR),
+        );
+      }),
+    );
+    return () => {
+      rafIds.forEach((id) => cancelAnimationFrame(id));
+      timeouts.forEach((id) => window.clearTimeout(id));
+    };
   }, [open]);
 
   // Single-stage inactivity close (was: 3s collapse → 5s close).
@@ -511,7 +545,7 @@ export function CommandPalette() {
             shadow). Replaces the previous separate hairline below. */}
         <div
           className={`pointer-events-auto flex items-end gap-3 rounded-xl px-4 py-3 ${
-            isThinking ? "thinking-pulse" : ""
+            isThinking || openPulse ? "thinking-pulse" : ""
           }`}
           style={{
             background: "rgba(255, 255, 255, 0.04)",
