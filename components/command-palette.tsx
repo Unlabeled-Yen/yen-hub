@@ -150,6 +150,19 @@ export function CommandPalette() {
     if (open) setLeaving(false);
   }, [open]);
 
+  // Snap the message log to the bottom on every open. The scroll
+  // container retains its previous scrollTop across close/open cycles,
+  // so without this Yen sometimes reopened to a mid-conversation view.
+  // Uses rAF so the content has a layout pass first.
+  useEffect(() => {
+    if (!open) return;
+    const raf = requestAnimationFrame(() => {
+      const el = scrollRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [open]);
+
   // Single-stage inactivity close (was: 3s collapse → 5s close).
   // Activity (typing / new messages / mouse hold) resets the timer.
   useEffect(() => {
