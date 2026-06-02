@@ -262,7 +262,7 @@ function ZoneColumn({
                 aria-hidden
                 className="pointer-events-none absolute inset-0"
                 style={{
-                  opacity: 1,
+                  opacity: 0.5,
                   mixBlendMode: "overlay",
                   width: "100%",
                   height: "100%",
@@ -477,7 +477,7 @@ export function AttentionGrid({
               values="0 0 0 0 1
                       0 0 0 0 1
                       0 0 0 0 1
-                      0 0 0 1.4 0"
+                      0 0 0 1 0"
             />
           </filter>
         </defs>
