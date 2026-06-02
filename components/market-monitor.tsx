@@ -164,6 +164,43 @@ export function MarketMonitor() {
           gap: 12,
         }}
       >
+        {/* Paper-fiber texture overlay — fills the whole panel with a
+            soft fibrous grain similar to Yen's personal site. Uses
+            low-frequency fractalNoise (paper has long fibers, not fine
+            dust) and mix-blend-mode: soft-light so the texture is
+            FELT rather than colored (it doesn't tint the panel,
+            only modulates lightness). */}
+        <svg
+          aria-hidden
+          className="pointer-events-none absolute inset-0"
+          style={{
+            opacity: 0.45,
+            mixBlendMode: "soft-light",
+            borderRadius: 6,
+          }}
+          preserveAspectRatio="none"
+        >
+          <defs>
+            <filter id="us30-paper">
+              <feTurbulence
+                type="fractalNoise"
+                baseFrequency="0.55"
+                numOctaves="3"
+                seed="11"
+                stitchTiles="stitch"
+              />
+              {/* Stretch grain horizontally a touch — paper fibers
+                  are oriented, not isotropic. */}
+              <feColorMatrix
+                values="0 0 0 0 1
+                        0 0 0 0 1
+                        0 0 0 0 1
+                        0 0 0 0.85 0"
+              />
+            </filter>
+          </defs>
+          <rect width="100%" height="100%" filter="url(#us30-paper)" />
+        </svg>
         {/* Top US30/DJIA labels + big price-change row removed per spec.
             The chart already exposes the latest price via the right-axis
             colored ribbon, and the panel's accent border / Market header

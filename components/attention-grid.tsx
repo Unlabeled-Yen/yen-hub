@@ -16,6 +16,7 @@ import { motion } from "motion/react";
 import { useEffect, useState } from "react";
 import { parseBook as parseBookName } from "@/lib/vault/book-translations";
 import { EASE } from "@/lib/animation/constants";
+import { DuffyBadge } from "@/components/page-b/duffy-badge";
 import type {
   AttentionResponse,
   BookSummary,
@@ -422,18 +423,49 @@ export function AttentionGrid({
       aria-label="weekly attention"
       data-tauri-drag-region
     >
-      <header className="flex items-center gap-3 font-mono text-[11px] tracking-[0.30em] uppercase text-[var(--fg-2)]">
-        <span>past {data.window} days</span>
-        <span style={{ opacity: 0.4 }}>—</span>
-        <span>本週注意力</span>
-      </header>
+      {/* Duffy entry — sits where the "past N days · 本週注意力" header
+          used to be. Header text was removed per Yen 2026-06-02 because it
+          carried no information the chart didn't already convey. */}
+      <DuffyBadge />
       <div
-        className="flex items-end"
+        className="relative flex items-end"
         style={{ gap: COL_GAP, paddingTop: 8 }}
       >
         {plotted.map((z, i) => (
           <ZoneColumn key={z.zone} z={z} scaleMax={scaleMax} index={i} />
         ))}
+        {/* Fine-grain noise overlay laid over the column chart area.
+            mix-blend-mode: overlay so the grain interacts with both
+            light columns and dark background. pointer-events: none
+            so hovers still hit the columns. */}
+        <svg
+          aria-hidden
+          className="pointer-events-none absolute inset-0"
+          style={{
+            opacity: 0.18,
+            mixBlendMode: "overlay",
+          }}
+          preserveAspectRatio="none"
+        >
+          <defs>
+            <filter id="attn-grain">
+              <feTurbulence
+                type="fractalNoise"
+                baseFrequency="0.9"
+                numOctaves="2"
+                seed="7"
+                stitchTiles="stitch"
+              />
+              <feColorMatrix
+                values="0 0 0 0 1
+                        0 0 0 0 1
+                        0 0 0 0 1
+                        0 0 0 0.9 0"
+              />
+            </filter>
+          </defs>
+          <rect width="100%" height="100%" filter="url(#attn-grain)" />
+        </svg>
       </div>
     </section>
   );
