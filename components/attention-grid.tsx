@@ -275,6 +275,14 @@ function ZoneColumn({
                   mixBlendMode: "overlay",
                   width: "100%",
                   height: "100%",
+                  // Same alpha taper as barGradient so the noise fades
+                  // out at the top — otherwise it was overwriting the
+                  // bar's gradient-to-transparent and the bar read as
+                  // a flat colored block.
+                  maskImage:
+                    "linear-gradient(to top, black 0%, rgba(0,0,0,0.5) 50%, transparent 100%)",
+                  WebkitMaskImage:
+                    "linear-gradient(to top, black 0%, rgba(0,0,0,0.5) 50%, transparent 100%)",
                 }}
                 preserveAspectRatio="none"
               >
