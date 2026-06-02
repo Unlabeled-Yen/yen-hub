@@ -492,9 +492,14 @@ export function CommandPalette() {
           );
         })()}
 
-        {/* The command line — subtle bar so it's discoverable but not heavy */}
+        {/* The command line — subtle bar so it's discoverable but not
+            heavy. When the agent is thinking, the entire bar breathes
+            via `thinking-pulse` (warm glow on the border + outer
+            shadow). Replaces the previous separate hairline below. */}
         <div
-          className="pointer-events-auto flex items-end gap-3 rounded-xl px-4 py-3"
+          className={`pointer-events-auto flex items-end gap-3 rounded-xl px-4 py-3 ${
+            isThinking ? "thinking-pulse" : ""
+          }`}
           style={{
             background: "rgba(255, 255, 255, 0.04)",
             border: "1px solid rgba(255, 255, 255, 0.10)",
@@ -518,12 +523,8 @@ export function CommandPalette() {
               fully expanded while open. */}
         </div>
 
-        {/* Hairline pulse under the input while streaming. */}
-        <div
-          className={`pointer-events-none mt-2 h-px bg-[var(--fg-0)] transition-opacity ${
-            isThinking ? "hairline-pulse opacity-50" : "opacity-0"
-          }`}
-        />
+        {/* Hairline under the input removed — the breathing effect
+            now lives on the command-line wrapper itself. */}
         </div>
       </motion.div>
       </div>

@@ -199,12 +199,33 @@ textarea,
 }
 .float { animation: float 6s ease-in-out infinite; }
 
-/* Hairline pulse — "agent thinking" / "live signal" */
+/* Hairline pulse — "agent thinking" / "live signal".
+   Used by the tiny dot indicators inside intent cards. */
 @keyframes hairline {
   0%, 100% { opacity: 0.3; }
   50%      { opacity: 0.95; }
 }
 .hairline-pulse { animation: hairline 2.4s ease-in-out infinite; }
+
+/* Thinking pulse — applied to the whole command-line input box while
+   the AI is generating. Pulses the border + a warm outer glow so the
+   entire bar appears to breathe, replacing the previous thin hairline
+   that sat below the input. */
+@keyframes thinking-pulse {
+  0%, 100% {
+    border-color: rgba(255, 255, 255, 0.10);
+    box-shadow:
+      0 0 0 0 rgba(255, 184, 120, 0),
+      0 1px 0 rgba(255, 255, 255, 0.04) inset;
+  }
+  50% {
+    border-color: rgba(255, 184, 120, 0.50);
+    box-shadow:
+      0 0 22px 2px rgba(255, 184, 120, 0.28),
+      0 1px 0 rgba(255, 255, 255, 0.04) inset;
+  }
+}
+.thinking-pulse { animation: thinking-pulse 2.4s ease-in-out infinite; }
 
 /* Subtle inner glow for active accents */
 @keyframes glow-pulse {
