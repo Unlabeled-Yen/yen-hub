@@ -16,6 +16,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   type EvidenceRef,
+  type Importance,
   type Intent,
   type IntentKind,
   type IntentPayload,
@@ -79,6 +80,7 @@ export async function createIntent(args: {
   proposed_by: string;
   rationale: string;
   evidence?: EvidenceRef[];
+  importance?: Importance;
 }): Promise<Intent> {
   const m = await load();
   const intent: Intent = {
@@ -90,6 +92,7 @@ export async function createIntent(args: {
     status: "pending",
     rationale: args.rationale,
     evidence: args.evidence ?? [],
+    importance: args.importance ?? "medium",
   };
   m[intent.id] = intent;
   await save();

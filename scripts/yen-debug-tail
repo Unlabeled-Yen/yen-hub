@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# yen-debug-tail — live tail of the .app log, pre-filtered to wide events
+# from the six instrumentation layers (Rust eprintln, Next middleware,
+# diag endpoints, US30 source, Duffy LLM provider).
+#
+# Usage:
+#   yen-debug-tail              # live tail with default filter
+#   yen-debug-tail history      # dump full filtered log from current /tmp file (no follow)
+#   yen-debug-tail '<extra-re>' # add to the filter (OR'd)
+
+set -u
+
+LOG="/tmp/yen-app.log"
+
+# Six-layer wide event filter — must stay in sync with the eprintln /
+# console.error tags actually written in:
+#   - src-tauri/src/{sidecar,lib}.rs        → [yen-debug]
+#   - middleware.ts                         → [mw-req], [mw]
+#   - app/api/diag/*/route.ts               → [diag-url], [diag-state], [diag-headers]
+#   - app/api/market/us30/route.ts          → [us30]
+#   - lib/agent/duffy/agent.ts              → [duffy]
+DEFAULT_RE='yen-debug|mw-req|mw\]|diag-|us30|duffy'
+
+extra="${1:-}"
+case "$extra" in
+  "")        re="$DEFAULT_RE" ;;
+  history)   re="$DEFAULT_RE"; mode=history ;;
+  *)         re="$DEFAULT_RE|$extra" ;;
+esac
+
+if [ ! -f "$LOG" ]; then
+  echo "✗ No log at $LOG · launch the .app first (yen-app-launch)"
+  exit 1
+fi
+
+if [ "${mode:-}" = "history" ]; then
+  exec grep -E "$re" "$LOG"
+fi
+
+echo "▸ tailing $LOG · filter=/$re/  (Ctrl-C to stop)"
+exec tail -F "$LOG" | grep --line-buffered -E "$re"

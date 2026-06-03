@@ -27,11 +27,15 @@ import { motion, useMotionValue } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { IntentCard } from "@/components/agent/intent-card";
-import { getSidecarToken } from "@/lib/security/sidecar-token";
+import {
+  getSidecarToken,
+  sidecarHeaders,
+} from "@/lib/security/sidecar-token";
 import {
   createConversation,
   deriveTitle,
   ensureActive,
+  loadFromServer,
   saveConversation,
   type Conversation as Convo,
 } from "@/lib/conversations/store";
@@ -39,6 +43,99 @@ import {
 /** Sentinel format Duffy embeds in chat to surface an approval card inline.
  *  See `lib/agent/duffy/prompt.ts` and `lib/agent/duffy/agent.ts`. */
 const INTENT_SENTINEL = /<<INTENT:(int_[A-Za-z0-9-]+)>>/g;
+
+/** Sentinel Duffy embeds when Yen asks to start a fresh conversation. The
+ *  client rolls a new conversation after the current turn finishes
+ *  rendering. */
+const NEW_CONVERSATION_SENTINEL = /<<NEW_CONVERSATION>>/;
+
+/** Sentinel the CLIENT sends as a user message right after a fresh
+ *  conversation animation completes. Duffy's prompt has a rule that, when
+ *  this is the only user text, he replies with a short greeting. The Turn
+ *  renderer hides this synthetic user message so visually it looks like
+ *  Duffy spontaneously says hello. */
+const GREET_INIT_SENTINEL = "__DUFFY_GREET_INIT__";
+
+/** Choreography phases for the new-conversation animation. */
+type NewConvoPhase =
+  | "idle"
+  | "shrinking-messages" // chat history slides down + collapses
+  | "iris-close"         // command line shrinks horizontally toward centre
+  | "iris-open"          // command line expands back out
+  | "breathing";         // brief settled pause before Duffy auto-greets
+
+/** Slice 7.7 — fetch the latest server-side inflight response for this
+ *  conversation and merge it in if it represents work Yen hasn't seen yet.
+ *  Handles three cases:
+ *    - no inflight                       → no-op
+ *    - inflight.text already in messages → no-op (already merged)
+ *    - inflight.text NOT in messages     → append as assistant turn
+ *  Status 'done' / 'error' entries are cleared after consumption; 'streaming'
+ *  entries are left untouched so a later poll can pick up more text.        */
+async function reconcileInflight(
+  convoId: string,
+  current: UIMessage[],
+  apply: (next: UIMessage[]) => void,
+): Promise<void> {
+  try {
+    const headers: Record<string, string> = await sidecarHeaders();
+    const res = await fetch(
+      `/api/chat/inflight?conversation=${encodeURIComponent(convoId)}`,
+      { headers },
+    );
+    if (!res.ok) return;
+    const data = (await res.json()) as {
+      inflight: {
+        turnId: string;
+        text: string;
+        status: "streaming" | "done" | "error";
+        error?: string;
+      } | null;
+    };
+    const inflight = data.inflight;
+    if (!inflight || !inflight.text) return;
+
+    // Already merged? Compare against last assistant message.
+    const lastAssistant = [...current]
+      .reverse()
+      .find((m) => m.role === "assistant");
+    const lastAssistantText = lastAssistant
+      ? (lastAssistant.parts ?? [])
+          .filter((p): p is { type: "text"; text: string } => p.type === "text")
+          .map((p) => p.text)
+          .join("")
+      : "";
+    if (lastAssistantText && lastAssistantText.includes(inflight.text)) {
+      // Server text is a subset of what client already has — nothing new.
+      // Still clear on done/error so subsequent reopens don't churn.
+      if (inflight.status !== "streaming") {
+        void fetch(
+          `/api/chat/inflight?conversation=${encodeURIComponent(convoId)}`,
+          { method: "DELETE", headers },
+        );
+      }
+      return;
+    }
+
+    // Append (or replace tail) — simplest correct behaviour: add a new
+    // assistant message with the full server text.
+    const newAssistant: UIMessage = {
+      id: inflight.turnId,
+      role: "assistant",
+      parts: [{ type: "text", text: inflight.text }],
+    } as UIMessage;
+    apply([...current, newAssistant]);
+
+    if (inflight.status !== "streaming") {
+      void fetch(
+        `/api/chat/inflight?conversation=${encodeURIComponent(convoId)}`,
+        { method: "DELETE", headers },
+      );
+    }
+  } catch {
+    /* silent — inflight reconciliation is best-effort */
+  }
+}
 
 function isEditableTarget(t: EventTarget | null): boolean {
   if (!(t instanceof HTMLElement)) return false;
@@ -105,22 +202,135 @@ export function CommandPalette() {
     });
   }, []);
 
+  // Slice 7.7: pass the active conversation id to the chat route so the
+  // server can mirror Duffy's response into the inflight store. Header
+  // stays in sync via a ref because the transport's headers function is
+  // synchronous (and called per request).
+  const convoIdRef = useRef<string>("");
+  useEffect(() => {
+    convoIdRef.current = convo?.id ?? "";
+  }, [convo?.id]);
+
   const { messages, sendMessage, status, stop, setMessages } = useChat({
     transport: new DefaultChatTransport({
       api: "/api/chat",
-      headers: (): Record<string, string> =>
-        tokenRef.current ? { "X-Yen-Token": tokenRef.current } : {},
+      headers: (): Record<string, string> => {
+        const h: Record<string, string> = {};
+        if (tokenRef.current) h["X-Yen-Token"] = tokenRef.current;
+        if (convoIdRef.current) h["X-Conversation-Id"] = convoIdRef.current;
+        return h;
+      },
     }),
   });
 
-  // Hydrate conversation on first open
+  // Hydrate conversation on first open + reconcile any inflight response
+  // that Duffy finished (or is still finishing) while the palette was
+  // closed. Slice 7.7 + Slice 8.7 (server-side conversations).
   useEffect(() => {
     if (!open || convo) return;
-    const c = ensureActive();
-    setConvo(c);
-    if (c.messages.length > 0) setMessages(c.messages);
+    let cancelled = false;
+    (async () => {
+      // Slice 8.7 — load cache from server before reading. localStorage
+      // doesn't survive port churn; the server JSON does.
+      await loadFromServer();
+      if (cancelled) return;
+      const c = ensureActive();
+      setConvo(c);
+      if (c.messages.length > 0) setMessages(c.messages);
+      void reconcileInflight(c.id, c.messages as UIMessage[], (next) => {
+        setMessages(next);
+        saveConversation({
+          ...c,
+          messages: next,
+          updatedAt: Date.now(),
+        });
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  // New-conversation choreography (Slice 7.7+):
+  //   t=0       Duffy finishes his "<<NEW_CONVERSATION>>" acknowledgement.
+  //   1.2s      Yen has read it. Start "shrinking-messages":
+  //             chat history collapses + slides down.
+  //   +0.55s    Start "iris-close": command line shrinks horizontally
+  //             toward centre.
+  //   +0.45s    State swap: createConversation + setMessages([]).
+  //             Phase → "iris-open": command line expands back out.
+  //   +0.5s     Phase → "breathing": brief settled pause.
+  //   +0.35s    Send the GREET_INIT sentinel as a hidden user message;
+  //             Duffy responds with one short greeting per his SOUL.
+  //             Phase → "idle".
+  //
+  // Net effect: Yen sees the room collapse, the door close, the door
+  // open onto an empty room, and Duffy spontaneously say hello.
+  const [newConvoPhase, setNewConvoPhase] = useState<NewConvoPhase>("idle");
+  const newConvoTimers = useRef<Array<ReturnType<typeof setTimeout>>>([]);
+  const clearNewConvoTimers = () => {
+    newConvoTimers.current.forEach((t) => clearTimeout(t));
+    newConvoTimers.current = [];
+  };
+  useEffect(() => {
+    if (status === "streaming" || status === "submitted") return;
+    if (messages.length === 0) return;
+    if (newConvoPhase !== "idle") return; // already running
+    const lastAssistant = [...messages]
+      .reverse()
+      .find((m) => m.role === "assistant");
+    if (!lastAssistant) return;
+    const text = (lastAssistant.parts ?? [])
+      .filter((p): p is { type: "text"; text: string } => p.type === "text")
+      .map((p) => p.text)
+      .join("");
+    if (!NEW_CONVERSATION_SENTINEL.test(text)) return;
+
+    const T = (ms: number, fn: () => void) => {
+      const t = setTimeout(fn, ms);
+      newConvoTimers.current.push(t);
+    };
+
+    // Timing budget — animations need HOLD time at their target value so
+    // the eye actually perceives "closed" before the next phase reopens
+    // them. Each phase duration is animation + visible hold.
+    //
+    //   shrink   700ms (0.55s anim + 150ms settle)
+    //   iris-close 800ms (0.4s anim to scaleX=0 + 400ms hold AT 0)
+    //   iris-open 700ms (0.45s anim to scaleX=1 + 250ms settle)
+    //   breathing 500ms (a beat of stillness before the greeting)
+
+    // Phase 1 — read pause, then shrink messages.
+    T(1200, () => {
+      setNewConvoPhase("shrinking-messages");
+    });
+    // Phase 2 — iris-close (collapses + HOLDS at scaleX=0 for ~400ms).
+    T(1200 + 700, () => {
+      setNewConvoPhase("iris-close");
+    });
+    // Phase 3 — state swap + iris-open. Happens at the END of the hold
+    // so the swap is invisible (palette is fully collapsed).
+    T(1200 + 700 + 800, () => {
+      const fresh = createConversation();
+      setConvo(fresh);
+      setMessages([]);
+      setInput("");
+      setNewConvoPhase("iris-open");
+    });
+    // Phase 4 — settled breathing pause.
+    T(1200 + 700 + 800 + 700, () => {
+      setNewConvoPhase("breathing");
+    });
+    // Phase 5 — Duffy auto-greets via hidden sentinel; back to idle.
+    T(1200 + 700 + 800 + 700 + 500, () => {
+      setNewConvoPhase("idle");
+      sendMessage({ text: GREET_INIT_SENTINEL });
+    });
+
+    return clearNewConvoTimers;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages, status]);
 
   // Persist when streaming completes
   useEffect(() => {
@@ -144,6 +354,20 @@ export function CommandPalette() {
       behavior: "smooth",
     });
   }, [messages]);
+
+  // Slice 8.6 — broadcast Duffy's chat status to the rest of the app
+  // (specifically DuffyBadge on Page A) so the badge can show
+  // "breathing while thinking" / "lit while fresh reply waits".
+  // We use a window CustomEvent rather than a shared store/context
+  // because the badge sits in a separate React tree.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.dispatchEvent(
+      new CustomEvent("yen-duffy-status", {
+        detail: { status, paletteOpen: open },
+      }),
+    );
+  }, [status, open]);
 
   // Reset leaving state whenever we open
   useEffect(() => {
@@ -478,14 +702,37 @@ export function CommandPalette() {
               // below leave generous top/bottom breathing room so the
               // user never sees an edge hit the window.
               animate={{
-                maxHeight: collapsed
-                  ? 36
-                  : userExpanded
-                    ? "calc(70vh - 100px)"
-                    : "calc(35vh - 50px)",
+                maxHeight:
+                  newConvoPhase === "shrinking-messages" ||
+                  newConvoPhase === "iris-close" ||
+                  newConvoPhase === "iris-open" ||
+                  newConvoPhase === "breathing"
+                    ? 0
+                    : collapsed
+                      ? 36
+                      : userExpanded
+                        ? "calc(70vh - 100px)"
+                        : "calc(35vh - 50px)",
+                opacity:
+                  newConvoPhase === "shrinking-messages" ||
+                  newConvoPhase === "iris-close" ||
+                  newConvoPhase === "iris-open" ||
+                  newConvoPhase === "breathing"
+                    ? 0
+                    : 1,
+                y:
+                  newConvoPhase === "shrinking-messages" ||
+                  newConvoPhase === "iris-close"
+                    ? 32
+                    : 0,
               }}
               transition={{
-                duration: collapsed || userExpanded ? 1.2 : 0.45,
+                duration:
+                  newConvoPhase === "shrinking-messages"
+                    ? 0.55
+                    : collapsed || userExpanded
+                      ? 1.2
+                      : 0.45,
                 ease: [0.22, 1, 0.36, 1],
               }}
               style={{
@@ -502,6 +749,18 @@ export function CommandPalette() {
                 {visible.map((m, i) => {
                   const isLast = i === visible.length - 1;
                   const isUser = m.role === "user";
+                  // Hide the GREET_INIT synthetic user message so visually
+                  // it looks like Duffy spontaneously says hello.
+                  if (isUser) {
+                    const t = (m.parts ?? [])
+                      .filter(
+                        (p): p is { type: "text"; text: string } =>
+                          p.type === "text",
+                      )
+                      .map((p) => p.text)
+                      .join("");
+                    if (t.trim() === GREET_INIT_SENTINEL) return null;
+                  }
                   return (
                     <motion.div
                       key={m.id}
@@ -539,8 +798,10 @@ export function CommandPalette() {
         {/* The command line — subtle bar so it's discoverable but not
             heavy. When the agent is thinking, the entire bar breathes
             via `thinking-pulse` (warm glow on the border + outer
-            shadow). Replaces the previous separate hairline below. */}
-        <div
+            shadow). Replaces the previous separate hairline below.
+            On new-conversation choreography, scaleX iris-closes then
+            iris-opens around the swap. */}
+        <motion.div
           className={`pointer-events-auto flex items-end gap-3 rounded-xl px-4 py-3 ${
             openPulse
               ? "open-breath"
@@ -548,10 +809,24 @@ export function CommandPalette() {
                 ? "thinking-pulse"
                 : ""
           }`}
+          animate={{
+            scaleX: newConvoPhase === "iris-close" ? 0 : 1,
+          }}
+          transition={{
+            // 0.4s for the actual scale; the 800ms iris-close phase leaves
+            // ~400ms of explicit hold at scaleX=0 (a near-invisible line)
+            // before iris-open swings it back out at 0.45s.
+            duration: newConvoPhase === "iris-close" ? 0.4 : 0.45,
+            ease:
+              newConvoPhase === "iris-close"
+                ? [0.7, 0, 0.84, 0]
+                : [0.16, 1, 0.3, 1],
+          }}
           style={{
             background: "rgba(255, 255, 255, 0.04)",
             border: "1px solid rgba(255, 255, 255, 0.10)",
             boxShadow: "0 1px 0 rgba(255,255,255,0.04) inset",
+            transformOrigin: "center",
           }}
           onClick={(e) => e.stopPropagation()}
         >
@@ -569,7 +844,7 @@ export function CommandPalette() {
           />
           {/* Expand toggle removed per Yen — palette is now always
               fully expanded while open. */}
-        </div>
+        </motion.div>
 
         {/* Hairline under the input removed — the breathing effect
             now lives on the command-line wrapper itself. */}

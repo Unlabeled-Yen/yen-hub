@@ -12,6 +12,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
 import { markPriority, unmarkPriority } from "@/lib/vault/priority-store";
+import {
+  addPriorityTagToVault,
+  removePriorityTagFromVault,
+} from "@/lib/vault/priority-write";
 
 export const dynamic = "force-dynamic";
 
@@ -42,8 +46,15 @@ export async function POST(req: NextRequest) {
   if (auth) return auth;
   const body = parseBody(await req.json().catch(() => ({})));
   if (!body) return NextResponse.json({ error: "bad request" }, { status: 400 });
-  await markPriority(body.file, body.lineNum, body.text);
-  return NextResponse.json({ ok: true });
+  // Dual-write: overlay (fast, drives UI) + vault tag (real, drives Obsidian).
+  // Vault write happens in parallel; if it fails the overlay still wins so
+  // the UI doesn't flicker, but the failure is reported in the response so
+  // callers can log it.
+  const [, vault] = await Promise.all([
+    markPriority(body.file, body.lineNum, body.text),
+    addPriorityTagToVault(body.file, body.text),
+  ]);
+  return NextResponse.json({ ok: true, vault });
 }
 
 export async function DELETE(req: NextRequest) {
@@ -51,6 +62,9 @@ export async function DELETE(req: NextRequest) {
   if (auth) return auth;
   const body = parseBody(await req.json().catch(() => ({})));
   if (!body) return NextResponse.json({ error: "bad request" }, { status: 400 });
-  await unmarkPriority(body.file, body.text);
-  return NextResponse.json({ ok: true });
+  const [, vault] = await Promise.all([
+    unmarkPriority(body.file, body.text),
+    removePriorityTagFromVault(body.file, body.text),
+  ]);
+  return NextResponse.json({ ok: true, vault });
 }

@@ -3,19 +3,32 @@
  * to a registered agent (and which one) or it's a normal chat with the
  * default Claude.
  *
- * Convention (Q3 decision, 2026-06-02): the FIRST token of the user message
- * — case-insensitive — is matched against the registry. If it matches a
- * registered agent name, the rest of the message is the prompt to that
- * agent.
+ * Convention (Q3 decision, 2026-06-02): the message must START with a
+ * registered agent name (case-insensitive), followed by EITHER end of
+ * string, whitespace/punctuation, OR a non-ASCII-alphanumeric character —
+ * so `Duffy 你好`, `duffy你好`, `Duffy:你好`, `Duffy!你好` all hit, but
+ * `duffyism` doesn't.
  *
  * Future agents register here. Slice 6 only ships Duffy.
  */
 
-const REGISTRY = new Set<string>(["duffy"]);
+const REGISTRY: string[] = ["duffy"];
+
+/** Trailing punctuation between the name and the body that we strip. */
+const SEPARATOR_RE = /^[\s,，:：!！?？、。]+/;
+
+/** Next char immediately after the matched name MUST satisfy:
+ *  - end of string, OR
+ *  - not an ASCII alphanumeric / underscore (Chinese, emoji, space, punct OK).
+ *  Prevents `duffyism`, `duffyfoo` etc from triggering. */
+function isValidBoundary(next: string | undefined): boolean {
+  if (!next) return true;
+  return !/[A-Za-z0-9_]/.test(next);
+}
 
 export type RouteHit = {
   agent: string;
-  /** the message body after the agent name is stripped */
+  /** the message body after the agent name + separator is stripped */
   body: string;
 };
 
@@ -23,17 +36,17 @@ export type RouteHit = {
 export function routeMessage(text: string): RouteHit | null {
   const trimmed = text.trimStart();
   if (!trimmed) return null;
-
-  // Grab first whitespace-bounded token.
-  const match = trimmed.match(/^(\S+)\s*([\s\S]*)$/);
-  if (!match) return null;
-  const [, headRaw, rest] = match;
-  // Strip punctuation a Yen-typist might add: "Duffy,", "Duffy:", "Duffy:"
-  const head = headRaw.replace(/[,，:：!！?？]+$/u, "").toLowerCase();
-  if (!REGISTRY.has(head)) return null;
-  return { agent: head, body: rest };
+  const lower = trimmed.toLowerCase();
+  for (const name of REGISTRY) {
+    if (!lower.startsWith(name)) continue;
+    const boundary = trimmed.charAt(name.length);
+    if (!isValidBoundary(boundary)) continue;
+    const tail = trimmed.slice(name.length).replace(SEPARATOR_RE, "");
+    return { agent: name, body: tail };
+  }
+  return null;
 }
 
 export function isRegisteredAgent(name: string): boolean {
-  return REGISTRY.has(name.toLowerCase());
+  return REGISTRY.includes(name.toLowerCase());
 }

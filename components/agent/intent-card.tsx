@@ -18,7 +18,83 @@
 import { useCallback, useEffect, useState } from "react";
 import { motion } from "motion/react";
 import { tokenFetch } from "@/lib/security/sidecar-token";
-import type { Intent } from "@/lib/agent/storage/types";
+import type {
+  Intent,
+  ObservationPayload,
+  SilhouetteUpdatePayload,
+  SummaryPayload,
+  FileCreatePayload,
+  FileEditPayload,
+  TodoPlanPayload,
+} from "@/lib/agent/storage/types";
+
+/** Slice 8 — observation intents with `nudge_for` are stale-intention
+ *  reminders. They render in warm-amber instead of mint, to feel distinct
+ *  from fresh observations (which are about now), and signal "this is an
+ *  older commitment surfacing again". */
+function isNudge(intent: Intent): boolean {
+  if (intent.kind !== "observation") return false;
+  return Boolean((intent.payload as ObservationPayload).nudge_for);
+}
+
+/** Extract a header (title + body) suitable for the card from any payload kind. */
+function describePayload(intent: Intent): { title: string; body: string } {
+  switch (intent.kind) {
+    case "observation": {
+      const p = intent.payload as ObservationPayload;
+      return { title: p.title, body: p.body };
+    }
+    case "silhouette_update": {
+      const p = intent.payload as SilhouetteUpdatePayload;
+      const which =
+        p.field === "full" ? "整份剪影" : `剪影的「${p.field}」欄位`;
+      return {
+        title: `更新 ${which}（confidence: ${p.confidence}）`,
+        body: p.new_value,
+      };
+    }
+    case "summary": {
+      const p = intent.payload as SummaryPayload;
+      const nums = p.key_numbers
+        .map((k) => `${k.label}: ${k.value}`)
+        .join(" · ");
+      return {
+        title: `${p.week} 週摘要：${p.headline}`,
+        body: `${nums}\n\n${p.pattern}\n\n下一步建議：\n${p.proposed_actions.map((a) => `- ${a}`).join("\n")}`,
+      };
+    }
+    case "file_create": {
+      const p = intent.payload as FileCreatePayload;
+      const preview =
+        p.content.length > 600 ? p.content.slice(0, 600) + "\n\n[…]" : p.content;
+      return {
+        title: `新檔：${p.path}`,
+        body: preview,
+      };
+    }
+    case "file_edit": {
+      const p = intent.payload as FileEditPayload;
+      const body =
+        `路徑：${p.path}\n\n` +
+        `─── 舊（將被取代）───\n${p.old_text}\n\n` +
+        `─── 新 ───\n${p.new_text}`;
+      return {
+        title: `編輯：${p.path}`,
+        body,
+      };
+    }
+    case "todo_plan": {
+      const p = intent.payload as TodoPlanPayload;
+      const body = p.items
+        .map((it) => `• ${it.text}${it.category ? ` _(${it.category})_` : ""}`)
+        .join("\n");
+      return {
+        title: `待辦規劃：${p.title}（${p.items.length} 項）`,
+        body,
+      };
+    }
+  }
+}
 
 type Props = {
   intentId: string;
@@ -90,12 +166,16 @@ export function IntentCard({ intentId }: Props) {
 
   const intent = state.intent;
   const status = intent.status;
+  const nudge = isNudge(intent);
+  // Warm amber for nudges, mint for fresh proposals. Approved/rejected
+  // colours win regardless — past decisions don't need the nudge tint.
+  const pendingAccent = nudge ? "#f0a05a" : "var(--accent)";
   const accent =
     status === "approved"
       ? "var(--success)"
       : status === "rejected"
         ? "var(--fg-2)"
-        : "var(--accent)";
+        : pendingAccent;
 
   return (
     <motion.div
@@ -112,10 +192,24 @@ export function IntentCard({ intentId }: Props) {
         boxShadow: "0 1px 0 rgba(255,255,255,0.04) inset",
       }}
     >
-      {/* Header: agent + kind + status */}
+      {/* Header: agent + kind (+ nudge tag) + status */}
       <div className="flex items-center justify-between mb-2">
-        <div className="text-[10px] font-mono tracking-[0.32em] uppercase text-[var(--fg-2)]">
-          {intent.proposed_by} · {intent.kind}
+        <div className="text-[10px] font-mono tracking-[0.32em] uppercase text-[var(--fg-2)] flex items-center gap-2">
+          <span>
+            {intent.proposed_by} · {intent.kind}
+          </span>
+          {nudge && (
+            <span
+              className="px-1.5 py-0.5 rounded text-[9px] tracking-[0.18em]"
+              style={{
+                background: "rgba(240, 160, 90, 0.12)",
+                border: "1px solid rgba(240, 160, 90, 0.5)",
+                color: "#f0a05a",
+              }}
+            >
+              醒提
+            </span>
+          )}
         </div>
         <div
           className="text-[10px] font-mono tracking-[0.24em] uppercase"
@@ -125,9 +219,9 @@ export function IntentCard({ intentId }: Props) {
         </div>
       </div>
 
-      {/* Title */}
+      {/* Title — describes the proposal regardless of kind */}
       <div className="text-[14px] leading-snug text-[var(--fg-0)] mb-2">
-        {intent.payload.title}
+        {describePayload(intent).title}
       </div>
 
       {/* Rationale — one-line clamp, click to expand (Q2 decision) */}
@@ -153,12 +247,15 @@ export function IntentCard({ intentId }: Props) {
         )}
       </button>
 
-      {/* Body (only when expanded) */}
-      {expanded && intent.payload.body && (
-        <div className="mt-2 text-[12px] leading-relaxed text-[var(--fg-1)] whitespace-pre-wrap">
-          {intent.payload.body}
-        </div>
-      )}
+      {/* Body (only when expanded) — kind-aware via describePayload */}
+      {expanded && (() => {
+        const body = describePayload(intent).body;
+        return body ? (
+          <div className="mt-2 text-[12px] leading-relaxed text-[var(--fg-1)] whitespace-pre-wrap">
+            {body}
+          </div>
+        ) : null;
+      })()}
 
       {/* Evidence chips */}
       {intent.evidence.length > 0 && (

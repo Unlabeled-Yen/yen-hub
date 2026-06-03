@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# yen-audit-conventions — scan Yen Hub for known convention violations.
+#
+# Encodes lessons from real bugs into greps. Each check has a "WHY"
+# line so anyone reading the violation knows what bug it prevents.
+#
+# Exit non-zero on any violation — suitable for pre-commit / CI.
+#
+# Usage:
+#   yen-audit-conventions          # run all checks
+#   yen-audit-conventions --quiet  # only print violations
+
+set -u
+
+REPO="$HOME/Desktop/Yen/Develop/yen-hub"
+QUIET=0
+[ "${1:-}" = "--quiet" ] && QUIET=1
+
+fail=0
+say() { [ "$QUIET" -eq 0 ] && echo "$@"; }
+hit() { echo "$@"; fail=1; }
+
+# ──────────────────────────────────────────────────────────────────────
+# Check 1 — raw fetch to /api/* must use tokenFetch
+#
+# WHY: Slice 6.5 token gate requires X-Yen-Token on /api/*. Components
+# written after 6.5 sometimes use raw `fetch(...)` and silently 403 in
+# release builds (dev bypasses the gate). Cost when missed: 5 hours
+# (2026-06-02 sidecar-token blackout).
+# ──────────────────────────────────────────────────────────────────────
+say "▸ raw fetch to /api/* (must use tokenFetch)"
+violations=$(
+  grep -rn 'fetch(["`]/api/' "$REPO/app" "$REPO/components" 2>/dev/null \
+  | grep -v "tokenFetch\|/api/auth/\|/api/diag/" || true
+)
+[ -n "$violations" ] && hit "$violations"
+
+# ──────────────────────────────────────────────────────────────────────
+# Check 2 — no underscore-prefixed folders under app/api/
+#
+# WHY: Next.js App Router treats _-prefixed folders as PRIVATE — no
+# route is generated. Past bug: /api/_diag/* silently 404'd, hiding all
+# diagnostic output for 3 build cycles before being noticed.
+# ──────────────────────────────────────────────────────────────────────
+say "▸ private folders under app/api/ (Next.js _ prefix breaks routing)"
+violations=$(find "$REPO/app/api" -type d -name "_*" 2>/dev/null || true)
+[ -n "$violations" ] && hit "$violations"
+
+# ──────────────────────────────────────────────────────────────────────
+# Check 3 — env vars used by Node sidecar must be passed through by Rust
+#
+# WHY: .app launched from Finder does NOT inherit shell env. Anything
+# Node reads via process.env.X must be explicitly piped through Rust's
+# sidecar.env(...) chain, AND loaded from ~/.config/yen-hub/env.
+# Past bug: K bars broken (Stooq fallback), Duffy showed "no LLM key"
+# because TWELVE_DATA_KEY / KIMI_API_KEY weren't piped through.
+# ──────────────────────────────────────────────────────────────────────
+say "▸ env vars referenced by Node but not piped by Rust sidecar"
+node_envs=$(
+  grep -rEoh 'process\.env\.[A-Z_][A-Z0-9_]+' "$REPO/lib" "$REPO/app" 2>/dev/null \
+  | sed 's/process\.env\.//' | sort -u
+)
+rust_envs=$(
+  grep -hEo '\.env\("[A-Z_][A-Z0-9_]+"' "$REPO/src-tauri/src/"*.rs 2>/dev/null \
+  | sed 's/\.env("//;s/"$//' | sort -u
+)
+# Skip vars that are: (a) Node/Next.js runtime, (b) dev-only bypass /
+# mock flags (intentionally undefined in release), (c) WebAuthn config
+# that has sensible defaults.
+ignore_pattern='^(NODE_ENV|PATH|HOME|HOSTNAME|PORT|NEXT_|VERCEL_|TZ|TMPDIR|LANG|USER|PWD|SHELL|MOCK_|DEV_BYPASS|NEXT_PUBLIC_DEV|ORIGIN|RP_ID|PASSKEY_|SUMMARY_CRON_|NUDGE_CRON_|YEN_REQUIRE_|YEN_DEVELOP_PATH|YEN_LEARNING_AI_PATH)'
+missing=$(comm -23 <(echo "$node_envs") <(echo "$rust_envs") | grep -vE "$ignore_pattern" || true)
+if [ -n "$missing" ]; then
+  hit "  Node uses, Rust does NOT pipe through:"
+  hit "$missing" | sed 's/^/    /'
+fi
+
+# ──────────────────────────────────────────────────────────────────────
+# Check 4 — ~/.config/yen-hub/env exists and is 0600
+#
+# WHY: This file holds API keys (KIMI, TWELVE_DATA, ANTHROPIC). Missing
+# = .app silently degrades. World-readable = key leak risk.
+# ──────────────────────────────────────────────────────────────────────
+say "▸ ~/.config/yen-hub/env exists with 0600 perms"
+env_file="$HOME/.config/yen-hub/env"
+if [ ! -f "$env_file" ]; then
+  hit "  Missing: $env_file (the .app needs this to read API keys)"
+else
+  perms=$(stat -f "%Mp%Lp" "$env_file" 2>/dev/null)
+  if [ "$perms" != "0600" ]; then
+    hit "  Loose perms on $env_file: $perms (should be 0600 — run: chmod 0600 $env_file)"
+  fi
+fi
+
+# ──────────────────────────────────────────────────────────────────────
+# Summary
+# ──────────────────────────────────────────────────────────────────────
+if [ "$fail" -eq 0 ]; then
+  say ""
+  say "✓ all checks passed"
+fi
+
+exit "$fail"

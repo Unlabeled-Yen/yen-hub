@@ -25,8 +25,9 @@ const EXCLUDE_DIRS = new Set([
 export type Zone =
   | "library" // 📚 LLM Wiki/raw/外部資料 — e-books, TBR with intent
   | "septic" //  ⚠️ LLM Wiki/raw/筆記資料 — AI summaries + convo logs
-  | "workshop" // 🔧 06 - AI Toolkit/skills + agents — actual AI toolkit
-  | "yenhub" //  🏗 06 - AI Toolkit/Yen Hub — the desktop app project itself
+  | "workshop" // 🔧 06 - AI Data/skills + agents — actual AI toolkit (folder renamed 2026-06-02 from "AI Toolkit")
+  | "yenhub" //  🏗 06 - AI Data/Yen Hub — the desktop app project itself
+  | "agentdata" // 🤖 06 - AI Data/{Observations,Summaries,Silhouettes} — agent-generated content; AttentionGrid filters this out so Duffy doesn't see his own writes
   | "writing" // ✍️ 03 - Main Notes (root)
   | "trading" // 💹 04 - Trading Review — frequency only, until proper log exists
   | "queue" //   📥 05 - Queue — drafts in flight
@@ -40,6 +41,7 @@ const ZONE_LABEL: Record<Zone, string> = {
   septic: "⚠️ 筆記摘錄",
   workshop: "🔧 AI建造",
   yenhub: "🏗 Yen Hub",
+  agentdata: "🤖 Agent 資料",
   writing: "✍️ 寫作",
   trading: "💹 交易複盤",
   queue: "📥 佇列",
@@ -82,10 +84,18 @@ export function classifyZone(relPath: string): Zone {
   if (p.startsWith("LLM Wiki 知識庫/raw/寫作草稿/")) return "drafts";
   if (p.startsWith("LLM Wiki 知識庫/raw/")) return "drafts";
   if (p.startsWith("LLM Wiki 知識庫/derived/")) return "derived";
-  // Yen Hub lives inside 06 - AI Toolkit but it's the desktop-app project,
+  // Agent-generated content — segregate so Duffy doesn't read his own writes.
+  // AttentionGrid filters this zone out.
+  if (
+    p.startsWith("06 - AI Data/Observations/") ||
+    p.startsWith("06 - AI Data/Summaries/") ||
+    p.startsWith("06 - AI Data/Silhouettes/")
+  )
+    return "agentdata";
+  // Yen Hub lives inside 06 - AI Data but it's the desktop-app project,
   // not a skill / agent. Check BEFORE the general workshop rule.
-  if (p.startsWith("06 - AI Toolkit/Yen Hub/")) return "yenhub";
-  if (p.startsWith("06 - AI Toolkit/")) return "workshop";
+  if (p.startsWith("06 - AI Data/Yen Hub/")) return "yenhub";
+  if (p.startsWith("06 - AI Data/")) return "workshop";
   if (p.startsWith("05 - Queue/")) return "queue";
   if (p.startsWith("04 - Trading Review/")) return "trading";
   // 03 - Main Notes: only root-level .md is "writing"; subfolders are work-in-progress

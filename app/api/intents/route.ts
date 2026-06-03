@@ -21,7 +21,11 @@ async function ensureAuth() {
 }
 
 const STATUSES = ["pending", "approved", "rejected"] as const;
-const KINDS = ["observation"] as const;
+const KINDS: ReadonlyArray<IntentKind> = [
+  "observation",
+  "silhouette_update",
+  "summary",
+] as const;
 
 function asStatus(v: string | null): IntentStatus | undefined {
   return STATUSES.includes(v as IntentStatus) ? (v as IntentStatus) : undefined;

@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+# yen-migrate-export — bundle every piece of Yen's local state into one
+# portable tar.gz. Companion: yen-migrate-import.
+#
+# Bundle contents:
+#   manifest.txt         — when, which machine, what's inside
+#   app-data/            — ~/Library/Application Support/com.yen.hub/
+#                          (intents.json, observations.json, silhouettes.json,
+#                           inflight.json, priority-todos.json, done-todos.json,
+#                           session.key)
+#   config/env           — ~/.config/yen-hub/env  (⚠️ API KEYS IN PLAINTEXT)
+#   meta/                — git remotes, PATH line, OS info, .claude refs
+#
+# The bundle does NOT include code (yen-hub repo + vault) — those live in
+# git, clone them separately on the new machine. See ADR 0007.
+#
+# Usage:
+#   yen-migrate-export                     # → ~/yen-migrate-YYYY-MM-DD.tar.gz
+#   yen-migrate-export /path/to/out.tar.gz # specific path
+#
+# Security:
+#   The output .tar.gz CONTAINS YOUR API KEYS. Treat it like a password.
+#   Recommended: encrypt before transit (`gpg -c the.tar.gz`) and delete
+#   the unencrypted file.
+
+set -euo pipefail
+
+OUT="${1:-$HOME/yen-migrate-$(date +%Y-%m-%d).tar.gz}"
+APP_DATA="$HOME/Library/Application Support/com.yen.hub"
+ENV_FILE="$HOME/.config/yen-hub/env"
+STAGE="$(mktemp -d -t yen-migrate)"
+
+trap 'rm -rf "$STAGE"' EXIT
+
+echo "▸ Staging bundle at $STAGE"
+mkdir -p "$STAGE/app-data" "$STAGE/config" "$STAGE/meta"
+
+# ── manifest ─────────────────────────────────────────────────────────
+{
+  echo "# yen-migrate bundle manifest"
+  echo "exported_at: $(date -Iseconds)"
+  echo "exported_from_host: $(hostname)"
+  echo "exported_from_user: $USER"
+  echo "exported_from_os: $(uname -srm)"
+  echo ""
+  echo "## Contents"
+  echo "- app-data/  Application Support state (JSON files + session.key)"
+  echo "- config/    env file with API keys (⚠️ SECRETS)"
+  echo "- meta/      git remotes, PATH line, .claude refs"
+  echo ""
+  echo "## Not included (live in git)"
+  echo "- yen-hub source code"
+  echo "- Yen Vault"
+  echo ""
+  echo "## Restore"
+  echo "  yen-migrate-import <this-file>.tar.gz"
+} > "$STAGE/manifest.txt"
+
+# ── app-data ─────────────────────────────────────────────────────────
+if [ -d "$APP_DATA" ]; then
+  # Skip the _backup-* subdirectory — those are old snapshots, no need
+  # to migrate them along.
+  rsync -a \
+    --exclude '_backup-*' \
+    --exclude '.DS_Store' \
+    "$APP_DATA/" "$STAGE/app-data/"
+  echo "▸ app-data: $(find "$STAGE/app-data" -type f | wc -l | tr -d ' ') files"
+else
+  echo "⚠ no app data found at $APP_DATA (skipping)"
+fi
+
+# ── config (env file with secrets) ───────────────────────────────────
+if [ -f "$ENV_FILE" ]; then
+  cp "$ENV_FILE" "$STAGE/config/env"
+  chmod 0600 "$STAGE/config/env"
+  echo "▸ config: env file included (⚠️ contains API keys)"
+else
+  echo "⚠ no env file at $ENV_FILE (skipping)"
+fi
+
+# ── meta ─────────────────────────────────────────────────────────────
+{
+  echo "# Git remotes (for reference; clone on new machine)"
+  for repo in "$HOME/Desktop/Yen/Develop/yen-hub" "$HOME/Desktop/Yen/Yen_Vault"; do
+    if [ -d "$repo/.git" ]; then
+      echo ""
+      echo "## $(basename "$repo")"
+      git -C "$repo" remote -v 2>/dev/null || echo "(no remotes)"
+      echo "branch: $(git -C "$repo" branch --show-current 2>/dev/null || echo "?")"
+      echo "HEAD:   $(git -C "$repo" rev-parse HEAD 2>/dev/null || echo "?")"
+    fi
+  done
+} > "$STAGE/meta/git-remotes.txt"
+
+# Capture the PATH-export line (so new machine knows what to add to .zshrc)
+echo 'export PATH="$HOME/Desktop/Yen/Develop/yen-hub/scripts:$PATH"' \
+  > "$STAGE/meta/zshrc-path-line.txt"
+
+# Note Claude Code skill/agent locations for re-linking
+{
+  echo "# Claude Code AI infra references"
+  echo "# (the new machine needs to install/symlink these to be functionally identical)"
+  echo ""
+  echo "## User-level"
+  echo "~/.claude/skills/   — global skills"
+  echo "~/.claude/agents/   — global agent definitions"
+  echo "~/.claude/CLAUDE.md — global user prompt"
+  echo "~/.claude/projects/-Users-yen-Desktop-Yen/memory/ — auto-memory"
+  echo ""
+  echo "## Vault正本 (already moves with vault)"
+  echo "06 - AI Data/skills/   — project skills (正本)"
+  echo "06 - AI Data/agents/   — agent SOULs (正本)"
+  echo ""
+  echo "## Cursor (already in Develop repo)"
+  echo "~/Desktop/Yen/Develop/.cursor/rules/"
+} > "$STAGE/meta/claude-code-refs.txt"
+
+# ── pack ─────────────────────────────────────────────────────────────
+echo "▸ Packing → $OUT"
+tar -czf "$OUT" -C "$STAGE" .
+chmod 0600 "$OUT"
+SIZE=$(du -h "$OUT" | cut -f1)
+
+echo ""
+echo "✓ Done. $OUT ($SIZE)"
+echo ""
+echo "⚠️  This bundle contains API keys (env file)."
+echo "    Recommended next step: encrypt before transit."
+echo "       gpg -c \"$OUT\"            # creates ${OUT}.gpg, prompts for passphrase"
+echo "       rm \"$OUT\"                  # delete unencrypted original"
+echo ""
+echo "To restore on the new machine:"
+echo "   yen-migrate-import \"$(basename "$OUT")\""

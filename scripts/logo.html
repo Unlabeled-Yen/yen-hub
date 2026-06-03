@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Yen logo source</title>
+    <style>
+      @font-face {
+        font-family: "Canopee";
+        src: url("../public/fonts/Canopee.otf") format("opentype");
+        font-display: block;
+      }
+
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+      }
+
+      /* macOS app icons render with rounded corners + slight inset added
+         by the OS. We render a flat-edge full bleed and let the OS mask
+         take care of rounding. If you want a tighter inset adjust .pad. */
+      .canvas {
+        width: 1024px;
+        height: 1024px;
+        background: #000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-sizing: border-box;
+        padding: 64px; /* breathing room from edges */
+      }
+
+      .word {
+        font-family: "Canopee", serif;
+        color: #fff;
+        font-size: 520px;
+        letter-spacing: -0.035em;
+        line-height: 0.82;
+        text-align: center;
+        white-space: nowrap;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="canvas">
+      <div class="word">YEN</div>
+    </div>
+  </body>
+</html>

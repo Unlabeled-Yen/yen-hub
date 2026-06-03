@@ -28,7 +28,7 @@ const RULES: { pattern: RegExp; category: string }[] = [
   { pattern: /WritingSkill|writing-v1/, category: "寫作 ／ Skill" },
   { pattern: /寫作/, category: "寫作 ／ 其他" },
 
-  // AI Toolkit / agents / skills
+  // AI Data (renamed 2026-06-02 from "AI Toolkit") — agents / skills
   { pattern: /Agent系統|agentic|Agent/, category: "AI ／ Agent" },
   { pattern: /skill-design|Skill能力|Skill/, category: "AI ／ Skill" },
   { pattern: /ClaudeCode|claude-code/, category: "AI ／ Claude Code" },

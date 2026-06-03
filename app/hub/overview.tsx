@@ -21,6 +21,7 @@ import { ReadingProgress } from "@/components/reading-progress";
 import { MarketMonitor } from "@/components/market-monitor";
 import { WorldClock } from "@/components/world-clock";
 import type { AttentionResponse } from "@/lib/vault/attention-types";
+import { tokenFetch } from "@/lib/security/sidecar-token";
 
 type Span = { cols?: number; rows?: number };
 type ModuleDef = {
@@ -184,7 +185,7 @@ export function Overview() {
     let cancelled = false;
     (async () => {
       try {
-        const r = await fetch("/api/vault/attention?days=7", {
+        const r = await tokenFetch("/api/vault/attention?days=7", {
           credentials: "same-origin",
         });
         if (!r.ok) return;

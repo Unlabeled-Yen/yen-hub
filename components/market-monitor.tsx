@@ -16,6 +16,7 @@ import { motion } from "motion/react";
 import { useEffect, useState } from "react";
 import { CandleChart, type Candle } from "./candle-chart";
 import { EASE } from "@/lib/animation/constants";
+import { tokenFetch } from "@/lib/security/sidecar-token";
 
 type Timeframe = "15m" | "2h" | "1d";
 
@@ -84,7 +85,7 @@ export function MarketMonitor() {
     let cancelled = false;
     async function pull() {
       try {
-        const r = await fetch(`/api/market/us30?tf=${tf}`, {
+        const r = await tokenFetch(`/api/market/us30?tf=${tf}`, {
           credentials: "same-origin",
         });
         if (!r.ok) {

@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+# yen-migrate-import — restore a bundle produced by yen-migrate-export.
+#
+# Safe by default:
+#   - Existing files are backed up to ~/Library/Application Support/com.yen.hub/_pre-import-<ts>/
+#     and ~/.config/yen-hub/_pre-import-<ts>/  before overwrite.
+#   - session.key from the bundle is NOT restored — it's machine-bound
+#     (webauthn passkey will not transfer; re-register on new machine).
+#   - env file restore requires explicit confirmation.
+#
+# Usage:
+#   yen-migrate-import bundle.tar.gz
+#   yen-migrate-import --dry-run bundle.tar.gz   # list what would be done
+
+set -euo pipefail
+
+DRY=0
+if [ "${1:-}" = "--dry-run" ]; then
+  DRY=1
+  shift
+fi
+
+BUNDLE="${1:-}"
+if [ -z "$BUNDLE" ] || [ ! -f "$BUNDLE" ]; then
+  echo "usage: yen-migrate-import [--dry-run] <bundle.tar.gz>"
+  exit 1
+fi
+
+TS=$(date +%Y%m%d-%H%M%S)
+STAGE="$(mktemp -d -t yen-migrate-import)"
+APP_DATA="$HOME/Library/Application Support/com.yen.hub"
+ENV_FILE="$HOME/.config/yen-hub/env"
+
+trap 'rm -rf "$STAGE"' EXIT
+
+echo "▸ Extracting bundle to $STAGE"
+tar -xzf "$BUNDLE" -C "$STAGE"
+
+if [ ! -f "$STAGE/manifest.txt" ]; then
+  echo "✗ no manifest.txt — this doesn't look like a yen-migrate bundle"
+  exit 1
+fi
+
+echo ""
+echo "── Bundle manifest ──"
+head -8 "$STAGE/manifest.txt"
+echo ""
+
+if [ "$DRY" = 1 ]; then
+  echo "── DRY RUN — would do these things ──"
+  [ -d "$STAGE/app-data" ] && echo "  app-data → $APP_DATA  (backup existing to _pre-import-$TS)"
+  [ -f "$STAGE/config/env" ] && echo "  env      → $ENV_FILE   (PROMPT for confirmation)"
+  echo ""
+  echo "Re-run without --dry-run to apply."
+  exit 0
+fi
+
+# ── app-data ─────────────────────────────────────────────────────────
+if [ -d "$STAGE/app-data" ]; then
+  echo "▸ Restoring app-data"
+  mkdir -p "$APP_DATA"
+  if find "$APP_DATA" -maxdepth 1 -type f \( -name '*.json' -o -name 'session.key' \) | grep -q .; then
+    PRE_BAK="$APP_DATA/_pre-import-$TS"
+    mkdir -p "$PRE_BAK"
+    # Move (not copy) existing files into the backup so we have a clean slate.
+    find "$APP_DATA" -maxdepth 1 -type f -exec mv {} "$PRE_BAK/" \;
+    echo "  existing files moved to: $PRE_BAK"
+  fi
+  # Restore everything EXCEPT session.key (machine-bound).
+  rsync -a --exclude 'session.key' "$STAGE/app-data/" "$APP_DATA/"
+  if [ -f "$STAGE/app-data/session.key" ]; then
+    echo "  ⚠ session.key NOT restored (bound to source machine);"
+    echo "    a new key will be generated on first .app launch."
+  fi
+fi
+
+# ── env ──────────────────────────────────────────────────────────────
+if [ -f "$STAGE/config/env" ]; then
+  echo ""
+  echo "▸ Bundle includes config/env (API keys in plaintext)."
+  if [ -f "$ENV_FILE" ]; then
+    echo "  Existing env file at $ENV_FILE will be backed up."
+  fi
+  printf "  Restore env file? (y/N): "
+  read -r ans
+  if [ "$ans" = "y" ] || [ "$ans" = "Y" ]; then
+    mkdir -p "$(dirname "$ENV_FILE")"
+    if [ -f "$ENV_FILE" ]; then
+      mkdir -p "$HOME/.config/yen-hub/_pre-import-$TS"
+      mv "$ENV_FILE" "$HOME/.config/yen-hub/_pre-import-$TS/env"
+      echo "  backed up to: ~/.config/yen-hub/_pre-import-$TS/env"
+    fi
+    cp "$STAGE/config/env" "$ENV_FILE"
+    chmod 0600 "$ENV_FILE"
+    echo "  ✓ env restored (0600)"
+  else
+    echo "  Skipped. env file in bundle NOT applied."
+  fi
+fi
+
+# ── meta (informational only) ────────────────────────────────────────
+echo ""
+echo "── Meta references (do these manually if needed) ──"
+if [ -f "$STAGE/meta/git-remotes.txt" ]; then
+  echo "  Git remotes captured in: $STAGE/meta/git-remotes.txt"
+fi
+if [ -f "$STAGE/meta/zshrc-path-line.txt" ]; then
+  echo "  Add to ~/.zshrc:"
+  echo "    $(cat "$STAGE/meta/zshrc-path-line.txt")"
+fi
+
+echo ""
+echo "✓ Import done. Next steps:"
+echo "   1. (if new machine) clone yen-hub + vault from git remotes above"
+echo "   2. pnpm install && pnpm tauri:build"
+echo "   3. (if Touch ID prompt fails) visit /setup to re-register passkey"
+echo "   4. yen-app-launch"
+echo "   5. yen-audit-conventions  → verify env / state intact"

@@ -14,6 +14,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   type EvidenceRef,
+  type Importance,
+  type IntentionMeta,
   type Observation,
   newObservationId,
 } from "./types";
@@ -83,6 +85,9 @@ export async function createObservationFromIntent(args: {
   evidence: EvidenceRef[];
   source_agent_id: string; // "duffy"
   reason: string;
+  importance: Importance;
+  intention?: IntentionMeta;  // Slice 8
+  nudge_for?: string;         // Slice 8
 }): Promise<Observation> {
   const m = await load();
   const obs: Observation = {
@@ -97,10 +102,55 @@ export async function createObservationFromIntent(args: {
     source_agent_id: args.source_agent_id,
     reason: args.reason,
     created_at: Date.now(),
+    importance: args.importance,
+    intention: args.intention,
+    nudge_for: args.nudge_for,
   };
   m[obs.id] = obs;
   await save();
   return obs;
+}
+
+/**
+ * Bump an observation's intention.last_touched_at to now. Used when Yen
+ * re-mentions an intention so it stops being "stale". Idempotent.
+ */
+export async function touchIntention(id: string): Promise<Observation | undefined> {
+  const m = await load();
+  const obs = m[id];
+  if (!obs || !obs.intention) return undefined;
+  obs.intention = { ...obs.intention, last_touched_at: Date.now() };
+  await save();
+  return obs;
+}
+
+/** List observations that carry an open/in_progress intention. */
+export async function listIntentionObservations(): Promise<Observation[]> {
+  const m = await load();
+  return Object.values(m).filter(
+    (o) =>
+      o.intention &&
+      (o.intention.status === "open" || o.intention.status === "in_progress"),
+  );
+}
+
+/** Mark an observation as read (clears the unread-HIGH badge). */
+export async function markObservationRead(id: string): Promise<Observation | undefined> {
+  const m = await load();
+  const obs = m[id];
+  if (!obs) return undefined;
+  if (obs.read_at) return obs; // idempotent
+  obs.read_at = Date.now();
+  await save();
+  return obs;
+}
+
+/** Count of un-read HIGH-importance observations. Used by Page A badge. */
+export async function countUnreadHighImportance(): Promise<number> {
+  const m = await load();
+  return Object.values(m).filter(
+    (o) => o.importance === "high" && !o.read_at,
+  ).length;
 }
 
 /** Test helper — wipe everything. Not exposed in API routes. */

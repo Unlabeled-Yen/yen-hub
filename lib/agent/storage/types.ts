@@ -1,84 +1,232 @@
 /**
- * Agent storage types — Intent / Observation / Provenance.
+ * Agent storage types — Intent / Observation / Silhouette / Summary.
  *
- * Designed SQL-friendly so the JSON-file storage layer (Slice 6) can migrate
- * to SQLite / Turso in a later slice without touching call sites. See
- * `lib/agent/storage/intents.ts` and `observations.ts` for the JSON impl.
+ * Designed SQL-friendly so the JSON-file storage layer (Slice 6 / 7A) can
+ * migrate to SQLite / Turso in a later slice without touching call sites.
  *
- * — Slice 6 / 2026-06-02
+ * Slice 7A additions (2026-06-02):
+ *  - `importance` on Intent + Observation
+ *  - `read_at` on Observation (badge unread-count uses this)
+ *  - Silhouette type + 5 SOUL-style fields
+ *  - Summary type (ISO week)
+ *  - IntentKind extended to support silhouette_update + summary proposals
  */
 
 /* -------------------------------------------------------------------------- */
-/*  Provenance — every agent-touched record carries source attribution.       */
+/*  Provenance + Evidence (unchanged)                                         */
 /* -------------------------------------------------------------------------- */
 
 export type ProvenanceSource =
-  | "user" // Yen wrote it directly
-  | "agent" // an agent wrote it (must go via intent)
-  | "user-via-agent" // Yen told the agent to write it (still goes via intent)
-  | "legacy"; // pre-Slice-6 data, source unknown
-
-/* -------------------------------------------------------------------------- */
-/*  Evidence — what observation / intent is backed by.                        */
-/* -------------------------------------------------------------------------- */
+  | "user"
+  | "agent"
+  | "user-via-agent"
+  | "legacy";
 
 export type EvidenceRef =
   | {
       kind: "attention";
-      zone: string; // e.g. "septic", "writing"
+      zone: string;
       metric: "total" | "added" | "opened" | "hoardRatio";
       value: number;
-      window?: number; // days
+      window?: number;
     }
   | {
       kind: "vault_file";
-      path: string; // relative to vault root
+      path: string;
     }
   | {
       kind: "todo";
       file: string;
-      text: string; // first ~80 chars
+      text: string;
     }
   | {
       kind: "observation";
-      id: string; // ref to prior observation
+      id: string;
     };
 
 /* -------------------------------------------------------------------------- */
-/*  Observation — the first "thing Duffy can write".                          */
-/*                                                                            */
-/*  A structured note about Yen's state. Lives in observations.json AFTER     */
-/*  Yen approves the corresponding intent.                                    */
+/*  Observation                                                               */
 /* -------------------------------------------------------------------------- */
 
-export type ObservationPayload = {
-  title: string; // one-line summary, shown in card header
-  body: string; // full description
-  zone?: string; // attention zone if relevant
-  window?: { days: number }; // observation time window
+/**
+ * Slice 8 (B · 醒提主動) — observations may optionally carry an
+ * `intention`: a record that Yen said he intends to do/finish/decide
+ * something. Stale intentions (no touch for N days) are surfaced as
+ * nudge cards by `duffy/stale-intentions.ts`.
+ *
+ * Naming caveat: `Intent` (the unifying proposal type) is unrelated to
+ * `Intention` (a user-stated commitment). The collision is awkward but
+ * the domains stay separate; we never store an Intention as an Intent.
+ */
+export type IntentionStatus = "open" | "in_progress" | "done" | "dropped";
+
+export type IntentionMeta = {
+  status: IntentionStatus;
+  /** ms timestamp; optional — many intentions have no deadline. */
+  target_date?: number;
+  /** ms; bumped whenever Yen progresses or re-mentions the intention. */
+  last_touched_at: number;
+  /** Verbatim phrase that triggered Duffy to mark this as an intention. */
+  source_text?: string;
 };
+
+export type ObservationPayload = {
+  title: string;
+  body: string;
+  zone?: string;
+  window?: { days: number };
+  /** Slice 8: when this observation captures a commitment Yen made. */
+  intention?: IntentionMeta;
+  /** Slice 8: id of the observation this nudge is reminding Yen of.
+   *  Renders as an orange-tinted card; coach card may surface it too. */
+  nudge_for?: string;
+};
+
+export type Importance = "high" | "medium" | "low";
 
 export type Observation = {
   id: string;
-  source_intent: string; // the Intent.id this came from
+  source_intent: string;
   title: string;
   body: string;
   zone?: string;
   window?: { days: number };
   evidence: EvidenceRef[];
   source: Extract<ProvenanceSource, "agent" | "user-via-agent">;
-  source_agent_id?: string; // e.g. "duffy"
-  reason: string; // mirrors Intent.rationale at the moment of approval
-  created_at: number; // epoch ms (approval time)
+  source_agent_id?: string;
+  reason: string;
+  created_at: number;
+  importance: Importance;     // ← Slice 7A
+  read_at?: number;           // ← Slice 7A (user 看過後標記;徽章用此算 unread)
+  intention?: IntentionMeta;  // ← Slice 8 (mirrors payload.intention; mutable)
+  nudge_for?: string;         // ← Slice 8 (set when this observation is a nudge)
 };
 
 /* -------------------------------------------------------------------------- */
-/*  Intent — an agent's proposal awaiting Yen's decision.                     */
+/*  Silhouette — Duffy's portrait of the user (5-field SOUL.md style)         */
 /* -------------------------------------------------------------------------- */
 
-export type IntentKind = "observation"; // Slice 7+ adds more
+export type SilhouetteField =
+  | "identity"
+  | "style"
+  | "values"
+  | "boundaries"
+  | "priorities";
 
-export type IntentPayload = ObservationPayload; // discriminated by kind once we add more
+export type SilhouetteUpdatePayload = {
+  /** Which field to update. "full" replaces all 5 in one shot (used by bootstrap). */
+  field: SilhouetteField | "full";
+  /** New value:
+   * - if field === "full": JSON-stringified object with all 5 fields
+   * - else: plain text replacing just that field */
+  new_value: string;
+  /** Why this update is being proposed — shown verbatim in approval card. */
+  reason: string;
+  /** Duffy's self-assessed confidence after this update lands. */
+  confidence: "low" | "medium" | "high";
+};
+
+export type Silhouette = {
+  id: string;
+  version: number;            // monotonic; v1 = bootstrap, v2+ = updates
+  identity: string;
+  style: string;
+  values: string;
+  boundaries: string;
+  priorities: string;
+  confidence: "low" | "medium" | "high";
+  source_intent: string;
+  source_agent_id: string;    // "duffy"
+  reason: string;             // mirrors intent.rationale at approval
+  created_at: number;
+};
+
+/* -------------------------------------------------------------------------- */
+/*  Summary — weekly snapshot                                                  */
+/* -------------------------------------------------------------------------- */
+
+export type SummaryKeyNumber = {
+  label: string;              // e.g. "septic 區新增 / 開啟"
+  value: string;              // e.g. "18 / 2"
+  delta?: string;             // vs 上週,e.g. "+5 / -1"
+};
+
+export type SummaryPayload = {
+  /** ISO week format e.g. "2026-W23" */
+  week: string;
+  headline: string;           // 一句話
+  key_numbers: SummaryKeyNumber[];
+  pattern: string;            // 一段話描述模式
+  proposed_actions: string[]; // 下週可考慮的行動
+  source_observations: string[]; // observation ids
+};
+
+export type Summary = {
+  id: string;
+  week: string;
+  generated_at: number;
+  headline: string;
+  key_numbers: SummaryKeyNumber[];
+  pattern: string;
+  proposed_actions: string[];
+  source_observations: string[];
+  source_intent: string;
+  source_agent_id: string;
+  created_at: number;
+};
+
+/* -------------------------------------------------------------------------- */
+/*  Intent — unifies all three proposal kinds                                  */
+/* -------------------------------------------------------------------------- */
+
+/* -------------------------------------------------------------------------- */
+/*  Slice 9 — Execution payloads (vault writes, structured plans)             */
+/*  All still gated by user approval; the kinds just describe the target.     */
+/* -------------------------------------------------------------------------- */
+
+export type FileCreatePayload = {
+  /** Vault-relative path. Must not exist yet. */
+  path: string;
+  content: string;
+  rationale: string;
+};
+
+export type FileEditPayload = {
+  /** Vault-relative path. Must exist. */
+  path: string;
+  /** Exact substring to replace. Must appear EXACTLY ONCE in the file. */
+  old_text: string;
+  new_text: string;
+  rationale: string;
+};
+
+export type TodoPlanItem = {
+  text: string;
+  category?: string;
+};
+
+export type TodoPlanPayload = {
+  title: string;
+  items: TodoPlanItem[];
+  rationale: string;
+};
+
+export type IntentKind =
+  | "observation"
+  | "silhouette_update"
+  | "summary"
+  | "file_create"
+  | "file_edit"
+  | "todo_plan";
+
+/** Discriminated by `kind` at the Intent level. */
+export type IntentPayload =
+  | ObservationPayload
+  | SilhouetteUpdatePayload
+  | SummaryPayload
+  | FileCreatePayload
+  | FileEditPayload
+  | TodoPlanPayload;
 
 export type IntentStatus = "pending" | "approved" | "rejected";
 
@@ -86,29 +234,81 @@ export type Intent = {
   id: string;
   kind: IntentKind;
   payload: IntentPayload;
-  proposed_by: string; // agent id, e.g. "duffy"
-  proposed_at: number; // epoch ms
+  proposed_by: string;
+  proposed_at: number;
   status: IntentStatus;
-  rationale: string; // why the agent thinks this is worth proposing
+  rationale: string;
   evidence: EvidenceRef[];
+  importance: Importance;     // ← Slice 7A
   decided_at?: number;
   decided_by?: "user";
-  // when approved, the resulting observation id (for backlinking)
-  resulted_in?: string;
+  resulted_in?: string;       // observation / silhouette / summary id
 };
 
 /* -------------------------------------------------------------------------- */
-/*  Helpers                                                                   */
+/*  Helpers                                                                    */
 /* -------------------------------------------------------------------------- */
 
-/**
- * Fresh intent id. Uses crypto.randomUUID() for parity with
- * lib/conversations/store.ts; short prefix lets us tell them apart in logs.
- */
 export function newIntentId(): string {
   return `int_${crypto.randomUUID()}`;
 }
 
 export function newObservationId(): string {
   return `obs_${crypto.randomUUID()}`;
+}
+
+export function newSilhouetteId(): string {
+  return `sil_${crypto.randomUUID()}`;
+}
+
+export function newSummaryId(): string {
+  return `sum_${crypto.randomUUID()}`;
+}
+
+/** ISO-week label for a Date, e.g. 2026-W23. */
+export function isoWeek(d: Date = new Date()): string {
+  // Copy date so we don't mutate; set to nearest Thursday (ISO week defn).
+  const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const dayNum = t.getUTCDay() || 7;
+  t.setUTCDate(t.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(t.getUTCFullYear(), 0, 1));
+  const week = Math.ceil(((t.getTime() - yearStart.getTime()) / 86_400_000 + 1) / 7);
+  return `${t.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
+}
+
+/** Narrowing helpers for the payload union. */
+export function isObservationPayload(
+  intent: Intent,
+): intent is Intent & { payload: ObservationPayload } {
+  return intent.kind === "observation";
+}
+
+export function isSilhouetteUpdatePayload(
+  intent: Intent,
+): intent is Intent & { payload: SilhouetteUpdatePayload } {
+  return intent.kind === "silhouette_update";
+}
+
+export function isSummaryPayload(
+  intent: Intent,
+): intent is Intent & { payload: SummaryPayload } {
+  return intent.kind === "summary";
+}
+
+export function isFileCreatePayload(
+  intent: Intent,
+): intent is Intent & { payload: FileCreatePayload } {
+  return intent.kind === "file_create";
+}
+
+export function isFileEditPayload(
+  intent: Intent,
+): intent is Intent & { payload: FileEditPayload } {
+  return intent.kind === "file_edit";
+}
+
+export function isTodoPlanPayload(
+  intent: Intent,
+): intent is Intent & { payload: TodoPlanPayload } {
+  return intent.kind === "todo_plan";
 }

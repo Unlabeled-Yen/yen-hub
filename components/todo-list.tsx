@@ -20,6 +20,7 @@
 import { motion, AnimatePresence } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { EASE } from "@/lib/animation/constants";
+import { tokenFetch } from "@/lib/security/sidecar-token";
 
 type Todo = {
   file: string;
@@ -415,7 +416,7 @@ export function TodoList() {
     let cancelled = false;
     (async () => {
       try {
-        const r = await fetch("/api/vault/todos", {
+        const r = await tokenFetch("/api/vault/todos", {
           credentials: "same-origin",
         });
         if (!r.ok) {
@@ -461,7 +462,7 @@ export function TodoList() {
       return m;
     });
     try {
-      await fetch("/api/vault/todos/complete", {
+      await tokenFetch("/api/vault/todos/complete", {
         method: next ? "POST" : "DELETE",
         credentials: "same-origin",
         headers: { "content-type": "application/json" },
@@ -485,7 +486,7 @@ export function TodoList() {
       return m;
     });
     try {
-      await fetch("/api/vault/todos/priority", {
+      await tokenFetch("/api/vault/todos/priority", {
         method: next ? "POST" : "DELETE",
         credentials: "same-origin",
         headers: { "content-type": "application/json" },

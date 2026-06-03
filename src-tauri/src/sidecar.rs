@@ -81,6 +81,44 @@ fn wait_until_ready(port: u16) -> Result<(), String> {
 /// as `X-Yen-Token`. Other local processes can't read another process's
 /// env or memory on macOS without special entitlements, so this raises the
 /// bar against casual "any localhost process pokes 127.0.0.1" attacks.
+/// Parse `~/.config/yen-hub/env` into a `HashMap<String, String>`. Missing
+/// file = empty map. Malformed lines are silently skipped — the file is
+/// user-edited and we'd rather degrade than crash on a typo.
+fn load_env_file() -> std::collections::HashMap<String, String> {
+    let mut map = std::collections::HashMap::new();
+    let path = match dirs_home() {
+        Some(home) => home.join(".config/yen-hub/env"),
+        None => return map,
+    };
+    let content = match fs::read_to_string(&path) {
+        Ok(s) => s,
+        Err(_) => return map,
+    };
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some(eq) = line.find('=') else { continue };
+        let key = line[..eq].trim().to_string();
+        let mut value = line[eq + 1..].trim().to_string();
+        // Strip optional surrounding quotes so `KEY="value with spaces"` works.
+        if (value.starts_with('"') && value.ends_with('"') && value.len() >= 2)
+            || (value.starts_with('\'') && value.ends_with('\'') && value.len() >= 2)
+        {
+            value = value[1..value.len() - 1].to_string();
+        }
+        if !key.is_empty() {
+            map.insert(key, value);
+        }
+    }
+    map
+}
+
+fn dirs_home() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(PathBuf::from)
+}
+
 fn mint_sidecar_token() -> Result<String, String> {
     let mut buf = [0u8; 32];
     fs::File::open("/dev/urandom")
@@ -108,15 +146,58 @@ pub fn launch(app: &AppHandle, window: WebviewWindow) -> Result<String, String> 
     let session_password = ensure_session_secret(app)?;
     let sidecar_token = mint_sidecar_token()?;
 
-    // Resolve the Obsidian vault path:
-    //   1. YEN_VAULT_PATH from the launching environment (if user exported it)
-    //   2. Hardcoded fallback to Yen's actual vault location
-    // Same shape for ANTHROPIC_API_KEY — pass it through if set, otherwise
-    // the book-translation AI fallback degrades gracefully to bare-parse.
-    let vault_path = std::env::var("YEN_VAULT_PATH")
-        .unwrap_or_else(|_| "/Users/yen/Desktop/Yen/Yen_Vault".to_string());
-    let anthropic_key = std::env::var("ANTHROPIC_API_KEY").unwrap_or_default();
-    let twelve_data_key = std::env::var("TWELVE_DATA_KEY").unwrap_or_default();
+    // CRITICAL: store the token in Tauri state BEFORE we navigate the
+    // webview. If we wait until launch() returns (in lib.rs), the React
+    // app inside the webview can mount and fire API requests against the
+    // sidecar before the token-from-URL has propagated — middleware then
+    // 403s every initial fetch. Storing early closes the race window.
+    if let Some(state) = app.try_state::<crate::SidecarToken>() {
+        if let Ok(mut guard) = state.0.lock() {
+            *guard = sidecar_token.clone();
+        }
+    }
+
+    // Env keys for the sidecar can come from EITHER:
+    //   1. The launching process env (`pnpm tauri:dev` inherits the shell —
+    //      ~/.zshrc exports flow through).
+    //   2. A config file at `~/.config/yen-hub/env`. Used when the .app is
+    //      launched from Finder/Applications, where the shell rc files are
+    //      NOT sourced and process env is sparse.
+    //
+    // File format: plain `KEY=VALUE` lines, `#` comments allowed, blank
+    // lines ignored. Values are NOT shell-expanded — what you write is
+    // what gets passed.
+    let env_overrides = load_env_file();
+    let env_get = |k: &str| -> String {
+        if let Some(v) = env_overrides.get(k) {
+            return v.clone();
+        }
+        std::env::var(k).unwrap_or_default()
+    };
+
+    let vault_path = {
+        let v = env_get("YEN_VAULT_PATH");
+        if v.is_empty() {
+            "/Users/yen/Desktop/Yen/Yen_Vault".to_string()
+        } else {
+            v
+        }
+    };
+    let anthropic_key = env_get("ANTHROPIC_API_KEY");
+    let kimi_key = env_get("KIMI_API_KEY");
+    let kimi_base_url = env_get("KIMI_BASE_URL");
+    let duffy_provider = env_get("DUFFY_PROVIDER");
+    let duffy_model = env_get("DUFFY_MODEL");
+    let twelve_data_key = env_get("TWELVE_DATA_KEY");
+
+    log::info!(
+        "yen sidecar: env loaded from file ({} keys); td={}, kimi={}, anthropic={}, duffy={}",
+        env_overrides.len(),
+        if !twelve_data_key.is_empty() { "yes" } else { "no" },
+        if !kimi_key.is_empty() { "yes" } else { "no" },
+        if !anthropic_key.is_empty() { "yes" } else { "no" },
+        if !duffy_provider.is_empty() { duffy_provider.as_str() } else { "none" },
+    );
 
     let mut sidecar = app
         .shell()
@@ -132,6 +213,18 @@ pub fn launch(app: &AppHandle, window: WebviewWindow) -> Result<String, String> 
 
     if !anthropic_key.is_empty() {
         sidecar = sidecar.env("ANTHROPIC_API_KEY", anthropic_key);
+    }
+    if !kimi_key.is_empty() {
+        sidecar = sidecar.env("KIMI_API_KEY", kimi_key);
+    }
+    if !kimi_base_url.is_empty() {
+        sidecar = sidecar.env("KIMI_BASE_URL", kimi_base_url);
+    }
+    if !duffy_provider.is_empty() {
+        sidecar = sidecar.env("DUFFY_PROVIDER", duffy_provider);
+    }
+    if !duffy_model.is_empty() {
+        sidecar = sidecar.env("DUFFY_MODEL", duffy_model);
     }
     if !twelve_data_key.is_empty() {
         sidecar = sidecar.env("TWELVE_DATA_KEY", twelve_data_key);
@@ -164,7 +257,19 @@ pub fn launch(app: &AppHandle, window: WebviewWindow) -> Result<String, String> 
     wait_until_ready(port)?;
     log::info!("yen sidecar: ready on :{port}, navigating webview");
 
-    let url = format!("http://127.0.0.1:{port}/")
+    // Token transport (2026-06-02 / Slice 6.5):
+    //
+    // Pass the per-startup sidecar token as a `?_yt=` query parameter on
+    // the initial navigation. The client-side `sidecar-token.ts` module
+    // reads `window.location.search` at module load, stashes the token
+    // into a module-level cache + sessionStorage, then strips the query
+    // via history.replaceState so it doesn't appear in subsequent
+    // navigations or screenshots.
+    //
+    // The sessionStorage path is what survives Cmd+R reload (the URL no
+    // longer has the query at that point).
+    let url_str = format!("http://127.0.0.1:{port}/?_yt={sidecar_token}");
+    let url = url_str
         .parse()
         .map_err(|e| format!("parse url: {e}"))?;
     window.navigate(url).map_err(|e| format!("navigate: {e}"))?;

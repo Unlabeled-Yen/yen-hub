@@ -269,7 +269,11 @@ textarea,
     rgba(248, 198, 115, 0.03) 60%,
     rgba(248, 198, 115, 0.00) 78%
   );
-  mix-blend-mode: screen;
+  /* mix-blend-mode: screen was here — removed because (a) the page bg
+     #0a0b0e is near-black, so screen blends to ~the same RGB as plain
+     compositing, and (b) the blend mode created a compositor layer that
+     WKWebView refused to re-rasterize when the window was resized,
+     leaving a ghost YEN at the previous paint position. */
   filter: blur(4px);
   animation: aura-breathe 8.5s ease-in-out infinite;
   will-change: opacity, transform;

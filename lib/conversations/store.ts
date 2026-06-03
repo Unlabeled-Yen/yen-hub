@@ -1,11 +1,20 @@
 /**
- * Conversation persistence — localStorage for v0.
- * Migrates to SQLite (Tauri) or Turso (sync) in a later slice.
+ * Conversation persistence — client side wrapper around `/api/conversations`.
  *
- * Shape kept tiny and stable so the migration is mechanical.
+ * Slice 8.7: moved from localStorage to server-side JSON because each .app
+ * launch picks a new ephemeral port → localStorage was effectively wiped on
+ * every restart. Server-side persistence survives port churn.
+ *
+ * Strategy:
+ *   - Memory cache hydrates on first call (sync API stays for hot paths).
+ *   - Writes go through API (`tokenFetch`); also update the cache.
+ *   - `loadFromServer()` is what the chat UI calls on mount to bootstrap.
+ *
+ * Migration path: when the server moves to SQLite, this file doesn't change.
  */
 
 import type { UIMessage } from "ai";
+import { tokenFetch } from "@/lib/security/sidecar-token";
 
 export type Conversation = {
   id: string;
@@ -15,48 +24,89 @@ export type Conversation = {
   updatedAt: number;
 };
 
-const LIST_KEY = "yen-hub:conversations";
-const ACTIVE_KEY = "yen-hub:active-conversation";
+// In-memory cache, hydrated lazily.
+let cache: Map<string, Conversation> = new Map();
+let activeId: string | null = null;
+let hydrated = false;
+let hydrating: Promise<void> | null = null;
 
-function safeParse<T>(raw: string | null, fallback: T): T {
-  if (!raw) return fallback;
+async function fetchAll(): Promise<void> {
   try {
-    return JSON.parse(raw) as T;
+    const [listRes, activeRes] = await Promise.all([
+      tokenFetch("/api/conversations"),
+      tokenFetch("/api/conversations/active"),
+    ]);
+    if (listRes.ok) {
+      const data = (await listRes.json()) as { conversations: Conversation[] };
+      cache = new Map(data.conversations.map((c) => [c.id, c]));
+    }
+    if (activeRes.ok) {
+      const { active_id } = (await activeRes.json()) as {
+        active_id: string | null;
+      };
+      activeId = active_id;
+    }
   } catch {
-    return fallback;
+    /* silent — first launch / network blip; cache stays empty */
   }
+  hydrated = true;
 }
 
+/** Bootstrap the cache from server. Call once on chat mount. */
+export async function loadFromServer(): Promise<void> {
+  if (hydrated) return;
+  if (!hydrating) hydrating = fetchAll();
+  await hydrating;
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Sync reads (cache only — call loadFromServer() first)                     */
+/* -------------------------------------------------------------------------- */
+
 export function listConversations(): Conversation[] {
-  if (typeof window === "undefined") return [];
-  return safeParse<Conversation[]>(localStorage.getItem(LIST_KEY), []);
+  return Array.from(cache.values()).sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 export function getConversation(id: string): Conversation | undefined {
-  return listConversations().find((c) => c.id === id);
-}
-
-export function saveConversation(c: Conversation): void {
-  if (typeof window === "undefined") return;
-  const all = listConversations();
-  const i = all.findIndex((x) => x.id === c.id);
-  if (i >= 0) all[i] = c;
-  else all.unshift(c);
-  localStorage.setItem(LIST_KEY, JSON.stringify(all));
+  return cache.get(id);
 }
 
 export function getActiveId(): string | null {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem(ACTIVE_KEY);
+  return activeId;
 }
 
-export function setActiveId(id: string): void {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(ACTIVE_KEY, id);
+/* -------------------------------------------------------------------------- */
+/*  Writes — update cache immediately + fire request to server                */
+/* -------------------------------------------------------------------------- */
+
+export function saveConversation(c: Conversation): void {
+  cache.set(c.id, c);
+  // Fire-and-forget — chat UX shouldn't block on persistence.
+  void tokenFetch("/api/conversations", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(c),
+  }).catch(() => {
+    /* silent — next call will retry */
+  });
+}
+
+export function setActiveId(id: string | null): void {
+  activeId = id;
+  void tokenFetch("/api/conversations/active", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id }),
+  }).catch(() => {
+    /* silent */
+  });
 }
 
 export function createConversation(): Conversation {
-  const id = crypto.randomUUID();
+  const id =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `c_${Date.now()}_${Math.floor(Math.random() * 1e9).toString(36)}`;
   const now = Date.now();
   const c: Conversation = {
     id,
@@ -71,8 +121,8 @@ export function createConversation(): Conversation {
 }
 
 export function ensureActive(): Conversation {
-  const id = getActiveId();
-  const existing = id ? getConversation(id) : undefined;
+  const id = activeId;
+  const existing = id ? cache.get(id) : undefined;
   return existing ?? createConversation();
 }
 

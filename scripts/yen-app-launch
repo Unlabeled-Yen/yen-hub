@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# yen-app-launch — kill running .app, install latest release build to
+# /Applications, launch it, tail the log.
+#
+# Replaces the 6-step manual incantation we ran 6+ times during the
+# 2026-06-02 sidecar-token blackout debug session.
+#
+# Usage:
+#   yen-app-launch          # full cycle (kill → install → launch → tail)
+#   yen-app-launch --no-tail # skip tail at the end (for CI / smoke tests)
+
+set -euo pipefail
+
+APP_SRC="$HOME/Desktop/Yen/Develop/yen-hub/src-tauri/target/release/bundle/macos/Yen.app"
+APP_DST="/Applications/Yen.app"
+LOG="/tmp/yen-app.log"
+
+if [ ! -d "$APP_SRC" ]; then
+  echo "✗ Release build not found at $APP_SRC"
+  echo "  Run 'pnpm tauri:build' first (DMG bundling may fail — that's fine)."
+  exit 1
+fi
+
+echo "▸ Killing prior instances..."
+pkill -f "release/app" 2>/dev/null || true
+pkill -f "Yen.app/Contents/MacOS/app" 2>/dev/null || true
+sleep 1
+
+echo "▸ Installing $(basename "$APP_SRC") → $APP_DST..."
+rm -rf "$APP_DST"
+cp -R "$APP_SRC" "$APP_DST"
+
+echo "▸ Launching..."
+rm -f "$LOG"
+"$APP_DST/Contents/MacOS/app" > "$LOG" 2>&1 &
+pid=$!
+echo "  pid=$pid · log=$LOG"
+
+if [ "${1:-}" = "--no-tail" ]; then
+  exit 0
+fi
+
+echo "▸ Tailing log (Ctrl-C to detach — app keeps running)..."
+sleep 2
+exec tail -f "$LOG"
