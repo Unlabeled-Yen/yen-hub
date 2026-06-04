@@ -1,16 +1,17 @@
 /**
  * GET /api/market/us30?tf=15m|2h|1d
  *
- * Primary source: **Twelve Data** (free tier, 8/min · 800/day).
+ * Primary source: **Yahoo Finance v8/chart** for `YM=F` — E-mini Dow front
+ * month continuous futures (== TradingView's `YM1!`). No API key, public
+ * endpoint, doesn't need the crumb/cookie dance that v7/quote does. 24×5
+ * trading so the chart stays alive in Asia session. Price is in DJI scale
+ * directly (no ETF proxy / ×100 multiplier needed).
  *
- * Twelve Data's free tier doesn't expose ^DJI directly, but the SPDR Dow
- * Jones ETF **DIA** tracks the index 1:1 (≈ DJI / 100). We fetch DIA OHLC
- * + quote, multiply all price fields by 100 to display familiar US30 /
- * DJI numbers, and label the source so it's clear we're using a proxy.
+ * Fallback 1: **Twelve Data** (free tier, 8/min · 800/day), DIA ETF ×100
+ * as DJI proxy. Used when Yahoo blocks or returns garbage.
  *
- * Fallback source: **Stooq CSV** for ^DJI direct price (used when Twelve
- * Data is down or rate-limited). Stooq only gives one candle's worth, so
- * the chart degrades to a single bar in that case.
+ * Fallback 2: **Stooq CSV** for ^DJI direct price. Single bar only — last
+ * resort.
  *
  * Resilience:
  *   - Module-level fresh cache per timeframe (FRESH_MS).
@@ -38,7 +39,7 @@ type Quote = {
   candles: Candle[];
   marketState: string;
   updatedAt: number;
-  source: "twelvedata" | "stooq";
+  source: "yahoo" | "twelvedata" | "stooq";
   timeframe: Timeframe;
   stale?: boolean;
 };
@@ -63,8 +64,15 @@ const TD_OUTPUTSIZE: Record<Timeframe, number> = {
   "1d": 90, // ~4 months of daily bars
 };
 
-async function httpGet(url: string): Promise<{ status: number; body: string }> {
+async function httpGet(
+  url: string,
+  extraHeaders: string[] = [],
+): Promise<{ status: number; body: string }> {
   try {
+    const headerArgs: string[] = [];
+    for (const h of extraHeaders) {
+      headerArgs.push("-H", h);
+    }
     const { stdout } = await execFileP(
       "/usr/bin/curl",
       [
@@ -75,6 +83,7 @@ async function httpGet(url: string): Promise<{ status: number; body: string }> {
         UA,
         "-H",
         "Accept: application/json,text/csv,*/*",
+        ...headerArgs,
         "--max-time",
         "10",
         url,
@@ -91,7 +100,137 @@ async function httpGet(url: string): Promise<{ status: number; body: string }> {
   }
 }
 
-// ---------- Twelve Data (primary) ----------
+// ---------- Yahoo Finance (primary, YM=F front-month Dow futures) ----------
+
+type YahooChart = {
+  chart: {
+    result?: Array<{
+      meta: {
+        regularMarketPrice?: number;
+        previousClose?: number;
+        chartPreviousClose?: number;
+        marketState?: string;
+        regularMarketTime?: number;
+        gmtoffset?: number;
+      };
+      timestamp?: number[];
+      indicators: {
+        quote?: Array<{
+          open?: Array<number | null>;
+          high?: Array<number | null>;
+          low?: Array<number | null>;
+          close?: Array<number | null>;
+        }>;
+      };
+    }>;
+    error?: { code: string; description: string } | null;
+  };
+};
+
+// Map our tf → Yahoo's (interval, range). Yahoo doesn't support 2h
+// natively, so we fetch 60m and aggregate pairs into 2h bars below.
+const YAHOO_PARAMS: Record<
+  Timeframe,
+  { interval: string; range: string; aggregate2h?: boolean }
+> = {
+  "15m": { interval: "15m", range: "5d" },
+  "2h": { interval: "60m", range: "1mo", aggregate2h: true },
+  "1d": { interval: "1d", range: "6mo" },
+};
+
+function aggregatePairs(bars: Candle[]): Candle[] {
+  // Pair consecutive 60m bars → 2h bars. Drop a trailing odd bar so
+  // every output bar covers exactly two upstream candles.
+  const out: Candle[] = [];
+  for (let i = 0; i + 1 < bars.length; i += 2) {
+    const a = bars[i];
+    const b = bars[i + 1];
+    out.push({
+      t: a.t,
+      o: a.o,
+      h: Math.max(a.h, b.h),
+      l: Math.min(a.l, b.l),
+      c: b.c,
+    });
+  }
+  return out;
+}
+
+async function fetchYahoo(tf: Timeframe): Promise<Quote> {
+  const { interval, range, aggregate2h } = YAHOO_PARAMS[tf];
+  // YM=F → URL-encoded as YM%3DF. Use query1; query2 is the same backend.
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/YM%3DF?interval=${interval}&range=${range}&includePrePost=false`;
+  // Yahoo's v8/chart is gentler when called with browser-like headers.
+  // Without Origin/Referer pointing at finance.yahoo.com, this IP gets
+  // 429'd quickly. With them, the same IP often gets through.
+  const res = await httpGet(url, [
+    "Accept-Language: en-US,en;q=0.9",
+    "Origin: https://finance.yahoo.com",
+    "Referer: https://finance.yahoo.com/quote/YM%3DF",
+  ]);
+  if (res.status !== 200) throw new Error(`yahoo ${res.status}`);
+  const json = JSON.parse(res.body) as YahooChart;
+  if (json.chart.error) {
+    throw new Error(`yahoo: ${json.chart.error.description}`);
+  }
+  const result = json.chart.result?.[0];
+  if (!result) throw new Error("yahoo empty result");
+  const ts = result.timestamp ?? [];
+  const q = result.indicators.quote?.[0];
+  if (!q || ts.length === 0) throw new Error("yahoo empty quote");
+
+  let candles: Candle[] = [];
+  for (let i = 0; i < ts.length; i++) {
+    const o = q.open?.[i];
+    const h = q.high?.[i];
+    const l = q.low?.[i];
+    const c = q.close?.[i];
+    // Yahoo intersperses nulls when no trades happened in an interval —
+    // skip those rather than draw a zero-bar.
+    if (
+      o == null ||
+      h == null ||
+      l == null ||
+      c == null ||
+      !Number.isFinite(o) ||
+      !Number.isFinite(h) ||
+      !Number.isFinite(l) ||
+      !Number.isFinite(c)
+    ) {
+      continue;
+    }
+    candles.push({ t: ts[i] * 1000, o, h, l, c });
+  }
+  if (candles.length === 0) throw new Error("yahoo all-null bars");
+  if (aggregate2h) candles = aggregatePairs(candles);
+
+  const price =
+    result.meta.regularMarketPrice ?? candles[candles.length - 1].c;
+  // For futures, chartPreviousClose is the prior session close that
+  // anchors the chart — better than previousClose (which can be stale).
+  const prev =
+    result.meta.chartPreviousClose ??
+    result.meta.previousClose ??
+    candles[0]?.o ??
+    price;
+  const change = price - prev;
+  const changePct = prev > 0 ? (change / prev) * 100 : 0;
+
+  return {
+    symbol: "US30",
+    price,
+    prev,
+    change,
+    changePct,
+    candles,
+    marketState: result.meta.marketState ?? "REGULAR",
+    updatedAt: (result.meta.regularMarketTime ?? Math.floor(Date.now() / 1000)) * 1000,
+    source: "yahoo",
+    timeframe: tf,
+  };
+}
+
+// ---------- Twelve Data (fallback 1) ----------
 
 type TDTimeSeries = {
   status?: string;
@@ -252,7 +391,12 @@ function fetchMock(tf: Timeframe): Quote {
 // ---------- Stooq (fallback) ----------
 
 async function fetchStooq(tf: Timeframe): Promise<Quote> {
-  const res = await httpGet("https://stooq.com/q/l/?s=^dji&f=sd2t2ohlcv&h&e=csv");
+  // ym.f = E-mini Dow front-month continuous futures (== TradingView's
+  // YM1!). Trades 24×5 so the price stays live in Asia session, unlike
+  // ^dji which only updates during US cash hours. Stooq's history CSV
+  // is login-gated, so this remains a single-bar fallback — the chart
+  // will collapse to one candle until Yahoo/TD recovers.
+  const res = await httpGet("https://stooq.com/q/l/?s=ym.f&f=sd2t2ohlcv&h&e=csv");
   if (res.status !== 200) throw new Error(`stooq ${res.status}`);
   const lines = res.body.trim().split("\n");
   if (lines.length < 2) throw new Error("stooq empty");
@@ -277,6 +421,11 @@ async function fetchStooq(tf: Timeframe): Promise<Quote> {
 }
 
 async function fetchAny(tf: Timeframe): Promise<Quote> {
+  try {
+    return await fetchYahoo(tf);
+  } catch (e) {
+    console.log(`[us30] tf=${tf} yahoo failed: ${e instanceof Error ? e.message : e}`);
+  }
   const key = process.env.TWELVE_DATA_KEY ?? "";
   if (key) {
     try {
@@ -323,9 +472,23 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(cached.quote);
   }
 
-  // Source preference: Twelve Data (rich OHLC) → cached stale TD →
-  // Stooq (single-bar fallback). Stale TD always wins over fresh Stooq
-  // because Stooq only returns 1 candle which trashes the chart.
+  // Source preference: Yahoo (YM=F futures, no key, no rate limit) →
+  // Twelve Data (DIA ×100 proxy) → cached stale rich-OHLC source →
+  // Stooq (single-bar last resort). Stale rich-OHLC always wins over
+  // fresh Stooq because Stooq's 1 candle trashes the chart.
+  try {
+    const q = await fetchYahoo(tf);
+    cache.set(tf, { quote: q, at: Date.now() });
+    console.log(
+      `[us30] tf=${tf} source=${q.source} candles=${q.candles.length} price=${q.price.toFixed(2)}`,
+    );
+    return NextResponse.json(q);
+  } catch (e) {
+    console.log(
+      `[us30] tf=${tf} yahoo failed: ${e instanceof Error ? e.message : e}`,
+    );
+  }
+
   const key = process.env.TWELVE_DATA_KEY ?? "";
   if (key) {
     try {
@@ -342,14 +505,16 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // TD failed (or no key). Prefer last good TD cache (stale) over Stooq's
-  // skinny single-bar payload, as long as the cache itself was TD.
+  // Yahoo + TD failed. Prefer last good rich-OHLC cache (yahoo or td)
+  // over Stooq's single-bar payload.
   if (
     cached &&
-    cached.quote.source === "twelvedata" &&
+    (cached.quote.source === "yahoo" || cached.quote.source === "twelvedata") &&
     Date.now() - cached.at < STALE_OK_MS
   ) {
-    console.log(`[us30] tf=${tf} serving stale TD (${cached.quote.candles.length} candles)`);
+    console.log(
+      `[us30] tf=${tf} serving stale ${cached.quote.source} (${cached.quote.candles.length} candles)`,
+    );
     return NextResponse.json({ ...cached.quote, stale: true });
   }
 

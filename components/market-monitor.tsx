@@ -29,7 +29,7 @@ type Quote = {
   candles: Candle[];
   marketState: string;
   updatedAt: number;
-  source?: "twelvedata" | "stooq";
+  source?: "yahoo" | "twelvedata" | "stooq";
   timeframe: Timeframe;
   stale?: boolean;
 };
@@ -156,8 +156,18 @@ export function MarketMonitor() {
           minHeight: 520,
           borderRadius: 6,
           border: `1px solid ${accentDim}`,
-          background: `linear-gradient(180deg, ${accent.replace("0.95", "0.04")} 0%, transparent 100%)`,
-          padding: "20px 22px",
+          // 2026-06-04: panel's own warm tint removed — Page A's outer
+          // motion.div now paints the same warm gradient across the
+          // entire viewport, so adding another 0.04 here would double
+          // up (panel reads warmer than surroundings).
+          background: "transparent",
+          // Padding removed so the chart SVG fills the panel
+          // border-to-border. The grid lines (drawn from x=0..width and
+          // y=0..height inside the SVG) now visually touch the border;
+          // previously the 20/22px panel padding left a gap. The
+          // chart's own PAD_T/PAD_B/PAD_R reserve the small space
+          // needed for axis labels.
+          padding: 0,
           gap: 12,
         }}
       >
@@ -191,7 +201,11 @@ export function MarketMonitor() {
             <CandleChart
               candles={quote.candles}
               timeframe={quote.timeframe}
-              height={360}
+              // 2026-06-04: 360 → 580. Panel is much taller than 360
+              // (the candle plot + ATR + Stoch sub-panes now share the
+              // SVG and the old number left ~200px of empty space below
+              // the chart). 580 fills the panel border-to-border.
+              height={580}
               onHoverChange={(c) => setHoverTime(c ? c.t : null)}
             />
           ) : (
@@ -204,38 +218,13 @@ export function MarketMonitor() {
           )}
         </div>
 
-        <div
-          className="flex items-center justify-between text-[9px] tracking-[0.20em] uppercase"
-          style={{ color: "var(--fg-2)", opacity: 0.55 }}
-        >
-          <span>
-            {quote?.source === "stooq"
-              ? `Stooq · ^DJI · ${tf}`
-              : `Twelve Data · DIA×100 · ${tf}`}
-          </span>
-          <span>
-            {quote
-              ? new Date(quote.updatedAt).toLocaleTimeString("en-US", {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                  timeZone: "America/New_York",
-                }) + " NY"
-              : ""}
-          </span>
-        </div>
-
-        {/* VIX + 波動率 — still reserved */}
-        <div
-          className="pt-3 border-t border-white/[0.04] flex items-center gap-4 text-[10px] tracking-[0.22em] uppercase"
-          style={{ color: "var(--fg-2)", opacity: 0.55 }}
-        >
-          <span>VIX —</span>
-          <span style={{ opacity: 0.4 }}>·</span>
-          <span>波動率 —</span>
-          <span className="ml-auto text-[9px]" style={{ opacity: 0.65 }}>
-            待接
-          </span>
-        </div>
+        {/* 2026-06-04 removed:
+              - Data-source + NY time row ("Twelve Data · DIA×100 · 1D")
+              - VIX / 波動率 / 待接 reserved row
+            Per Yen — the panel reads cleaner without these footer
+            strips; freshness is still signalled by the top-right stale
+            indicator dot, and the NY clock chip in overview's header
+            covers the time. */}
         {/* Tab strip — absolutely positioned so it sits OUTSIDE the
             panel's right border (left = 100% + small gap). Doesn't
             consume any flex/grid space, so the US30 panel keeps its

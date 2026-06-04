@@ -40,7 +40,7 @@ export type Candle = { t: number; o: number; h: number; l: number; c: number };
 const PAD_L = 8;
 const PAD_R = 56;
 const PAD_T = 8;
-const PAD_B = 22;
+const PAD_B = 10; // 2026-06-04: 22→10 — candle plot grows by 12px and ATR pane shifts down by the same amount, without compressing ATR itself
 
 const UP_COLOR = "rgba(255,170,100,0.95)";
 const UP_FILL = "rgba(255,170,100,1)"; // solid body — no transparency
@@ -57,7 +57,7 @@ const MAX_YSCALE_FACTOR = 50;
 const HOVER_DELAY_MS = 2000;
 
 // ATR sub-pane geometry. Lives under the candle plot, shares the x-axis.
-const ATR_H = 42; // pane height in px
+const ATR_H = 70; // pane height in px
 const ATR_GAP = 6; // gap between candle plot and ATR pane
 const ATR_PERIOD = 14;
 
