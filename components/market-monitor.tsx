@@ -3,13 +3,17 @@
 /**
  * MarketMonitor — top-right of Page A.
  *
- * US30 candlestick (Yahoo ^DJI, Stooq fallback):
- *   - 5m / 1h / 1d timeframe switcher
- *   - big price + day change/percent + market state
- *   - self-drawn OHLC candle chart (see CandleChart)
- *   - 60s polling per timeframe
+ * Three tabs (MARKET / US30 / VIX) sharing one panel chrome:
+ *   - MARKET: macro overview (placeholder — FRED integration later)
+ *   - US30:   YM=F continuous Dow futures, self-drawn OHLC + ATR sub-pane
+ *             with 15m / 2h / 1d timeframe switcher (D/H/M nav)
+ *   - VIX:    TradingView Advanced Chart widget (iframe embed)
  *
- * VIX + 波動率 slots stay reserved underneath.
+ * Data source chain for US30 (see /api/market/us30/route.ts):
+ *   Yahoo YM=F → Twelve Data DIA×100 → Stooq ym.f
+ *
+ * Panel chrome (border accent, stale dot, fade-in) is shared across
+ * tabs; only US30 gets warm orange/cream accent based on day change.
  */
 
 import { motion } from "motion/react";
@@ -19,6 +23,7 @@ import { EASE } from "@/lib/animation/constants";
 import { tokenFetch } from "@/lib/security/sidecar-token";
 
 type Timeframe = "15m" | "2h" | "1d";
+type Tab = "market" | "us30" | "ym1";
 
 type Quote = {
   symbol: string;
@@ -34,27 +39,17 @@ type Quote = {
   stale?: boolean;
 };
 
-const fmtPrice = new Intl.NumberFormat("en-US", {
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-});
-const fmtChange = new Intl.NumberFormat("en-US", {
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-  signDisplay: "always",
-});
-const fmtPct = new Intl.NumberFormat("en-US", {
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-  signDisplay: "always",
-});
-
 const TIMEFRAMES: Timeframe[] = ["15m", "2h", "1d"];
+
+const TABS: { id: Tab; label: string }[] = [
+  { id: "market", label: "MARKET" },
+  { id: "us30", label: "US30" },
+  { id: "ym1", label: "YM1!" },
+];
 
 function fmtHoverTime(t: number, tf: Timeframe): string {
   const d = new Date(t);
   if (tf === "1d") {
-    // For daily bars, show date only — there's no meaningful "time of day"
     return d.toLocaleDateString("en-US", {
       year: "numeric",
       month: "short",
@@ -73,15 +68,28 @@ function fmtHoverTime(t: number, tf: Timeframe): string {
   });
 }
 
+// Neutral accent for non-US30 tabs (no up/down signal to bind to).
+const NEUTRAL_BORDER = "rgba(255,255,255,0.10)";
+
 export function MarketMonitor() {
+  const [tab, setTab] = useState<Tab>("us30");
   const [tf, setTf] = useState<Timeframe>("1d");
   const [quote, setQuote] = useState<Quote | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  // Time of the hovered K bar — set by CandleChart via onHoverChange.
-  // Shown in the panel header (outside the bordered card).
   const [hoverTime, setHoverTime] = useState<number | null>(null);
-
+  // Lazy mount the TradingView iframe — only after the user actually
+  // clicks the VIX tab the first time. Once true, stays true so
+  // switching back/forth doesn't re-init the widget (TV's bootstrap
+  // is heavy and a remount can lock the webview).
+  const [ym1Mounted, setYm1Mounted] = useState(false);
   useEffect(() => {
+    if (tab === "ym1" && !ym1Mounted) setYm1Mounted(true);
+  }, [tab, ym1Mounted]);
+
+  // Poll US30 only when its tab is active. Avoids burning the TD budget
+  // (8/min · 800/day) while the user is looking at MARKET or VIX.
+  useEffect(() => {
+    if (tab !== "us30") return;
     let cancelled = false;
     async function pull() {
       try {
@@ -107,14 +115,13 @@ export function MarketMonitor() {
       cancelled = true;
       clearInterval(id);
     };
-  }, [tf]);
+  }, [tab, tf]);
 
+  // Border accent: warm orange/cream only on US30 (driven by day change).
+  // Other tabs: neutral grey so we don't fake a directional signal.
   const isUp = (quote?.change ?? 0) >= 0;
-  // Up = warm orange; down = pale cream-mustard. Matches CandleChart.
-  const accent = isUp
-    ? "rgba(255,170,100,0.95)"
-    : "rgba(235,225,185,0.95)";
-  const accentDim = isUp ? "rgba(255,170,100,0.18)" : "rgba(235,225,185,0.18)";
+  const us30Accent = isUp ? "rgba(255,170,100,0.18)" : "rgba(235,225,185,0.18)";
+  const borderColor = tab === "us30" ? us30Accent : NEUTRAL_BORDER;
 
   return (
     <section
@@ -122,15 +129,50 @@ export function MarketMonitor() {
       aria-label="market monitor"
       data-tauri-drag-region
     >
-      {/* NY clock used to mount here at top:-22, but the parent `main`
-          has `overflow-y-auto` which clips any child positioned above
-          y=0. Moved out to overview's outer flex container (which is
-          NOT a scroll container) so it can't be clipped. */}
-      <header className="flex items-center gap-3 text-[11px] tracking-[0.30em] uppercase text-[var(--fg-2)] mb-4 flex-shrink-0">
-        <span>Market</span>
-        <span style={{ opacity: 0.4 }}>—</span>
-        <span style={{ opacity: 0.6 }}>US30 · VIX · 波動率</span>
-        {hoverTime !== null ? (
+      {/* Tab strip — MARKET / US30 / VIX as inline text buttons.
+          Replaced the old "Market — US30 · VIX · 波動率" header.
+          波動率 dropped per Yen. */}
+      <header className="flex items-center gap-5 text-[11px] tracking-[0.30em] uppercase mb-4 flex-shrink-0">
+        {TABS.map((t) => {
+          const active = t.id === tab;
+          return (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => setTab(t.id)}
+              className="relative font-mono"
+              style={{
+                color: active ? "var(--fg-0)" : "var(--fg-2)",
+                opacity: active ? 1 : 0.55,
+                letterSpacing: "0.30em",
+                fontSize: 11,
+                background: "transparent",
+                border: "none",
+                padding: "2px 0",
+                cursor: "pointer",
+                transition: "color 200ms, opacity 200ms",
+              }}
+            >
+              {t.label}
+              {active ? (
+                <span
+                  style={{
+                    position: "absolute",
+                    left: 0,
+                    right: 0,
+                    bottom: -2,
+                    height: 1,
+                    background: "rgba(255,184,120,0.55)",
+                    boxShadow: "0 0 6px rgba(255,184,120,0.35)",
+                  }}
+                />
+              ) : null}
+            </button>
+          );
+        })}
+        {/* Hover-time chip — only meaningful on US30 (CandleChart hover).
+            Other tabs: stays empty so the slot doesn't shift. */}
+        {tab === "us30" && hoverTime !== null ? (
           <span
             className="ml-auto text-[10px] tracking-[0.18em]"
             style={{
@@ -143,10 +185,6 @@ export function MarketMonitor() {
         ) : null}
       </header>
 
-      {/* Panel takes the full width of the section. The tf tab strip
-          is positioned ABSOLUTELY outside the panel's right edge (see
-          below) so it visually sits next to the card without stealing
-          flex space — the US30 area keeps its full width. */}
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
@@ -155,29 +193,15 @@ export function MarketMonitor() {
         style={{
           minHeight: 520,
           borderRadius: 6,
-          border: `1px solid ${accentDim}`,
-          // 2026-06-04: panel's own warm tint removed — Page A's outer
-          // motion.div now paints the same warm gradient across the
-          // entire viewport, so adding another 0.04 here would double
-          // up (panel reads warmer than surroundings).
+          border: `1px solid ${borderColor}`,
           background: "transparent",
-          // Padding removed so the chart SVG fills the panel
-          // border-to-border. The grid lines (drawn from x=0..width and
-          // y=0..height inside the SVG) now visually touch the border;
-          // previously the 20/22px panel padding left a gap. The
-          // chart's own PAD_T/PAD_B/PAD_R reserve the small space
-          // needed for axis labels.
           padding: 0,
           gap: 12,
         }}
       >
-        {/* Paper-fiber texture removed per Yen — panel returns to the
-            plain gradient + border look. */}
-        {/* Top US30/DJIA labels + big price-change row removed per spec.
-            The chart already exposes the latest price via the right-axis
-            colored ribbon, and the panel's accent border / Market header
-            communicate context. Stale indicator floats top-right. */}
-        {quote?.stale ? (
+        {/* Stale indicator — only on US30 since only that tab has an
+            upstream that can go stale. */}
+        {tab === "us30" && quote?.stale ? (
           <span
             title="stale (upstream rate-limited)"
             style={{
@@ -195,91 +219,173 @@ export function MarketMonitor() {
           />
         ) : null}
 
-        {/* Candle chart — tabs moved outside the panel (see below). */}
-        <div className="flex-1 min-h-0 flex flex-col">
-          {quote && quote.candles.length > 0 ? (
-            <CandleChart
-              candles={quote.candles}
-              timeframe={quote.timeframe}
-              // 2026-06-04: 360 → 580. Panel is much taller than 360
-              // (the candle plot + ATR + Stoch sub-panes now share the
-              // SVG and the old number left ~200px of empty space below
-              // the chart). 580 fills the panel border-to-border.
-              height={580}
-              onHoverChange={(c) => setHoverTime(c ? c.t : null)}
-            />
-          ) : (
-            <div
-              className="flex-1 flex items-center justify-center text-[10px] tracking-[0.28em] uppercase"
-              style={{ color: "var(--fg-2)", opacity: 0.55 }}
-            >
-              {err ? `error · ${err}` : "loading"}
-            </div>
-          )}
-        </div>
+        {/* Tab content */}
+        {tab === "market" ? <MarketTabPlaceholder /> : null}
 
-        {/* 2026-06-04 removed:
-              - Data-source + NY time row ("Twelve Data · DIA×100 · 1D")
-              - VIX / 波動率 / 待接 reserved row
-            Per Yen — the panel reads cleaner without these footer
-            strips; freshness is still signalled by the top-right stale
-            indicator dot, and the NY clock chip in overview's header
-            covers the time. */}
-        {/* Tab strip — absolutely positioned so it sits OUTSIDE the
-            panel's right border (left = 100% + small gap). Doesn't
-            consume any flex/grid space, so the US30 panel keeps its
-            full width. Single-letter labels D / H / M for compactness.
-            top: aligned just below the price row so the strip lines up
-            with the chart area. */}
-        <nav
-          aria-label="timeframe"
-          style={{
-            position: "absolute",
-            left: "calc(100% + 6px)",
-            top: 24,
-            width: 28,
-            display: "flex",
-            flexDirection: "column",
-            gap: 4,
-            zIndex: 2,
-          }}
-        >
-          {TIMEFRAMES.map((t) => {
-            const active = t === tf;
-            const letter = t === "1d" ? "D" : t === "2h" ? "H" : "M";
-            return (
-              <button
-                key={t}
-                type="button"
-                onClick={() => setTf(t)}
-                className="font-mono"
-                style={{
-                  width: 28,
-                  height: 24,
-                  fontSize: 11,
-                  letterSpacing: "0.04em",
-                  textAlign: "center",
-                  color: active ? "var(--fg-0)" : "var(--fg-2)",
-                  background: active
-                    ? "rgba(255,184,120,0.10)"
-                    : "rgba(0,0,0,0.35)",
-                  border: "1px solid",
-                  borderColor: active
-                    ? "rgba(255,184,120,0.40)"
-                    : "rgba(255,255,255,0.08)",
-                  borderRadius: 3,
-                  cursor: "pointer",
-                  transition:
-                    "color 200ms, background 200ms, border-color 200ms",
-                }}
-                title={t}
+        {tab === "us30" ? (
+          <div className="flex-1 min-h-0 flex flex-col">
+            {quote && quote.candles.length > 0 ? (
+              <CandleChart
+                candles={quote.candles}
+                timeframe={quote.timeframe}
+                height={580}
+                onHoverChange={(c) => setHoverTime(c ? c.t : null)}
+              />
+            ) : (
+              <div
+                className="flex-1 flex items-center justify-center text-[10px] tracking-[0.28em] uppercase"
+                style={{ color: "var(--fg-2)", opacity: 0.55 }}
               >
-                {letter}
-              </button>
-            );
-          })}
-        </nav>
+                {err ? `error · ${err}` : "loading"}
+              </div>
+            )}
+          </div>
+        ) : null}
+
+        {tab === "ym1" ? <Ym1TradingViewWidget mount={ym1Mounted} /> : null}
+
+        {/* D/H/M nav — only relevant to US30's CandleChart. Other tabs
+            either have no concept of timeframe (MARKET) or carry their
+            own timeframe UI (TradingView widget). */}
+        {tab === "us30" ? (
+          <nav
+            aria-label="timeframe"
+            style={{
+              position: "absolute",
+              left: "calc(100% + 6px)",
+              top: 24,
+              width: 28,
+              display: "flex",
+              flexDirection: "column",
+              gap: 4,
+              zIndex: 2,
+            }}
+          >
+            {TIMEFRAMES.map((t) => {
+              const active = t === tf;
+              const letter = t === "1d" ? "D" : t === "2h" ? "H" : "M";
+              return (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setTf(t)}
+                  className="font-mono"
+                  style={{
+                    width: 28,
+                    height: 24,
+                    fontSize: 11,
+                    letterSpacing: "0.04em",
+                    textAlign: "center",
+                    color: active ? "var(--fg-0)" : "var(--fg-2)",
+                    background: active
+                      ? "rgba(255,184,120,0.10)"
+                      : "rgba(0,0,0,0.35)",
+                    border: "1px solid",
+                    borderColor: active
+                      ? "rgba(255,184,120,0.40)"
+                      : "rgba(255,255,255,0.08)",
+                    borderRadius: 3,
+                    cursor: "pointer",
+                    transition:
+                      "color 200ms, background 200ms, border-color 200ms",
+                  }}
+                  title={t}
+                >
+                  {letter}
+                </button>
+              );
+            })}
+          </nav>
+        ) : null}
       </motion.div>
     </section>
+  );
+}
+
+// ---------- Tab content components ----------
+
+function MarketTabPlaceholder() {
+  return (
+    <div
+      className="flex-1 flex flex-col items-center justify-center gap-3 text-center"
+      style={{ color: "var(--fg-2)", padding: 24 }}
+    >
+      <div
+        className="text-[11px] tracking-[0.30em] uppercase"
+        style={{ opacity: 0.7 }}
+      >
+        宏觀總覽
+      </div>
+      <div
+        className="text-[10px] tracking-[0.18em]"
+        style={{ opacity: 0.45 }}
+      >
+        FRED · Treasury · DXY · Yields · 即將推出
+      </div>
+    </div>
+  );
+}
+
+function Ym1TradingViewWidget({ mount }: { mount: boolean }) {
+  // TradingView "Advanced Chart" widget — iframe embed, no API key,
+  // live data for the YM1!-equivalent (E-mini Dow front-month).
+  //
+  // Symbol picked carefully:
+  //   - CME_MINI:YM1! → CME's official feed; blocked in embed by
+  //     exchange licensing ("only available on TradingView" popup)
+  //   - CAPITALCOM:US30 → Capital.com's Dow CFD, tracks YM1! tick-by-
+  //     tick, freely embeddable, no popup. TV themselves use these
+  //     partner CFDs as the free-tier proxy for licensed futures.
+  //     Tiny basis vs the real future (usually < 5 pts), but 24×5,
+  //     live, no key.
+  //   - Fallback if CAPITALCOM ever breaks: OANDA:US30USD, FX:US30.
+  //
+  // No `sandbox` attribute: earlier version with sandbox locked up
+  // the Tauri WebKit webview (TV's cross-origin postMessage /
+  // cookie work fights sandbox into an infinite handshake). Default
+  // cross-origin iframe isolation is strict enough.
+  const url =
+    "https://s.tradingview.com/widgetembed/?" +
+    [
+      "symbol=CAPITALCOM:US30",
+      "interval=D",
+      "theme=dark",
+      "style=1",
+      "timezone=America/New_York",
+      "locale=en",
+      "autosize=1",
+      // Drawing tools (trend lines, fib, levels, etc.) live in the
+      // left side toolbar. hide_side_toolbar=0 keeps it visible.
+      "hide_side_toolbar=0",
+      "studies=[]",
+    ].join("&");
+
+  return (
+    <div
+      className="flex-1 min-h-0 flex items-center justify-center"
+      style={{ color: "var(--fg-2)" }}
+    >
+      {mount ? (
+        <iframe
+          src={url}
+          title="TradingView YM1! (Dow futures) chart"
+          loading="lazy"
+          referrerPolicy="strict-origin-when-cross-origin"
+          style={{
+            width: "100%",
+            height: "100%",
+            border: "none",
+            borderRadius: 5,
+          }}
+        />
+      ) : (
+        <span
+          className="text-[10px] tracking-[0.28em] uppercase"
+          style={{ opacity: 0.55 }}
+        >
+          loading widget
+        </span>
+      )}
+    </div>
   );
 }
