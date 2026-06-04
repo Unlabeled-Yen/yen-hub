@@ -144,6 +144,18 @@ function spanCls(span: Span): string {
 const RISE_DURATION = 1.1;
 
 export function Overview() {
+  // Defeats the SSR-hydration flash WITHOUT permanently overriding motion.
+  // Server renders with inline opacity:0 (no flash). After hydration we
+  // drop the override so motion's animate can freely drive opacity → 1.
+  // The previous version kept `style.opacity: 0` forever, which on cold
+  // process start raced with the burst of state-sets below (setAttention /
+  // setReadingH / setVw) and pinned the page invisible until a user
+  // gesture nudged a re-render.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   // Measure Reading's height so TODO can match it (CSS Grid can't align
   // bottoms when items have wildly different natural heights). Reading sits
   // at its content's natural size; TODO's `height` is mirrored from JS.
@@ -273,11 +285,27 @@ export function Overview() {
   return (
     <motion.div
       className="flex flex-1 flex-col relative"
-      // Inline opacity-0 to defeat the SSR-hydration flash where
-      // content briefly paints at full opacity before motion's initial
-      // kicks in. `relative` anchors the absolute-positioned
-      // WorldClock below.
-      style={{ opacity: 0 }}
+      // Pre-hydration override defeats SSR flash; once mounted we hand
+      // opacity back to motion. See the `mounted` state at the top of
+      // this component for why a permanent inline override broke cold
+      // starts. `relative` anchors the absolute-positioned WorldClock.
+      // 2026-06-04 — full-page tint anchored HERE (not on <main>) so
+      // the h-8 drag spacer above the carousel gets the same gradient.
+      // Previously the spacer was outside main's bg → looked lighter
+      // than the chart panel, breaking the "Vix-and-up = transparent"
+      // expectation.
+      style={{
+        ...(mounted ? {} : { opacity: 0 }),
+        // 2026-06-04: layered bg. Bottom layer = the same black 45/78
+        // gradient with Vix transition; top layer = a faint warm
+        // tint (accent at 0.04 → transparent), matching the US30
+        // panel's own gradient so the whole page reads as one warm
+        // surface, panel and surroundings indistinguishable.
+        background: [
+          "linear-gradient(180deg, rgba(255,180,80,0.04) 0%, rgba(255,180,80,0) 100%)",
+          "linear-gradient(180deg, rgba(0,0,0,0.15) 0%, rgba(0,0,0,0.15) 40vh, rgba(0,0,0,0.78) 60vh, rgba(0,0,0,0.78) 100%)",
+        ].join(", "),
+      }}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: RISE_DURATION, ease: "linear" }}
@@ -317,7 +345,7 @@ export function Overview() {
         <main
           className="shrink-0 w-screen h-full px-8 sm:px-12 py-1 overflow-y-auto hub-scrollbar"
         >
-          <div className="flex flex-col gap-2 pt-0">
+          <div className="flex flex-col gap-2 pt-0 min-h-full relative z-10">
             {/* Upper row: chart at max-content, market fills the rest.
                 `relative z-10` stacks the row above the slab's absolute
                 gradient extension below — without this, the slab's
@@ -358,16 +386,6 @@ export function Overview() {
             <div
               className="grid grid-cols-1 lg:grid-cols-2 gap-x-10 items-start py-4 -mx-8 sm:-mx-12 px-8 sm:px-12 relative"
             >
-              <div
-                aria-hidden
-                className="absolute left-0 right-0 pointer-events-none"
-                style={{
-                  top: -260,
-                  bottom: 0,
-                  background:
-                    "linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0.65) 38%, rgba(0,0,0,0.65) 100%)",
-                }}
-              />
               <div ref={readingRef} className="min-w-0 relative">
                 <ReadingProgress data={attention} />
               </div>

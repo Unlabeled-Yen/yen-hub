@@ -18,7 +18,7 @@
  */
 
 import { motion, AnimatePresence } from "motion/react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EASE } from "@/lib/animation/constants";
 import { tokenFetch } from "@/lib/security/sidecar-token";
 
@@ -30,12 +30,14 @@ type Todo = {
   category: string;
   needsAi: boolean;
   mtimeMs: number;
+  // 2026-06-04: priority is now folder membership (`05 - Queue/首要待辦/`)
+  // rather than an overlay. Server populates this on every scan.
+  isPriority: boolean;
 };
 
 type TodosResponse = {
   items: Todo[];
   doneKeys: string[];
-  priorityKeys: string[];
 };
 
 const OLD_DAYS = 7;
@@ -329,7 +331,6 @@ function GroupBlock({
   todos,
   startIndex,
   doneKeys,
-  priorityKeys,
   clickMode,
   entryPhase,
   onToggleDone,
@@ -341,7 +342,6 @@ function GroupBlock({
   todos: Todo[];
   startIndex: number;
   doneKeys: Map<string, string>;
-  priorityKeys: Map<string, string>;
   clickMode: ClickMode;
   entryPhase: boolean;
   onToggleDone: (t: Todo, next: boolean) => void;
@@ -367,7 +367,7 @@ function GroupBlock({
             t={t}
             index={startIndex + i}
             isDone={doneKeys.has(todoId(t))}
-            isPriority={priorityKeys.has(todoId(t))}
+            isPriority={t.isPriority}
             clickMode={clickMode}
             entryPhase={entryPhase}
             onToggleDone={onToggleDone}
@@ -382,16 +382,14 @@ function GroupBlock({
 export function TodoList() {
   const [data, setData] = useState<TodosResponse | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [tab, setTab] = useState<Tab>("priority");
+  // 2026-06-04: default tab changed from "priority" → "category" so the
+  // first thing Yen sees is the script-classified overview, not an empty
+  // priority pool until items are clicked.
+  const [tab, setTab] = useState<Tab>("category");
   const [doneMap, setDoneMap] = useState<Map<string, string>>(new Map());
-  const [priorityMap, setPriorityMap] = useState<Map<string, string>>(new Map());
-  // Gate rendering until the SHA-1 hashing for doneKeys / priorityKeys
-  // has run for every item. Without this gate, the first paint after
-  // fetch shows data but with priorityMap STILL empty → priorityPool is
-  // empty → the placeholder "尚未挑選首要代辦 / 點標題切到「總覽代辦」"
-  // flashes briefly, and Yen reads the "總覽代辦" in the placeholder
-  // text as a tab swap. Holding "loading" until both data AND keys are
-  // ready eliminates that flash entirely.
+  // Gate rendering until the SHA-1 hashing for doneKeys has run for every
+  // item. Priority no longer needs this gate — it's derived directly
+  // from `t.isPriority` on the server payload, no hash lookup required.
   const [keysReady, setKeysReady] = useState(false);
   // Typewriter entry phase. Starts true; flips false ~T_END after the
   // FIRST mount of real items (so a slow fetch doesn't shift the timing
@@ -412,46 +410,39 @@ export function TodoList() {
     return () => window.clearTimeout(id);
   }, [data, keysReady]);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const r = await tokenFetch("/api/vault/todos", {
-          credentials: "same-origin",
-        });
-        if (!r.ok) {
-          const body = await r.json().catch(() => ({}));
-          throw new Error(body.error ?? `HTTP ${r.status}`);
-        }
-        const json = (await r.json()) as TodosResponse;
-        if (cancelled) return;
-        setData(json);
-
-        const doneSet = new Set(json.doneKeys ?? []);
-        const prioritySet = new Set(json.priorityKeys ?? []);
-        const nextDone = new Map<string, string>();
-        const nextPriority = new Map<string, string>();
-        await Promise.all(
-          json.items.map(async (t) => {
-            const full = await sha1Hex(`${t.file}\n${t.text}`);
-            const k = full.slice(0, 16);
-            if (doneSet.has(k)) nextDone.set(todoId(t), k);
-            if (prioritySet.has(k)) nextPriority.set(todoId(t), k);
-          }),
-        );
-        if (!cancelled) {
-          setDoneMap(nextDone);
-          setPriorityMap(nextPriority);
-          setKeysReady(true);
-        }
-      } catch (e) {
-        if (!cancelled) setErr(e instanceof Error ? e.message : String(e));
+  const fetchTodos = useCallback(async () => {
+    try {
+      const r = await tokenFetch("/api/vault/todos", {
+        credentials: "same-origin",
+      });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error(body.error ?? `HTTP ${r.status}`);
       }
-    })();
-    return () => {
-      cancelled = true;
-    };
+      const json = (await r.json()) as TodosResponse;
+      setData(json);
+
+      // Build the done overlay map. Priority is no longer hashed — it
+      // comes embedded in each item as `isPriority`.
+      const doneSet = new Set(json.doneKeys ?? []);
+      const nextDone = new Map<string, string>();
+      await Promise.all(
+        json.items.map(async (t) => {
+          const full = await sha1Hex(`${t.file}\n${t.text}`);
+          const k = full.slice(0, 16);
+          if (doneSet.has(k)) nextDone.set(todoId(t), k);
+        }),
+      );
+      setDoneMap(nextDone);
+      setKeysReady(true);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
   }, []);
+
+  useEffect(() => {
+    void fetchTodos();
+  }, [fetchTodos]);
 
   async function onToggleDone(t: Todo, next: boolean) {
     const id = todoId(t);
@@ -478,26 +469,20 @@ export function TodoList() {
   }
 
   async function onTogglePriority(t: Todo, next: boolean) {
-    const id = todoId(t);
-    setPriorityMap((prev) => {
-      const m = new Map(prev);
-      if (next) m.set(id, m.get(id) ?? "pending");
-      else m.delete(id);
-      return m;
-    });
+    // Folder-based priority: server moves the file in/out of
+    // `05 - Queue/首要待辦/`. Since the file's path changes, we
+    // can't toggle a local key; refetch to pick up the new isPriority
+    // flag (and new file path for any other todos in the same file).
     try {
       await tokenFetch("/api/vault/todos/priority", {
         method: next ? "POST" : "DELETE",
         credentials: "same-origin",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          file: t.file,
-          lineNum: t.lineNum,
-          text: t.text,
-        }),
+        body: JSON.stringify({ file: t.file }),
       });
+      await fetchTodos();
     } catch {
-      /* swallow */
+      /* swallow — the next refetch will reconcile */
     }
   }
 
@@ -545,15 +530,24 @@ export function TodoList() {
 
   // Pool computation -------------------------------------------------
   const items = data?.items ?? [];
-  const active = items.filter((t) => !isOld(t));
+  // 2026-06-04 file-as-task: every file in Queue IS a commitment
+  // regardless of when it was last modified. The active/old split was
+  // built for the checkbox-line model and doesn't fit — drop the
+  // 7-day cutoff for 總覽. 審查 tab still applies its own filter so
+  // stale files can be reviewed separately.
   const reviewPool = items.filter((t) => isOld(t));
-  const priorityPool = active.filter((t) => priorityMap.has(todoId(t)));
+  // Priority pool = items whose source file lives in
+  // `05 - Queue/首要待辦/`. The server sets `isPriority` per item.
+  const priorityPool = items.filter((t) => t.isPriority);
 
   // Category grouping for the Overview tab.
   const categoryGroups = useMemo(() => {
     if (!data) return null;
     const byCategory = new Map<string, Todo[]>();
-    for (const t of active) {
+    // Hide priority items from 總覽 — they already show in 首要代辦
+    // and duplicating them caused the demote-on-click bug.
+    for (const t of items) {
+      if (t.isPriority) continue;
       const arr = byCategory.get(t.category) ?? [];
       arr.push(t);
       byCategory.set(t.category, arr);
@@ -567,7 +561,7 @@ export function TodoList() {
       });
     return sorted;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, priorityMap]);
+  }, [data]);
 
   if (err) {
     return (
@@ -592,7 +586,7 @@ export function TodoList() {
   const titleShadow = TAB_SHADOW[tab];
   let displayCount = 0;
   if (tab === "priority") displayCount = priorityPool.length;
-  else if (tab === "category") displayCount = active.length;
+  else if (tab === "category") displayCount = items.filter((t) => !t.isPriority).length;
   else displayCount = reviewPool.length;
 
   const clickMode: ClickMode =
@@ -681,7 +675,6 @@ export function TodoList() {
                     todos={g.todos.slice(0, 4)}
                     startIndex={startIdx}
                     doneKeys={doneMap}
-                    priorityKeys={priorityMap}
                     clickMode={clickMode}
                     entryPhase={entryPhase}
                     onToggleDone={onToggleDone}
@@ -753,7 +746,7 @@ export function TodoList() {
                       t={t}
                       index={i}
                       isDone={doneMap.has(todoId(t))}
-                      isPriority={priorityMap.has(todoId(t))}
+                      isPriority={t.isPriority}
                       clickMode={clickMode}
                       entryPhase={entryPhase}
                       onToggleDone={onToggleDone}

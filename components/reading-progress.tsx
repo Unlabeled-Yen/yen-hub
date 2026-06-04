@@ -38,6 +38,12 @@ function BookBlock({ b, index }: { b: BookSummary; index: number }) {
       ? { title: b.displayTitle, author: b.displayAuthor || null }
       : null;
   const { author, title } = fromServer ?? parseBook(b.name);
+  // Progress percentage uses ONLY openedChapters (Obsidian-tracked
+  // reading). addedChapters (mtime within window — usually agent
+  // processing) is a secondary signal: it only contributes to whether
+  // the book is rendered as "active" in the cube, never to the
+  // numerical % — otherwise a book Landy translated 64 chapters of
+  // would read as "已完讀" even though Yen hasn't opened a chapter.
   const pct = b.chapters === 0 ? 0 : b.openedChapters / b.chapters;
   const pctLabel = `${Math.round(pct * 100)}%`;
   // Choreography: half-turn cube flip runs t=0→1.6s (no delay; spins
@@ -49,13 +55,13 @@ function BookBlock({ b, index }: { b: BookSummary; index: number }) {
   // For i=7: 1.6 + 0.28 + 0.15 + 1.47 = 3.50 ✓
   const delay = 1.6 + index * 0.04;
 
-  // Three visual states:
-  //   reading: opened > 0 chapters → full brightness, teal progress
-  //   queued:  added this week, not opened → slightly dimmed, "未開始" hint
-  //   shelved: in library, not opened, not new → most dimmed, no hint
+  // Visual states.
+  //   reading:    opened > 0  → full brightness, teal progress, real chapter info
+  //   processing: opened = 0, added > 0  → mid brightness, warm hint ("處理過 N 章")
+  //   shelved:    neither     → dimmed, "{chapters} ch" only
   const isReading = b.openedChapters > 0;
-  const isQueued = !isReading && b.addedChapters > 0;
-  const titleOpacity = isReading ? 1 : isQueued ? 0.7 : 0.55;
+  const isProcessing = !isReading && b.addedChapters > 0;
+  const titleOpacity = isReading ? 1 : isProcessing ? 0.75 : 0.55;
 
   // Status line text + color — always rendered so every book has the SAME
   // 4-row footprint (title / author / status / progress).
@@ -63,14 +69,18 @@ function BookBlock({ b, index }: { b: BookSummary; index: number }) {
   let statusColor = "var(--fg-2)";
   if (isReading) {
     statusColor = "rgba(140,220,200,0.85)";
-    statusText = pct >= 1
-      ? "已完讀"
-      : b.furthestChapter
+    if (pct >= 1) {
+      statusText = "已完讀";
+    } else {
+      statusText = b.furthestChapter
         ? `看到第 ${b.furthestChapter.num} 章 · ${b.furthestChapter.title}`
         : `看了 ${b.openedChapters} 章`;
-  } else if (isQueued) {
+    }
+  } else if (isProcessing) {
+    // mtime-only activity — agent processing / translating / cleanup.
+    // Distinct from reading: no per-chapter "I read this" signal exists.
     statusColor = "rgba(255,184,120,0.7)";
-    statusText = `新進 ${b.addedChapters} ch`;
+    statusText = `處理過 ${b.addedChapters} 章`;
   } else {
     statusColor = "var(--fg-2)";
     statusText = `${b.chapters} ch`;
@@ -162,6 +172,16 @@ export function ReadingProgress({
   data: AttentionResponse | null;
 }) {
   if (!data) return null;
+  // Show the cube whenever the library has ANY book — not only when there
+  // are "actively reading" books. Obsidian's `lastOpenFiles` only keeps
+  // ~50 most-recently-touched paths; if the user has been editing Queue
+  // notes for a few days, every library chapter rotates out, and the
+  // cube would silently disappear despite the vault still being full of
+  // tracked books. Drawing 0%-progress bars is the honest signal: "you
+  // have these books, you haven't opened a chapter recently."
+  const total =
+    data.library.books?.length ?? data.library.activelyReading.length;
+  if (total === 0) return null;
   return <ReadingCube data={data} />;
 }
 
@@ -266,7 +286,12 @@ function ReadingCube({ data }: { data: AttentionResponse }) {
 
   if (allBooks.length === 0) return null;
 
-  const readingCount = data.library.activelyReading.length;
+  // Header counter = books with actual Obsidian reading activity (matches
+  // ReadingBlock's `isReading` logic so the number and the bright tiles
+  // stay in sync). Books that only show "處理過 N 章" (agent processing)
+  // are visible in the cube but don't count toward "閱讀進度" — that
+  // number is reserved for what Yen has actually opened.
+  const readingCount = allBooks.filter((b) => b.openedChapters > 0).length;
   const depth = Math.max(200, size.w / 2);
 
   return (

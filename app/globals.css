@@ -40,6 +40,12 @@
   --danger:  #ff5c6e;
   --success: #00e5b4;
 
+  /* Palette / Duffy badge dedicated accent (2026-06-04). Decoupled from
+     --accent so the chat surface + Duffy status indicator can be tinted
+     independently from the rest of the hub (cards, signals, etc.). */
+  --palette-accent: #f5a623;             /* warm orange */
+  --palette-accent-rgb: 245, 166, 35;    /* same value, comma-separated for rgba() */
+
   /* Borders (rgba on dark) */
   --border-subtle:  rgba(255, 255, 255, 0.06);
   --border-default: rgba(255, 255, 255, 0.10);
@@ -93,10 +99,12 @@ html {
    transparent window WITHOUT any ancestor of CommandPalette ever
    becoming a fixed-positioning containing block. */
 body {
-  background:
-    radial-gradient(ellipse 60% 40% at 15% 0%,   rgba(255, 255, 255, 0.04), transparent 65%),
-    radial-gradient(ellipse 70% 50% at 85% 100%, rgba(255, 255, 255, 0.025), transparent 65%),
-    rgba(0, 0, 0, var(--bg-alpha));
+  /* 2026-06-04: removed the upper-left + lower-right ambient white
+     radials. They created spatial brightness variation that was
+     visible *through* Overview's semi-transparent 45% tint —
+     breaking the "above-Vix uniformly transparent" expectation. The
+     loss is negligible (4% / 2.5% white was barely perceptible). */
+  background: rgba(0, 0, 0, var(--bg-alpha));
   color: var(--fg-0);
   min-height: 100vh;
 }
@@ -212,17 +220,23 @@ textarea,
    entire bar appears to breathe, replacing the previous thin hairline
    that sat below the input. */
 @keyframes thinking-pulse {
+  /* Pulses the border + outer glow using --palette-accent so the open
+     and thinking states stay coherent with the inline-styled aura on
+     the command-line wrapper. Previously hard-coded warm peach 255,184,
+     120 which fought the inline border color during the 1.2s open
+     animation — caused the visible "orange flash → settle" the user
+     noticed when running mint or sky-blue palettes. */
   0%, 100% {
-    border-color: rgba(255, 255, 255, 0.10);
+    border-color: rgba(var(--palette-accent-rgb), 0.35);
     box-shadow:
-      0 0 0 0 rgba(255, 184, 120, 0),
-      0 1px 0 rgba(255, 255, 255, 0.04) inset;
+      0 0 0 0 rgba(var(--palette-accent-rgb), 0),
+      inset 0 1px 0 rgba(255, 255, 255, 0.06);
   }
   50% {
-    border-color: rgba(255, 184, 120, 0.50);
+    border-color: rgba(var(--palette-accent-rgb), 0.65);
     box-shadow:
-      0 0 22px 2px rgba(255, 184, 120, 0.28),
-      0 1px 0 rgba(255, 255, 255, 0.04) inset;
+      0 0 22px 2px rgba(var(--palette-accent-rgb), 0.38),
+      inset 0 1px 0 rgba(255, 255, 255, 0.06);
   }
 }
 .thinking-pulse { animation: thinking-pulse 2.4s ease-in-out infinite; }

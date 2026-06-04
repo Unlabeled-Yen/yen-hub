@@ -3,12 +3,13 @@
  *
  * Scan vault markdown for unfinished TODOs (top 200 by mtime). Items are
  * NOT filtered server-side — the client handles three views:
- *   - 首要代辦 (priority) — user-curated subset of active items
+ *   - 首要代辦 (priority) — items whose file lives in `05 - Queue/首要待辦/`
+ *     (set on each item via `isPriority`; no overlay store)
  *   - 總覽代辦 (category) — all active (≤ 7 day-old) items grouped
  *   - 審查 (review)       — items older than 7 days
  *
- * `doneKeys`     → which items are currently struck-through (Priority only)
- * `priorityKeys` → which items the user has promoted to the Priority view
+ * `doneKeys`     → which items are currently struck-through (Priority only,
+ *                  user-curated overlay in app data)
  */
 
 import { NextResponse } from "next/server";
@@ -16,7 +17,6 @@ import { getSession } from "@/lib/auth/session";
 import { cached } from "@/lib/vault/reader";
 import { scanTodos } from "@/lib/vault/todos";
 import { loadDoneMap } from "@/lib/vault/done-store";
-import { loadPriorityMap } from "@/lib/vault/priority-store";
 
 export const dynamic = "force-dynamic";
 
@@ -30,14 +30,10 @@ export async function GET() {
   try {
     // Bumped from 50 → 200 so the Review (≥ 7d) pool isn't empty.
     const items = await cached("todos:all", () => scanTodos(200));
-    const [done, priority] = await Promise.all([
-      loadDoneMap(),
-      loadPriorityMap(),
-    ]);
+    const done = await loadDoneMap();
     return NextResponse.json({
       items,
       doneKeys: Object.keys(done),
-      priorityKeys: Object.keys(priority),
     });
   } catch (e) {
     return NextResponse.json(

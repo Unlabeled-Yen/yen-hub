@@ -78,7 +78,7 @@ async function reconcileInflight(
   apply: (next: UIMessage[]) => void,
 ): Promise<void> {
   try {
-    const headers: Record<string, string> = await sidecarHeaders();
+    const headers: Record<string, string> = sidecarHeaders();
     const res = await fetch(
       `/api/chat/inflight?conversation=${encodeURIComponent(convoId)}`,
       { headers },
@@ -154,9 +154,21 @@ const INACTIVITY_CLOSE_MS = 60_000;
 /** Fade-out duration before the palette unmounts. */
 const FADE_MS = 1000;
 
+// sessionStorage key for preserving unsent draft across idle-close.
+// Per-origin (sidecar port changes each launch → wiped on .app restart),
+// which is the desired scope: drafts shouldn't leak between sessions.
+const DRAFT_KEY = "yen-hub:palette-draft";
+
 export function CommandPalette() {
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState("");
+  // IME composition guard. `e.nativeEvent.isComposing` is unreliable in
+  // WKWebView (specifically the macOS 注音/拼音 IMEs we care about — the
+  // first Enter that confirms a candidate sometimes arrives WITHOUT the
+  // composing flag set, leaking through and sending the message before
+  // the composed text lands). A ref toggled by compositionstart/end is
+  // the canonical workaround.
+  const composingRef = useRef(false);
   const [convo, setConvo] = useState<Convo | null>(null);
   // `collapsed` retained as a frozen `false` — the conditional branches
   // below still reference it. Removing it would touch too many call
@@ -197,9 +209,7 @@ export function CommandPalette() {
   // certain providers).
   const tokenRef = useRef<string>("");
   useEffect(() => {
-    void getSidecarToken().then((t) => {
-      tokenRef.current = t;
-    });
+    tokenRef.current = getSidecarToken();
   }, []);
 
   // Slice 7.7: pass the active conversation id to the chat route so the
@@ -448,18 +458,53 @@ export function CommandPalette() {
         setOpen((v) => !v);
         return;
       }
+      // ⌘. → interrupt Duffy mid-stream (matches macOS convention for
+      // "cancel current operation"). Only meaningful while streaming;
+      // silently ignored otherwise so the chord stays harmless.
+      if ((e.metaKey || e.ctrlKey) && e.key === ".") {
+        if (status === "streaming" || status === "submitted") {
+          e.preventDefault();
+          stop();
+        }
+        return;
+      }
       // Already open OR target is editable → let it pass
       if (open || isEditableTarget(e.target)) return;
       // Only the spacebar triggers — and only when no modifier is held
       // (Ctrl/Cmd/Alt+Space should pass through to OS shortcuts).
       if (e.key !== " " || e.metaKey || e.ctrlKey || e.altKey) return;
       e.preventDefault();
-      setInput(""); // no prefill — space is the trigger, not content
+      // Don't clear input on summon — the restore-from-sessionStorage
+      // effect below brings back any draft the user had when the palette
+      // last auto-closed. preventDefault() above already swallows the
+      // space keystroke, so no risk of inserting " " into the textarea.
       setOpen(true);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open]);
+  }, [open, status, stop]);
+
+  // Restore unsent draft from sessionStorage on mount, persist on every
+  // change. Cleared after a successful send (see send()).
+  // sessionStorage is per-origin and the sidecar port changes each
+  // launch → drafts live for the current .app session only, which is
+  // the right scope.
+  useEffect(() => {
+    try {
+      const draft = window.sessionStorage.getItem(DRAFT_KEY);
+      if (draft) setInput(draft);
+    } catch {
+      /* sessionStorage disabled (private mode etc.) — silent */
+    }
+  }, []);
+  useEffect(() => {
+    try {
+      if (input) window.sessionStorage.setItem(DRAFT_KEY, input);
+      else window.sessionStorage.removeItem(DRAFT_KEY);
+    } catch {
+      /* silent */
+    }
+  }, [input]);
 
   // Focus + caret-to-end when the palette opens. preventScroll stops
   // the browser from scrolling an ancestor scroll container to bring
@@ -518,7 +563,20 @@ export function CommandPalette() {
   }, [input, status, sendMessage, stop, startNew]);
 
   const onInputKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.nativeEvent.isComposing) {
+    if (
+      e.key === "Enter" &&
+      !e.shiftKey &&
+      !e.metaKey &&
+      // Belt + braces against IME leakage:
+      //   - e.nativeEvent.isComposing — Chromium/standard signal
+      //   - e.keyCode === 229 — legacy IME-pending signal still respected by WKWebView
+      //   - composingRef — our own onCompositionStart/End tracker (catches the
+      //     case where Enter confirms the candidate but the flag has already
+      //     flipped to false at keydown time)
+      !e.nativeEvent.isComposing &&
+      e.keyCode !== 229 &&
+      !composingRef.current
+    ) {
       e.preventDefault();
       send();
     }
@@ -565,70 +623,15 @@ export function CommandPalette() {
       }}
       onWheel={onPaletteWheel}
       style={{
-        // Stronger blur + deeper tint than before. When the user
-        // pushes the chat to fully-expanded mode the tint bumps up
-        // again so the conversation reads on top of an even quieter
-        // backdrop.
-        // Lower blur strength + heavier tint than the previous pass —
-        // strong blur scatters bright pixels behind into halos around
-        // text. Pulling blur down ~30% and lifting the dark tint masks
-        // most of that bleed while keeping the "frosted" feel.
-        background: leaving
-          ? "rgba(0,0,0,0)"
-          : userExpanded
-            ? "rgba(0,0,0,0.58)"
-            : "rgba(0,0,0,0.36)",
-        backdropFilter: leaving
-          ? "blur(0px)"
-          : userExpanded
-            ? "blur(14px) saturate(0.85)"
-            : "blur(9px) saturate(0.9)",
-        WebkitBackdropFilter: leaving
-          ? "blur(0px)"
-          : userExpanded
-            ? "blur(14px) saturate(0.85)"
-            : "blur(9px) saturate(0.9)",
-        transition: `background ${FADE_MS}ms ease-out, backdrop-filter ${FADE_MS}ms ease-out, -webkit-backdrop-filter ${FADE_MS}ms ease-out`,
+        // 2026-06-04 redesign: backdrop is fully transparent. The palette
+        // and message panel each carry their own light frosted-glass so
+        // the user can see / drag against the page underneath.
+        background: "transparent",
       }}
     >
-      {/* Noise texture overlay — film-grain on the blurred backdrop so
-          the surface reads as glass not flat tint. mix-blend-mode dropped
-          (it was washing out on the dark backdrop); white noise applied
-          straight at low opacity gives a clear grain. */}
-      <svg
-        aria-hidden
-        style={{
-          position: "absolute",
-          inset: 0,
-          width: "100%",
-          height: "100%",
-          pointerEvents: "none",
-          opacity: leaving ? 0 : 0.10,
-          transition: `opacity ${FADE_MS}ms ease-out`,
-        }}
-        preserveAspectRatio="none"
-      >
-        <defs>
-          <filter id="palette-noise">
-            <feTurbulence
-              type="fractalNoise"
-              baseFrequency="0.85"
-              numOctaves="3"
-              seed="3"
-              stitchTiles="stitch"
-            />
-            {/* RGB → white, alpha = original luminance × 0.85.
-                That gives high-contrast monochrome grain. */}
-            <feColorMatrix
-              values="0 0 0 0 1
-                      0 0 0 0 1
-                      0 0 0 0 1
-                      0 0 0 0.85 0"
-            />
-          </filter>
-        </defs>
-        <rect width="100%" height="100%" filter="url(#palette-noise)" />
-      </svg>
+      {/* Full-viewport noise + tint removed (2026-06-04). The new design
+          lets the page show through; per-element frosted glass below
+          gives the palette its own surface. */}
       {/* Centering wrapper — flex centers the motion.div based on its
           actual rendered size. Done at this layer (NOT via Tailwind
           translate utilities on motion.div) because motion's style.y
@@ -695,13 +698,26 @@ export function CommandPalette() {
             <motion.div
               ref={scrollRef}
               className="pointer-events-auto mb-6 hub-scrollbar"
-              initial={false}
+              // Iris-open on first mount — messages container expands
+              // from center together with the command line, only when
+              // the palette itself is being summoned. The new-conversation
+              // flow uses the existing maxHeight-shrink path (NOT scaleX),
+              // so the messages container stays "horizontally normal" and
+              // only collapses vertically there.
+              //
+              // maxHeight ALSO starts at 0 so the assembly grows from
+              // short → tall in lockstep with scaleX; otherwise the
+              // command-line below appears to slam down into place when
+              // the flex parent re-centers an instantly-full-height
+              // (but invisible) message panel.
+              initial={{ scaleX: 0, opacity: 0, maxHeight: 0 }}
               // Tighter caps so the WHOLE assembly fits well inside
               // the Tauri webview no matter the window size. Assembly
               // total ≈ messages_max + 24 (mb-6) + ~52 (input). Caps
               // below leave generous top/bottom breathing room so the
               // user never sees an edge hit the window.
               animate={{
+                scaleX: leaving ? 0 : 1,
                 maxHeight:
                   newConvoPhase === "shrinking-messages" ||
                   newConvoPhase === "iris-close" ||
@@ -714,6 +730,7 @@ export function CommandPalette() {
                         ? "calc(70vh - 100px)"
                         : "calc(35vh - 50px)",
                 opacity:
+                  leaving ||
                   newConvoPhase === "shrinking-messages" ||
                   newConvoPhase === "iris-close" ||
                   newConvoPhase === "iris-open" ||
@@ -727,17 +744,33 @@ export function CommandPalette() {
                     : 0,
               }}
               transition={{
-                duration:
-                  newConvoPhase === "shrinking-messages"
+                duration: leaving
+                  ? 0.4
+                  : newConvoPhase === "shrinking-messages"
                     ? 0.55
                     : collapsed || userExpanded
                       ? 1.2
                       : 0.45,
-                ease: [0.22, 1, 0.36, 1],
+                ease: leaving
+                  ? [0.7, 0, 0.84, 0]
+                  : [0.22, 1, 0.36, 1],
               }}
               style={{
                 overflowY: collapsed ? "hidden" : "auto",
                 overflowX: "hidden",
+                // Local frosted glass + accent ring — matches the aura
+                // on the command line below (both driven by --palette-accent).
+                background: "rgba(20, 22, 28, 0.45)",
+                border: "1px solid rgba(var(--palette-accent-rgb), 0.18)",
+                borderRadius: "12px",
+                padding: "16px",
+                boxShadow:
+                  "0 0 0 1px rgba(var(--palette-accent-rgb), 0.10)," +
+                  " 0 6px 24px rgba(0,0,0,0.35)," +
+                  " 0 0 32px rgba(var(--palette-accent-rgb), 0.14)",
+                backdropFilter: "blur(10px) saturate(0.9)",
+                WebkitBackdropFilter: "blur(10px) saturate(0.9)",
+                transformOrigin: "center",
               }}
               onClick={(e) => e.stopPropagation()}
               // Wheel inside the messages container scrolls its own
@@ -809,23 +842,45 @@ export function CommandPalette() {
                 ? "thinking-pulse"
                 : ""
           }`}
+          // Iris entrance/exit reused from the new-conversation choreography:
+          //   - mount: scaleX 0 → 1 (open)
+          //   - leaving (idle/Esc/⌘K close): scaleX 1 → 0
+          //   - newConvoPhase=iris-close: same 1 → 0 mid-session
+          // transformOrigin: center makes it "fold out from the middle"
+          // matching the new-convo iris-open feel.
+          initial={{ scaleX: 0, opacity: 0 }}
           animate={{
-            scaleX: newConvoPhase === "iris-close" ? 0 : 1,
+            scaleX:
+              leaving || newConvoPhase === "iris-close" ? 0 : 1,
+            opacity: leaving ? 0 : 1,
           }}
           transition={{
-            // 0.4s for the actual scale; the 800ms iris-close phase leaves
-            // ~400ms of explicit hold at scaleX=0 (a near-invisible line)
-            // before iris-open swings it back out at 0.45s.
-            duration: newConvoPhase === "iris-close" ? 0.4 : 0.45,
+            duration:
+              leaving || newConvoPhase === "iris-close" ? 0.4 : 0.45,
             ease:
-              newConvoPhase === "iris-close"
+              leaving || newConvoPhase === "iris-close"
                 ? [0.7, 0, 0.84, 0]
                 : [0.16, 1, 0.3, 1],
           }}
           style={{
-            background: "rgba(255, 255, 255, 0.04)",
-            border: "1px solid rgba(255, 255, 255, 0.10)",
-            boxShadow: "0 1px 0 rgba(255,255,255,0.04) inset",
+            background: "rgba(20, 22, 28, 0.55)",
+            // Option B aura — color driven by --palette-accent (sky-blue
+            // by default; decoupled from --accent so the palette can be
+            // re-tinted without touching the rest of the hub).
+            border: "1px solid rgba(var(--palette-accent-rgb), 0.35)",
+            boxShadow:
+              // inner top sheen (subtle)
+              "inset 0 1px 0 rgba(255,255,255,0.06)," +
+              // tight accent ring (1px halo right at the edge)
+              " 0 0 0 1px rgba(var(--palette-accent-rgb), 0.18)," +
+              // depth shadow (palette feels lifted)
+              " 0 8px 32px rgba(0,0,0,0.40)," +
+              // soft outer aura
+              " 0 0 40px rgba(var(--palette-accent-rgb), 0.22)",
+            // Local frosted glass — only the palette itself blurs what's
+            // behind it, the rest of the viewport stays sharp.
+            backdropFilter: "blur(12px) saturate(0.9)",
+            WebkitBackdropFilter: "blur(12px) saturate(0.9)",
             transformOrigin: "center",
           }}
           onClick={(e) => e.stopPropagation()}
@@ -838,10 +893,34 @@ export function CommandPalette() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={onInputKey}
+            onCompositionStart={() => {
+              composingRef.current = true;
+            }}
+            onCompositionEnd={() => {
+              composingRef.current = false;
+            }}
             placeholder="ask anything"
             rows={1}
             className="flex-1 resize-none bg-transparent text-[16px] leading-relaxed text-[var(--fg-0)] placeholder:text-[var(--fg-3)] focus:outline-none"
           />
+          {/* Stop button — visible only while Duffy is streaming, so the
+              user can interrupt without typing /stop. ⌘. is the global
+              shortcut (see keydown handler above). */}
+          {isThinking && (
+            <button
+              type="button"
+              onClick={() => stop()}
+              title="Stop generating (⌘.)"
+              className="ml-2 flex h-7 items-center gap-1.5 rounded-md border border-white/20 bg-white/[0.04] px-2.5 text-[11px] font-mono tracking-[0.16em] uppercase text-[var(--fg-1)] hover:text-[var(--fg-0)] hover:border-white/40 transition-colors"
+            >
+              <span
+                aria-hidden
+                className="block h-2.5 w-2.5 bg-current"
+              />
+              <span>stop</span>
+              <span className="text-[var(--fg-3)]">⌘.</span>
+            </button>
+          )}
           {/* Expand toggle removed per Yen — palette is now always
               fully expanded while open. */}
         </motion.div>

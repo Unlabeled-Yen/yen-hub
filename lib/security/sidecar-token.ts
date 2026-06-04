@@ -1,66 +1,86 @@
 /**
- * Client-side helper — fetch the per-startup sidecar token from the Rust
- * side once, memoise, and stamp it onto outgoing /api fetches.
+ * Client-side helper — read the per-startup sidecar token that Rust passes
+ * via the initial navigation URL, cache it, and stamp it onto outgoing
+ * /api fetches as `X-Yen-Token`.
  *
- * The token is generated fresh on every Yen.app launch (see
- * `src-tauri/src/sidecar.rs`). Without it, `middleware.ts` rejects /api
- * requests with 403 in production. In dev (browser at localhost:3000 or
- * Tauri dev without a token), `invoke()` is unavailable / returns "", so
- * we silently skip the header — middleware also bypasses when its env var
- * is unset, so dev still works.
+ * Why URL transport (and not Tauri `invoke`)
+ * ------------------------------------------
+ * Tauri 2's ACL blocks invoke calls to custom commands on webviews
+ * navigated to a non-frontendDist origin (which is our case — Rust
+ * navigates the webview from the splash to http://127.0.0.1:<ephemeral>
+ * once the Node sidecar is ready). Adding the right capability/permission
+ * would work but every future `tauri::command` would have to remember to
+ * register its own permission entry. The URL path side-steps Tauri ACL
+ * entirely.
+ *
+ * Transport details (matches the comment in src-tauri/src/sidecar.rs)
+ *   - Rust navigates to `http://127.0.0.1:<port>/?_yt=<token>` after the
+ *     sidecar binds.
+ *   - This module reads `?_yt=` at first import, stashes the token in
+ *     module-level cache + sessionStorage, then `history.replaceState`s
+ *     the query away so the token never appears in subsequent client
+ *     navigations, the URL bar, or screenshots.
+ *   - sessionStorage is what survives Cmd+R reload: the reload re-fetches
+ *     `/` from the sidecar (no `_yt` on the URL anymore), but the same
+ *     WKWebView session keeps sessionStorage.
+ *   - Same-origin /api fetches inside the webview pick the token up via
+ *     `tokenFetch` / `sidecarHeaders` / `withSidecarToken`.
+ *
+ * Dev mode (browser at localhost:3000): no `_yt` query, no sessionStorage
+ * entry, getSidecarToken returns "". Middleware also bypasses the token
+ * check when its env var is unset, so dev still works end-to-end.
  */
 
 const TOKEN_HEADER = "X-Yen-Token";
+const STORAGE_KEY = "yen-hub:sidecar-token";
+const URL_PARAM = "_yt";
 
 let cached: string | null = null;
-let inflight: Promise<string> | null = null;
 
-function hasTauriRuntime(): boolean {
-  if (typeof window === "undefined") return false;
-  return Boolean((window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
-}
-
-async function fetchToken(): Promise<string> {
-  if (!hasTauriRuntime()) return "";
-  let invoke: (cmd: string) => Promise<unknown>;
+function readFromUrlAndStash(): string {
+  if (typeof window === "undefined") return "";
   try {
-    ({ invoke } = await import("@tauri-apps/api/core"));
-  } catch {
-    return "";
-  }
-  // Rust may still be spawning the sidecar — `get_sidecar_token` returns ""
-  // until launch completes. Poll briefly.
-  for (let i = 0; i < 30; i++) {
+    const url = new URL(window.location.href);
+    const fromQuery = url.searchParams.get(URL_PARAM);
+    if (fromQuery) {
+      try {
+        window.sessionStorage.setItem(STORAGE_KEY, fromQuery);
+      } catch {
+        /* sessionStorage can throw in private windows / disabled storage */
+      }
+      url.searchParams.delete(URL_PARAM);
+      // Strip the query so the token doesn't survive in the URL bar or
+      // get carried into subsequent navigations.
+      window.history.replaceState(null, "", url.toString());
+      return fromQuery;
+    }
     try {
-      const t = (await invoke("get_sidecar_token")) as string;
-      if (t) return t;
+      return window.sessionStorage.getItem(STORAGE_KEY) ?? "";
     } catch {
       return "";
     }
-    await new Promise((r) => setTimeout(r, 200));
+  } catch {
+    return "";
   }
-  return "";
 }
 
-/** Returns the cached token or "" if none is available. Caches forever
- *  within a page session — token is stable across the app's lifetime. */
-export async function getSidecarToken(): Promise<string> {
+/** Returns the cached token or "" if none is available. */
+export function getSidecarToken(): string {
   if (cached !== null) return cached;
-  if (!inflight) inflight = fetchToken();
-  cached = await inflight;
+  cached = readFromUrlAndStash();
   return cached;
 }
 
 /** Returns headers including X-Yen-Token if available. */
-export async function sidecarHeaders(): Promise<Record<string, string>> {
-  const t = await getSidecarToken();
+export function sidecarHeaders(): Record<string, string> {
+  const t = getSidecarToken();
   return t ? { [TOKEN_HEADER]: t } : {};
 }
 
 /** Wrap RequestInit with the sidecar token header. Safe to call always —
  *  no-op when no token is available. */
-export async function withSidecarToken(init?: RequestInit): Promise<RequestInit> {
-  const extra = await sidecarHeaders();
+export function withSidecarToken(init?: RequestInit): RequestInit {
+  const extra = sidecarHeaders();
   if (Object.keys(extra).length === 0) return init ?? {};
   return {
     ...init,
@@ -72,9 +92,9 @@ export async function withSidecarToken(init?: RequestInit): Promise<RequestInit>
 }
 
 /** Convenience — fetch with sidecar token auto-injected. */
-export async function tokenFetch(
+export function tokenFetch(
   input: RequestInfo | URL,
   init?: RequestInit,
 ): Promise<Response> {
-  return fetch(input, await withSidecarToken(init));
+  return fetch(input, withSidecarToken(init));
 }

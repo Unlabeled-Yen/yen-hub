@@ -1,45 +1,71 @@
 /**
- * Scan the vault for unfinished promises — markdown task list checkboxes
- * `- [ ]` and natural-language markers ("下次要", "待辦", "TODO"). Returns
- * the items sorted by file mtime descending, so recent commitments float to
- * the top.
+ * Scan the vault Queue for commitments. 2026-06-04 model: each `.md` file
+ * in `05 - Queue/` (root OR `首要待辦/`) IS a single TODO — the filename
+ * IS the commitment, not the checkbox lines inside. Files in other
+ * subfolders are ignored (material storage, not commitments).
+ *
+ * Returned items are sorted by file mtime descending so the freshest
+ * commitments float to the top.
  */
 
 import { promises as fs } from "node:fs";
 import { relative } from "node:path";
 import {
-  classifyZone,
   listMarkdown,
   vaultPath,
   type Zone,
 } from "./reader";
 import { classifyTodo } from "./classify";
 
-const TODO_PATTERNS: RegExp[] = [
-  /^\s*[-*+]\s+\[\s\]\s+(.+)$/, // markdown unchecked checkbox
-  /^\s*(?:下次要|待辦)[:：]?\s*(.+)$/, // natural language commitments
-  /^\s*TODO[:：]?\s*(.+)$/i, // TODO marker
-];
+/** Subfolder under `05 - Queue/` that holds "this is the next thing to
+ *  ship" files. Membership is the priority signal — no overlay store. */
+export const PRIORITY_SUBFOLDER = "首要待辦";
+
+const QUEUE_DIR = "05 - Queue";
 
 export type Todo = {
-  file: string; // relative path
+  file: string; // vault-relative path
+  /** Always 0 for file-as-task model — kept for downstream code that
+   *  still uses it in keys / IDs. */
   lineNum: number;
+  /** Display text for the item — the filename with `.md` stripped and
+   *  trailing date suffix tidied. Falls back to the raw filename. */
   text: string;
   zone: Zone;
-  category: string; // from classify.ts — derived from filename + content
-  needsAi: boolean; // true for mixed files that warrant AI subdivision
+  category: string;
+  needsAi: boolean;
   mtimeMs: number;
+  /** True when the file lives under `05 - Queue/首要待辦/`. The folder
+   *  IS the priority overlay — clicking an item in the UI moves its
+   *  whole file in/out, so this flag is the only source of truth. */
+  isPriority: boolean;
 };
 
+/** Strip `.md`, strip a trailing `_YYYY-MM-DD` (or `-YYYY-MM-DD`) date
+ *  tag, collapse whitespace. The bare filename usually reads as the
+ *  commitment ("寫作品牌策略_誠實診斷與整合"). */
+function filenameToText(rel: string): string {
+  const base = rel.split("/").pop() ?? rel;
+  return base
+    .replace(/\.md$/, "")
+    .replace(/[_-]?\d{4}-\d{2}-\d{2}$/, "")
+    .trim();
+}
+
 /**
- * Scan TODOs limited to a specific zone (or all zones if zone is null).
- * Yen wants only 佇列 (queue) by default — SPEC / ADR / draft TODOs are
- * "work artifacts", not personal commitments.
+ * Scan TODOs in the Queue.
+ *
+ * @param limit  maximum entries returned after mtime-desc sort
+ * @param zoneFilter  kept for API compatibility; only `"queue"` and `null`
+ *   produce file-as-task output. Any other zone yields an empty list
+ *   because the model is queue-specific.
  */
 export async function scanTodos(
-  limit = 50,
+  limit = 200,
   zoneFilter: Zone | null = "queue",
 ): Promise<Todo[]> {
+  if (zoneFilter && zoneFilter !== "queue") return [];
+
   const root = vaultPath();
   const files = await listMarkdown(root);
 
@@ -47,8 +73,22 @@ export async function scanTodos(
   await Promise.all(
     files.map(async (abs) => {
       const rel = relative(root, abs);
-      const zone = classifyZone(rel);
-      if (zoneFilter && zone !== zoneFilter) return;
+      if (!rel.startsWith(`${QUEUE_DIR}/`)) return;
+
+      // Only Queue root files and Queue/首要待辦/ files qualify. Any
+      // other subfolder structure is material, not commitments.
+      const parts = rel.split("/");
+      let isPriority = false;
+      if (parts.length === 2) {
+        isPriority = false;
+      } else if (
+        parts.length === 3 &&
+        parts[1] === PRIORITY_SUBFOLDER
+      ) {
+        isPriority = true;
+      } else {
+        return;
+      }
 
       let stat;
       try {
@@ -56,32 +96,19 @@ export async function scanTodos(
       } catch {
         return;
       }
-      const text = await fs.readFile(abs, "utf8").catch(() => "");
-      if (!text) return;
 
-      const lines = text.split("\n");
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        let captured: string | null = null;
-        for (const re of TODO_PATTERNS) {
-          const m = line.match(re);
-          if (m) {
-            captured = m[1].trim();
-            break;
-          }
-        }
-        if (!captured) continue;
-        const { category, needsAi } = classifyTodo(rel, captured);
-        all.push({
-          file: rel,
-          lineNum: i + 1,
-          text: captured,
-          zone,
-          category,
-          needsAi,
-          mtimeMs: stat.mtimeMs,
-        });
-      }
+      const text = filenameToText(rel);
+      const { category, needsAi } = classifyTodo(rel, text);
+      all.push({
+        file: rel,
+        lineNum: 0,
+        text,
+        zone: "queue",
+        category,
+        needsAi,
+        mtimeMs: stat.mtimeMs,
+        isPriority,
+      });
     }),
   );
 

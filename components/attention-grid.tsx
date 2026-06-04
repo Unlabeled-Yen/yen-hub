@@ -17,6 +17,7 @@ import { useEffect, useState } from "react";
 import { parseBook as parseBookName } from "@/lib/vault/book-translations";
 import { EASE } from "@/lib/animation/constants";
 import { DuffyBadge } from "@/components/page-b/duffy-badge";
+import { AtrStats } from "@/components/atr-stats";
 import type {
   AttentionResponse,
   BookSummary,
@@ -421,11 +422,11 @@ export function AttentionGrid({
   data: AttentionResponse | null;
 }) {
   if (!data) {
-    return (
-      <div className="font-mono text-[12px] text-[var(--fg-2)] tracking-[0.30em] uppercase">
-        attention · loading
-      </div>
-    );
+    // Invisible placeholder — keeps layout stable while attention is
+    // still fetching, but doesn't flash "ATTENTION · LOADING" text on
+    // every cold /hub entry. opacity:0 not display:none, so siblings
+    // (ReadingProgress etc.) don't jump when data lands.
+    return <div aria-hidden style={{ minHeight: 1 }} />;
   }
 
   // Strict: only the PINNED zones plot, in PINNED order. No auto-add of
@@ -453,6 +454,12 @@ export function AttentionGrid({
         {plotted.map((z, i) => (
           <ZoneColumn key={z.zone} z={z} scaleMax={scaleMax} index={i} />
         ))}
+      </div>
+      {/* US30 ATR snapshot — D and 2H values plus Normalized ATR (a.k.a.
+          Relative Volatility / ATR Ratio). Read-only context strip;
+          changing the main chart's timeframe doesn't affect this. */}
+      <div className="pt-2">
+        <AtrStats />
       </div>
       {/* Shared SVG filter <defs>. The actual `feTurbulence` filter
           is referenced from each bar's overlay rect via url(#bar-grain).

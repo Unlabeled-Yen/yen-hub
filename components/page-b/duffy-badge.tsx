@@ -111,15 +111,15 @@ export function DuffyBadge() {
         };
       case "thinking":
         return {
-          background: "rgba(0,229,180,0.06)",
-          border: "1px solid rgba(0,229,180,0.45)",
-          color: "var(--accent)",
+          background: "rgba(var(--palette-accent-rgb),0.06)",
+          border: "1px solid rgba(var(--palette-accent-rgb),0.45)",
+          color: "var(--palette-accent)",
         };
       case "fresh":
         return {
-          background: "rgba(0,229,180,0.14)",
-          border: "1px solid var(--accent)",
-          color: "var(--accent)",
+          background: "rgba(var(--palette-accent-rgb),0.14)",
+          border: "1px solid var(--palette-accent)",
+          color: "var(--palette-accent)",
         };
       case "quiet":
       default:
@@ -225,8 +225,8 @@ export function DuffyBadge() {
             aria-hidden
             className="inline-block h-1.5 w-1.5 rounded-full"
             style={{
-              background: "var(--accent)",
-              boxShadow: "0 0 6px var(--accent)",
+              background: "var(--palette-accent)",
+              boxShadow: "0 0 6px var(--palette-accent)",
             }}
             animate={{ opacity: [0.4, 1, 0.4], scale: [0.85, 1.05, 0.85] }}
             transition={{
@@ -241,8 +241,8 @@ export function DuffyBadge() {
             aria-hidden
             className="inline-block h-1.5 w-1.5 rounded-full"
             style={{
-              background: "var(--accent)",
-              boxShadow: "0 0 10px var(--accent), 0 0 18px rgba(0,229,180,0.4)",
+              background: "var(--palette-accent)",
+              boxShadow: "0 0 10px var(--palette-accent), 0 0 18px rgba(var(--palette-accent-rgb),0.4)",
             }}
           />
         )}

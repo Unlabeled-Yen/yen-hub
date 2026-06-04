@@ -31,6 +31,7 @@ import {
   browserSupportsWebAuthn,
 } from "@simplewebauthn/browser";
 import { isTauri } from "@/lib/env/runtime";
+import { getSidecarToken } from "@/lib/security/sidecar-token";
 
 export default function Home() {
   const router = useRouter();
@@ -106,6 +107,13 @@ export default function Home() {
   };
 
   useEffect(() => {
+    // Capture the sidecar token from `?_yt=` BEFORE we navigate away
+    // from `/`. The token only appears on the initial URL Rust navigates
+    // the webview to; once we router.push('/hub') the query is gone, so
+    // we have to read it here. The helper stashes into sessionStorage,
+    // which carries the token to /hub and across Cmd+R reloads.
+    getSidecarToken();
+
     router.prefetch("/hub");
 
     // Mode 1 — dev bypass

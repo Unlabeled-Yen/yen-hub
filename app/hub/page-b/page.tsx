@@ -19,6 +19,13 @@ import { SoulView } from "@/components/page-b/soul-view";
 import { SummaryView } from "@/components/page-b/summary-view";
 import { generateCoachCard } from "@/lib/agent/duffy/coach";
 
+// Force per-request rendering. Without this, Next bakes the page (and
+// `generateCoachCard()`'s result) at build time — when no LLM env exists —
+// freezing the "（無 LLM key）" fallback into the static HTML. Every cold
+// navigation back to page-b would then show that fallback until the
+// client-side refetch lands, looking like the LLM key kept disappearing.
+export const dynamic = "force-dynamic";
+
 /** Numbered hairline section mark — sits above each block. */
 function SectionMark({
   num,

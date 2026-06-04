@@ -13,6 +13,8 @@
 import { promises as fs } from "node:fs";
 import { join, relative } from "node:path";
 
+import { appendAndUnion } from "./reading-log";
+
 const EXCLUDE_DIRS = new Set([
   ".git",
   ".obsidian",
@@ -156,16 +158,36 @@ export async function statAll(vault: string): Promise<FileStat[]> {
  * Obsidian, so this is "recently opened" not "ever opened".
  */
 export async function lastOpenFiles(vault: string): Promise<Set<string>> {
-  try {
-    const txt = await fs.readFile(
-      join(vault, ".obsidian", "workspace.json"),
-      "utf8",
-    );
-    const json = JSON.parse(txt) as { lastOpenFiles?: string[] };
-    return new Set(json.lastOpenFiles ?? []);
-  } catch {
-    return new Set();
+  // Obsidian only retains ~50 paths in workspace.json's lastOpenFiles
+  // (zone-blind FIFO). A few days of heavy Queue editing rotates every
+  // library chapter, every Trading Review entry, every Indexes file out
+  // of the set — silently zeroing AttentionGrid's "opened" count per
+  // zone and ReadingProgress's openedChapters per book.
+  //
+  // Defence is in two layers, applied in order:
+  //   1. Read workspace.json AND workspace.json.bak (Obsidian's
+  //      auto-backup) — captures one extra generation of rotated entries
+  //      from a single source.
+  //   2. Union into a Yen-Hub-owned append-only log
+  //      (~/Library/Application Support/com.yen.hub/reading-log.json),
+  //      then return the log's full contents. Any path Obsidian ever
+  //      surfaced — even once, even months ago — stays in the openSet
+  //      until the file itself disappears from the vault.
+  //
+  // The log is zone-blind on purpose: we record what Obsidian saw and let
+  // downstream pipelines do their own zone filtering against stats[].
+  const dir = join(vault, ".obsidian");
+  const fromObsidian = new Set<string>();
+  for (const name of ["workspace.json", "workspace.json.bak"]) {
+    try {
+      const txt = await fs.readFile(join(dir, name), "utf8");
+      const json = JSON.parse(txt) as { lastOpenFiles?: string[] };
+      for (const f of json.lastOpenFiles ?? []) fromObsidian.add(f);
+    } catch {
+      /* missing file is fine — silently skip */
+    }
   }
+  return appendAndUnion(fromObsidian);
 }
 
 /** Parse `Tag: [[a]], [[b]]` from the first lines. */
