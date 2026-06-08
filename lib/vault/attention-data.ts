@@ -18,6 +18,7 @@ import {
   type Zone,
 } from "@/lib/vault/reader";
 import { resolveBooks } from "@/lib/vault/translate-book";
+import { basename } from "node:path";
 
 export type ZoneBreakdown = {
   zone: Zone;
@@ -36,6 +37,13 @@ export type BookSummary = {
   addedChapters: number;
   openedChapters: number;
   furthestChapter?: { num: number; title: string } | null;
+  /**
+   * Vault-relative file path that "click on this book" should open in
+   * Obsidian. Furthest opened chapter if any reading has happened;
+   * otherwise the lowest-numbered chapter so a shelved book opens at
+   * chapter 1. Null only if no parseable chapter file was found.
+   */
+  openTarget?: string | null;
   displayTitle?: string;
   displayAuthor?: string;
 };
@@ -44,6 +52,11 @@ export type AttentionResponse = {
   window: number;
   generatedAt: number;
   zones: ZoneBreakdown[];
+  /**
+   * Vault folder name (basename of YEN_VAULT_PATH). The frontend uses it
+   * to build `obsidian://open?vault=<vaultName>&file=<path>` URLs.
+   */
+  vaultName: string;
   library: {
     activelyReading: BookSummary[];
     newlyHoarded: BookSummary[];
@@ -51,14 +64,14 @@ export type AttentionResponse = {
   };
 };
 
-type ChapterRef = { num: number; title: string };
+type ChapterRef = { num: number; title: string; rel: string };
 
 function parseChapterFile(relPath: string): ChapterRef | null {
   const base = (relPath.split("/").pop() ?? "").replace(/\.md$/, "");
   const m1 = base.match(/^(\d+)_(\d+)\s+(.+)$/);
-  if (m1) return { num: Number(m1[2]), title: m1[3].trim() };
+  if (m1) return { num: Number(m1[2]), title: m1[3].trim(), rel: relPath };
   const m2 = base.match(/^(\d+)_(.+)$/);
-  if (m2) return { num: Number(m2[1]), title: m2[2].trim() };
+  if (m2) return { num: Number(m2[1]), title: m2[2].trim(), rel: relPath };
   return null;
 }
 
@@ -76,6 +89,7 @@ function bookSummaries(
       addedChapters: number;
       openedChapters: number;
       openedRefs: ChapterRef[];
+      allRefs: ChapterRef[];
     }
   >();
   for (const f of libFiles) {
@@ -91,27 +105,37 @@ function bookSummaries(
         addedChapters: 0,
         openedChapters: 0,
         openedRefs: [],
+        allRefs: [],
       };
       books.set(key, b);
     }
     b.chapters++;
     if (f.mtimeMs >= cutoff) b.addedChapters++;
+    const ref = parseChapterFile(f.rel);
+    if (ref) b.allRefs.push(ref);
     if (openSet.has(f.rel)) {
       b.openedChapters++;
-      const ref = parseChapterFile(f.rel);
       if (ref) b.openedRefs.push(ref);
     }
   }
   return Array.from(books.values()).map((b) => {
-    const sorted = [...b.openedRefs].sort((a, z) => z.num - a.num);
-    const furthest = sorted[0] ?? null;
+    const sortedOpened = [...b.openedRefs].sort((a, z) => z.num - a.num);
+    const furthest = sortedOpened[0] ?? null;
+    // Click target: furthest opened chapter file, else lowest-numbered
+    // chapter so a shelved book opens at chapter 1.
+    const firstChapter =
+      [...b.allRefs].sort((a, z) => a.num - z.num)[0] ?? null;
+    const openTarget = furthest?.rel ?? firstChapter?.rel ?? null;
     return {
       name: b.name,
       path: b.path,
       chapters: b.chapters,
       addedChapters: b.addedChapters,
       openedChapters: b.openedChapters,
-      furthestChapter: furthest,
+      furthestChapter: furthest
+        ? { num: furthest.num, title: furthest.title }
+        : null,
+      openTarget,
     };
   });
 }
@@ -199,6 +223,7 @@ async function buildAttentionUncached(days: number): Promise<AttentionResponse> 
     window: days,
     generatedAt: Date.now(),
     zones,
+    vaultName: basename(root),
     library: { activelyReading, newlyHoarded, books },
   };
 }

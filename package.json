@@ -16,6 +16,8 @@
     "@ai-sdk/react": "^3.0.195",
     "@simplewebauthn/browser": "^13.3.0",
     "@simplewebauthn/server": "^13.3.1",
+    "@tauri-apps/plugin-opener": "^2.5.4",
+    "@tauri-apps/plugin-shell": "^2.3.5",
     "ai": "^6.0.193",
     "cmdk": "^1.1.1",
     "iron-session": "^8.0.4",

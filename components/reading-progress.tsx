@@ -19,7 +19,7 @@
  */
 
 import { motion } from "motion/react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ElementType, type MouseEvent as ReactMouseEvent } from "react";
 import { parseBook as parseBookShared } from "@/lib/vault/book-translations";
 import { EASE } from "@/lib/animation/constants";
 import type {
@@ -30,7 +30,27 @@ import type {
 // Re-export parseBook under a local alias so existing call sites don't change.
 const parseBook = parseBookShared;
 
-function BookBlock({ b, index }: { b: BookSummary; index: number }) {
+/**
+ * Build an `obsidian://open` deep link for a chapter file. Returns null if
+ * either the vault name or target path is missing (e.g. legacy payload).
+ * `file` query param does NOT need the trailing `.md` — Obsidian resolves
+ * it — but URI-encoding the slashes IS required so spaces/CJK survive.
+ */
+function obsidianUrl(vaultName: string | undefined, target: string | null | undefined): string | null {
+  if (!vaultName || !target) return null;
+  const file = target.replace(/\.md$/, "");
+  return `obsidian://open?vault=${encodeURIComponent(vaultName)}&file=${encodeURIComponent(file)}`;
+}
+
+function BookBlock({
+  b,
+  index,
+  vaultName,
+}: {
+  b: BookSummary;
+  index: number;
+  vaultName: string | undefined;
+}) {
   // Prefer server-resolved title/author (which already went through the AI
   // fallback). Fall back to client-side parsing if server didn't supply.
   const fromServer =
@@ -86,15 +106,58 @@ function BookBlock({ b, index }: { b: BookSummary; index: number }) {
     statusText = `${b.chapters} ch`;
   }
 
+  const href = obsidianUrl(vaultName, b.openTarget);
+
+  // No article fade-in — books need to be VISIBLE during the cube
+  // barrel-roll, otherwise the cube spins around empty faces and the
+  // user just sees a blank panel until bars start drawing. The cube
+  // rotation IS the entry visual; bars then draw on the settled face.
+  //
+  // Click → open in Obsidian via Tauri's shell plugin. Anchor-based
+  // navigation + window.open both get swallowed silently by the
+  // WKWebView for custom URL schemes (verified in dev). The shell
+  // plugin's `open()` calls into macOS's URL handler explicitly, which
+  // does fire Obsidian. Scope is locked to `obsidian://*` in
+  // src-tauri/capabilities/default.json.
+  const handleClick =
+    href && typeof window !== "undefined"
+      ? async (e: ReactMouseEvent) => {
+          e.preventDefault();
+          try {
+            // tauri-plugin-opener: Tauri 2's URL-opening plugin. The
+            // shell plugin's `open` has a hardcoded scope that rejects
+            // anything other than http(s)/mailto/tel — so we use opener
+            // instead, with `obsidian://*` whitelisted in
+            // src-tauri/capabilities/default.json. The capability also
+            // needs `remote.urls` pointing at http://127.0.0.1:* so it
+            // applies to the sidecar-loaded webview, not just local.
+            const { openUrl } = await import("@tauri-apps/plugin-opener");
+            await openUrl(href);
+          } catch {
+            // Dev fallback: outside the Tauri runtime (e.g. plain
+            // browser on localhost:3000), the plugin import throws.
+            // window.open does work in a normal browser for custom
+            // schemes registered with the OS.
+            window.open(href, "_blank");
+          }
+        }
+      : undefined;
+
+  const Wrapper: ElementType = href ? "a" : "article";
+  const wrapperProps = href
+    ? {
+        href,
+        onClick: handleClick,
+        className: "font-mono group block cursor-pointer no-underline",
+        title: "在 Obsidian 開啟",
+      }
+    : { className: "font-mono group" };
+
   return (
-    // No article fade-in — books need to be VISIBLE during the cube
-    // barrel-roll, otherwise the cube spins around empty faces and the
-    // user just sees a blank panel until bars start drawing. The cube
-    // rotation IS the entry visual; bars then draw on the settled face.
-    <article className="font-mono">
+    <Wrapper {...wrapperProps}>
       {/* Row 1: title alone (no inline counter — moved to status row) */}
       <h4
-        className="text-[13px] leading-tight truncate"
+        className="text-[13px] leading-tight truncate transition-colors group-hover:underline"
         style={{ color: "var(--fg-0)", opacity: titleOpacity }}
       >
         {title}
@@ -159,7 +222,7 @@ function BookBlock({ b, index }: { b: BookSummary; index: number }) {
           {isReading ? pctLabel : "—"}
         </span>
       </div>
-    </article>
+    </Wrapper>
   );
 }
 
@@ -388,7 +451,12 @@ function ReadingCube({ data }: { data: AttentionResponse }) {
                   }}
                 >
                   {pageBooks.map((b, i) => (
-                    <BookBlock key={b.path} b={b} index={i} />
+                    <BookBlock
+                      key={b.path}
+                      b={b}
+                      index={i}
+                      vaultName={data.vaultName}
+                    />
                   ))}
                 </div>
               </div>
