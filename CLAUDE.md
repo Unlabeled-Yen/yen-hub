@@ -49,8 +49,26 @@ pnpm tsc --noEmit
 格式建議（不強制）：`<type>(<scope>): <summary>`
 type: `feat` / `fix` / `refactor` / `perf` / `style` / `chore` / `wip`
 
+## Scripts 命名規約
+
+`scripts/` 加進 `$PATH` 最前面（見 `~/.zshrc` 的
+`export PATH="$HOME/Desktop/Yen/Develop/yen-hub/scripts:$PATH"`）。這代表
+script 名字**不能跟系統指令衝突** — 不然 `open xxx`、`grep xxx` 之類
+的命令會被你的 script shadow 掉，造成嚴重的隱性 bug。
+
+過去事故（2026-06-08）：`scripts/open` 跟 `/usr/bin/open` 衝突，每次
+`open /Applications/Yen.app` 都意外觸發 `pnpm tauri dev` 啟動 dev mode，
+讓 Yen 以為在跑 release build 結果是 dev mode 吃 1GB+ 記憶體，造成
+連續多天的卡頓 / freeze / `signal 9` 終止。修正：rename `open` →
+`yen-dev-start`。
+
+慣例：所有自製 script 必須以 **`yen-`** 開頭（如 `yen-dev-start`、
+`yen-debug-tail`、`yen-app-launch`），確保跟系統 / brew / node 工具
+都不衝突。新增 script 前先 `which <name>` 確認沒撞。
+
 ## 其他
 
 - 編輯 markdown 跟 Obsidian 規約對齊 → 看 Yen_Vault 的 `CLAUDE.md`
 - 改 Tauri 設定 / sidecar 架構 → 先讀 `06 - AI Data/Yen Hub/` 下的 ADR
 - 驗證 .app 行為 → 用 `verifier-yen-hub` skill 提供的觀察工具（log、diag）
+- 卡頓 / freeze 現場診斷 → 跑 `scripts/diag-freeze.sh`
