@@ -48,8 +48,13 @@ export default function PageBLoading() {
           <SkeletonSection num="03" name="排程" height={90} colSpan={12} />
         </div>
 
+        {/* Tier 2.5: 信任分層 */}
+        <div className="mb-14">
+          <SkeletonSection num="04" name="信任分層" height={110} colSpan={12} />
+        </div>
+
         {/* Tier 3: 記憶 */}
-        <SkeletonSection num="04" name="記憶" height={360} colSpan={12} />
+        <SkeletonSection num="05" name="記憶" height={360} colSpan={12} />
       </main>
     </div>
   );
