@@ -67,7 +67,7 @@ rust_envs=$(
 # Skip vars that are: (a) Node/Next.js runtime, (b) dev-only bypass /
 # mock flags (intentionally undefined in release), (c) WebAuthn config
 # that has sensible defaults.
-ignore_pattern='^(NODE_ENV|PATH|HOME|HOSTNAME|PORT|NEXT_|VERCEL_|TZ|TMPDIR|LANG|USER|PWD|SHELL|MOCK_|DEV_BYPASS|NEXT_PUBLIC_DEV|ORIGIN|RP_ID|PASSKEY_|SUMMARY_CRON_|NUDGE_CRON_|YEN_REQUIRE_|YEN_DEVELOP_PATH|YEN_LEARNING_AI_PATH)'
+ignore_pattern='^(NODE_ENV|PATH|HOME|HOSTNAME|PORT|NEXT_|VERCEL_|TZ|TMPDIR|LANG|USER|PWD|SHELL|MOCK_|DEV_BYPASS|NEXT_PUBLIC_DEV|ORIGIN|RP_ID|PASSKEY_|SUMMARY_CRON_|NUDGE_CRON_|DYNAMIC_SCHEDULER_|YEN_REQUIRE_|YEN_DEVELOP_PATH|YEN_LEARNING_AI_PATH)'
 missing=$(comm -23 <(echo "$node_envs") <(echo "$rust_envs") | grep -vE "$ignore_pattern" || true)
 if [ -n "$missing" ]; then
   hit "  Node uses, Rust does NOT pipe through:"

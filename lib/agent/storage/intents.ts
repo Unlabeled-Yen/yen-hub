@@ -21,6 +21,8 @@ import {
   type IntentKind,
   type IntentPayload,
   type IntentStatus,
+  type TrustTier,
+  defaultTrustTier,
   newIntentId,
 } from "./types";
 
@@ -81,6 +83,9 @@ export async function createIntent(args: {
   rationale: string;
   evidence?: EvidenceRef[];
   importance?: Importance;
+  /** Slice 11.4 — explicit tier overrides the kind-based default. Omit
+   *  for the standard mapping (see types.ts#defaultTrustTier). */
+  trust_tier?: TrustTier;
 }): Promise<Intent> {
   const m = await load();
   const intent: Intent = {
@@ -93,10 +98,19 @@ export async function createIntent(args: {
     rationale: args.rationale,
     evidence: args.evidence ?? [],
     importance: args.importance ?? "medium",
+    trust_tier: args.trust_tier ?? defaultTrustTier(args.kind),
   };
   m[intent.id] = intent;
   await save();
   return intent;
+}
+
+/** Slice 11.4 — read tier from an Intent, defaulting legacy records to L1
+ *  rather than the kind-based default. Legacy records predate the tier
+ *  system; treating them as L1 preserves the original "approve everything"
+ *  behavior they were created under. */
+export function tierOf(intent: Intent): TrustTier {
+  return intent.trust_tier ?? "L1";
 }
 
 export async function decideIntent(

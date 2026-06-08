@@ -22,16 +22,20 @@ import { listSkills, useSkill } from "@/lib/agent/duffy/skill-tools";
 import { webSearch, webExtract } from "@/lib/agent/duffy/web-tools";
 import { searchConversations } from "@/lib/agent/storage/conversations";
 import {
-  readDevelopFile,
-  listDevelopDir,
-  readLearningAiFile,
-  listLearningAiDir,
+  readExternalFile,
+  listExternalDir,
 } from "@/lib/agent/duffy/external-tools";
 import {
   proposeNewFile,
   proposeEditFile,
   proposeTodo,
 } from "@/lib/agent/duffy/vault-write-tools";
+import {
+  proposeSchedule,
+  cancelSchedule,
+  listSchedulesTool,
+} from "@/lib/agent/duffy/schedule-tools";
+import { listPendingIntents } from "@/lib/agent/duffy/intent-tools";
 import type {
   EvidenceRef,
   Importance,
@@ -456,11 +460,9 @@ export const duffyTools = {
   // Read — Web (Slice 9)
   web_search: webSearch,
   web_extract: webExtract,
-  // Read — External directories (Slice 8.10)
-  read_develop_file: readDevelopFile,
-  list_develop_dir: listDevelopDir,
-  read_learning_ai_file: readLearningAiFile,
-  list_learning_ai_dir: listLearningAiDir,
+  // Read — External directories (Slice 8.10, consolidated 11.3)
+  read_external_file: readExternalFile,
+  list_external_dir: listExternalDir,
   // Propose — agent state
   propose_observation: proposeObservation,
   propose_silhouette_update: proposeSilhouetteUpdate,
@@ -469,4 +471,10 @@ export const duffyTools = {
   propose_new_file: proposeNewFile,
   propose_edit_file: proposeEditFile,
   propose_todo: proposeTodo,
+  // Schedules (Slice 11) — Duffy self-orchestrates
+  propose_schedule: proposeSchedule,
+  cancel_schedule: cancelSchedule,
+  list_schedules: listSchedulesTool,
+  // Intent queue (Slice 11.2) — Duffy can see the pending deck
+  list_pending_intents: listPendingIntents,
 };

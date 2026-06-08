@@ -26,6 +26,8 @@ import type {
   FileCreatePayload,
   FileEditPayload,
   TodoPlanPayload,
+  ScheduleCreatePayload,
+  ScheduleCancelPayload,
 } from "@/lib/agent/storage/types";
 
 /** Slice 8 — observation intents with `nudge_for` are stale-intention
@@ -91,6 +93,35 @@ function describePayload(intent: Intent): { title: string; body: string } {
       return {
         title: `待辦規劃：${p.title}（${p.items.length} 項）`,
         body,
+      };
+    }
+    case "schedule_create": {
+      const p = intent.payload as ScheduleCreatePayload;
+      const payloadStr = JSON.stringify(p.action_payload, null, 2);
+      const mode = p.one_shot ? "單次" : "週期";
+      const notBefore = p.not_before
+        ? new Date(p.not_before).toLocaleString("zh-TW", {
+            month: "numeric",
+            day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          })
+        : null;
+      return {
+        title: `新排程：${p.name}（${mode}）`,
+        body:
+          `Cron：${p.cron_expr}\n` +
+          `動作：${p.action_kind}\n` +
+          (notBefore ? `不早於：${notBefore}\n` : "") +
+          `Payload：${payloadStr}\n\n` +
+          `理由：${p.rationale}`,
+      };
+    }
+    case "schedule_cancel": {
+      const p = intent.payload as ScheduleCancelPayload;
+      return {
+        title: `取消排程：${p.schedule_id}`,
+        body: `理由：${p.rationale}`,
       };
     }
   }

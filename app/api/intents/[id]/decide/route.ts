@@ -33,7 +33,14 @@ import {
   isFileCreatePayload,
   isFileEditPayload,
   isTodoPlanPayload,
+  isScheduleCreatePayload,
+  isScheduleCancelPayload,
 } from "@/lib/agent/storage/types";
+import { parseCron, minIntervalMinutes } from "@/lib/agent/duffy/cron-utils";
+import {
+  createSchedule,
+  setEnabled as setScheduleEnabled,
+} from "@/lib/agent/storage/schedules";
 import { promises as fs } from "node:fs";
 import { resolve, sep, dirname } from "node:path";
 import { vaultPath } from "@/lib/vault/reader";
@@ -235,6 +242,49 @@ export async function POST(
     }
     await fs.writeFile(abs, prior + header + lines + "\n", "utf8");
     materialised = { kind: "todo_plan", path: inboxRel, count: existing.payload.items.length };
+  } else if (isScheduleCreatePayload(existing)) {
+    // Slice 11 — materialise an approved schedule into schedules.json.
+    const p = existing.payload;
+    let parsed;
+    try {
+      parsed = parseCron(p.cron_expr);
+    } catch (e) {
+      return NextResponse.json(
+        { error: `invalid cron_expr: ${e instanceof Error ? e.message : String(e)}` },
+        { status: 422 },
+      );
+    }
+    if (minIntervalMinutes(parsed) < 60) {
+      return NextResponse.json(
+        { error: "cron interval below 60 min minimum", cron_expr: p.cron_expr },
+        { status: 422 },
+      );
+    }
+    const sched = await createSchedule({
+      intent_id: existing.id,
+      created_by: existing.proposed_by,
+      name: p.name,
+      cron_expr: p.cron_expr,
+      action_kind: p.action_kind,
+      action_payload: p.action_payload,
+      rationale: p.rationale,
+      one_shot: p.one_shot,
+      not_before: p.not_before,
+    });
+    resulted_in = sched.id;
+    materialised = { kind: "schedule_create", record: sched };
+  } else if (isScheduleCancelPayload(existing)) {
+    // Slice 11 — cancel = enabled=false. Soft delete, audit kept.
+    const p = existing.payload;
+    const sched = await setScheduleEnabled(p.schedule_id, false);
+    if (!sched) {
+      return NextResponse.json(
+        { error: `schedule ${p.schedule_id} not found` },
+        { status: 404 },
+      );
+    }
+    resulted_in = sched.id;
+    materialised = { kind: "schedule_cancel", record: sched };
   }
 
   const updated = await decideIntent(id, "approved", resulted_in);

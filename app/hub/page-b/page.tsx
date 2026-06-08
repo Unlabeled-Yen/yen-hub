@@ -8,15 +8,21 @@
  *   - Numbered section spine: 01 · 今日 / 02 · 剪影 / 03 · 本週摘要 / 04 · SOUL
  *   - Single accent (mint --accent) for section numbers + hairline rules
  *
+ * Slice 8.7 Phase A (2026-06-09):
+ *   - SensorStrip above 01 — shows what Duffy is "seeing" right now
+ *   - 02 · 待辦卡片 inserted (intent queue) — existing sections renumber
+ *   - 06 · 排程 appended at the tail — autonomous schedule list
+ *
  * Inherits the hub layout (auth + WorldClock badge top-right).
  */
 
 import Link from "next/link";
 import { CoachCard } from "@/components/page-b/coach-card";
+import { IntentQueue } from "@/components/page-b/intent-queue";
 import { MarkHighReadOnMount } from "@/components/page-b/mark-high-read-on-mount";
-import { SilhouetteView } from "@/components/page-b/silhouette-view";
-import { SoulView } from "@/components/page-b/soul-view";
-import { SummaryView } from "@/components/page-b/summary-view";
+import { MemoryTabs } from "@/components/page-b/memory-tabs";
+import { SchedulesPanel } from "@/components/page-b/schedules-panel";
+import { SensorStrip } from "@/components/page-b/sensor-strip";
 import { generateCoachCard } from "@/lib/agent/duffy/coach";
 
 // Force per-request rendering. Without this, Next bakes the page (and
@@ -87,31 +93,35 @@ export default async function PageB() {
       <main>
         <MarkHighReadOnMount />
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-x-10 gap-y-20">
-          {/* 01 · 今日 — full bleed, the dateline of the page */}
-          <section className="lg:col-span-12">
+        {/* Sensor strip — slim banner, unnumbered. */}
+        <SensorStrip />
+
+        {/* ── Tier 1: 行動 + 對話（並排，最大視覺權重）─────────────── */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-x-8 gap-y-10 mb-14">
+          {/* 01 · 今日 — left 8 cols, Duffy's voice for today */}
+          <section className="lg:col-span-8">
             <SectionMark num="01" name="今日" />
             <CoachCard initial={initialCoach} />
           </section>
 
-          {/* 02 · 剪影 — left 7 cols, sits beside 03 on wide screens */}
-          <section className="lg:col-span-7">
-            <SectionMark num="02" name="剪影" />
-            <SilhouetteView />
-          </section>
-
-          {/* 03 · 本週摘要 — right 5 cols, narrower so numbers read */}
-          <section className="lg:col-span-5">
-            <SectionMark num="03" name="本週摘要" />
-            <SummaryView />
-          </section>
-
-          {/* 04 · SOUL — full bleed, the long-form bottom */}
-          <section className="lg:col-span-12">
-            <SectionMark num="04" name="SOUL" />
-            <SoulView />
+          {/* 02 · 待辦 — right 4 cols, narrow sidebar of pending intents */}
+          <section className="lg:col-span-4">
+            <SectionMark num="02" name="待辦" />
+            <IntentQueue />
           </section>
         </div>
+
+        {/* ── Tier 2: 排程（緊湊條狀儀表）──────────────────────────── */}
+        <section className="mb-14">
+          <SectionMark num="03" name="排程" />
+          <SchedulesPanel />
+        </section>
+
+        {/* ── Tier 3: 記憶（合併 tabbed、預設折疊風格的低調區）────── */}
+        <section>
+          <SectionMark num="04" name="記憶" />
+          <MemoryTabs />
+        </section>
 
         {/* Tail rule — closes the page without dangling. */}
         <div className="mt-20">

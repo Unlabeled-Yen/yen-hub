@@ -211,13 +211,67 @@ export type TodoPlanPayload = {
   rationale: string;
 };
 
+/* -------------------------------------------------------------------------- */
+/*  Slice 11 — Schedule (dynamic cron) payloads                                */
+/* -------------------------------------------------------------------------- */
+
+/** v1 ships two action kinds; v2 will add observation_review + custom_prompt
+ *  once Slice 8.7B trust-tier lets us govern the high-power ones. */
+export type ScheduleActionKind =
+  | "git_unpushed_check"      // run `git status` against named repos
+  | "vault_zone_check"        // surface zones that haven't moved in N days
+  | "reminder";               // plain message — fires as a high-importance obs
+
+export type ScheduleCreatePayload = {
+  cron_expr: string;
+  action_kind: ScheduleActionKind;
+  /** Action-specific config; validated at approval time per action_kind. */
+  action_payload: Record<string, unknown>;
+  rationale: string;
+  /** Human-friendly name shown in the dashboard. */
+  name: string;
+  /** When true, the scheduler disables this schedule after the first fire.
+   *  Pair with not_before to express single events ("明天下午 1 點"). */
+  one_shot?: boolean;
+  /** Earliest ms timestamp at which this schedule may fire. Used together
+   *  with cron_expr to express "after tomorrow 00:00, the first 13:00".
+   *  Without this, "明天下午 1 點" would resolve to today's 1 PM if it
+   *  hasn't passed yet. */
+  not_before?: number;
+};
+
+export type ScheduleCancelPayload = {
+  schedule_id: string;
+  rationale: string;
+};
+
+export type Schedule = {
+  id: string;                     // sched_xxx
+  name: string;
+  cron_expr: string;
+  action_kind: ScheduleActionKind;
+  action_payload: Record<string, unknown>;
+  enabled: boolean;
+  created_at: number;
+  created_by: string;             // "duffy" or "yen"
+  source_intent: string;
+  last_fired_at?: number;
+  fire_count: number;
+  rationale: string;
+  /** Slice 11.1 — single-event mode. */
+  one_shot?: boolean;
+  not_before?: number;
+};
+
 export type IntentKind =
   | "observation"
   | "silhouette_update"
   | "summary"
   | "file_create"
   | "file_edit"
-  | "todo_plan";
+  | "todo_plan"
+  | "schedule_create"
+  | "schedule_cancel";
 
 /** Discriminated by `kind` at the Intent level. */
 export type IntentPayload =
@@ -226,9 +280,26 @@ export type IntentPayload =
   | SummaryPayload
   | FileCreatePayload
   | FileEditPayload
-  | TodoPlanPayload;
+  | TodoPlanPayload
+  | ScheduleCreatePayload
+  | ScheduleCancelPayload;
 
 export type IntentStatus = "pending" | "approved" | "rejected";
+
+/**
+ * Slice 8.7B / 11.4 — trust tier governs how the propose-approve gate
+ * behaves per intent:
+ *   - L0: auto-execute (low-risk, reversible append-only) — UI shows
+ *         "auto-executed, undo within 24h" instead of an approval card.
+ *   - L1: standard one-tap approve (current behavior of all intents).
+ *   - L2: double-confirm (irreversible / external / silhouette).
+ *
+ * Slice 11.4 plumbs the field through schema + decide route ONLY.
+ * Behavior change (auto-execute, double-confirm UI, Trust Dial / Capability
+ * Matrix) lands in Slice 8.7B v1. For now, all intents read as L1 if the
+ * field is absent — same behavior as before this slice.
+ */
+export type TrustTier = "L0" | "L1" | "L2";
 
 export type Intent = {
   id: string;
@@ -243,7 +314,27 @@ export type Intent = {
   decided_at?: number;
   decided_by?: "user";
   resulted_in?: string;       // observation / silhouette / summary id
+  /** Slice 8.7B / 11.4 — trust tier. Absent on legacy records → treated as L1. */
+  trust_tier?: TrustTier;
 };
+
+/** Default trust tier per IntentKind. Slice 8.7B will let the user override
+ *  via Capability Matrix; until then this is the only mapping. */
+export function defaultTrustTier(kind: IntentKind): TrustTier {
+  switch (kind) {
+    case "observation":
+    case "todo_plan":
+      return "L0";                  // append-only, easy to undo
+    case "summary":
+    case "schedule_create":
+    case "schedule_cancel":
+    case "file_create":
+      return "L1";                  // medium — review preview, one tap
+    case "silhouette_update":
+    case "file_edit":
+      return "L2";                  // hard to reverse / portrait change
+  }
+}
 
 /* -------------------------------------------------------------------------- */
 /*  Helpers                                                                    */
@@ -263,6 +354,10 @@ export function newSilhouetteId(): string {
 
 export function newSummaryId(): string {
   return `sum_${crypto.randomUUID()}`;
+}
+
+export function newScheduleId(): string {
+  return `sched_${crypto.randomUUID()}`;
 }
 
 /** ISO-week label for a Date, e.g. 2026-W23. */
@@ -311,4 +406,16 @@ export function isTodoPlanPayload(
   intent: Intent,
 ): intent is Intent & { payload: TodoPlanPayload } {
   return intent.kind === "todo_plan";
+}
+
+export function isScheduleCreatePayload(
+  intent: Intent,
+): intent is Intent & { payload: ScheduleCreatePayload } {
+  return intent.kind === "schedule_create";
+}
+
+export function isScheduleCancelPayload(
+  intent: Intent,
+): intent is Intent & { payload: ScheduleCancelPayload } {
+  return intent.kind === "schedule_cancel";
 }

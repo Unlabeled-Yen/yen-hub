@@ -15,5 +15,11 @@ export async function register() {
       "@/lib/agent/duffy/stale-intentions"
     );
     startNudgeCron();
+
+    // Slice 11 — generic scheduler picks up dynamic schedules.
+    const { startScheduler } = await import(
+      "@/lib/agent/duffy/scheduler"
+    );
+    startScheduler();
   }
 }
