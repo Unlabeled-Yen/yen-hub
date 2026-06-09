@@ -34,6 +34,39 @@ Yen Hub 把這些都收進**一個視窗**。打開就是當天的全景：US30 
 
 ---
 
+## Duffy 副駕
+
+內建的 AI 副駕。不只是聊天視窗——他能 observe、規劃、動 vault、自動排提醒，且會學使用者的授權範圍。
+
+| 使用者做什麼 | Duffy 做什麼 |
+|---|---|
+| 隨口講「明天下午 1 點提醒看診」 | 排成一條 cron schedule、觸發時推 macOS 通知 + Telegram |
+| 隨口提到一個觀察 | 寫入 observations 並鏡像到 `06 - AI Data/Observations/` |
+| 問「最近 git 怎樣」 | `git_status` / `git_log` / `git_diff` 等白名單沙箱命令 |
+| 想動 vault 檔 | 走 propose-approve、看一張卡片、通過才真的寫 |
+
+### 信任分層（Adaptive Trust）
+
+不是所有提案都該打斷使用者。Duffy 的提案有三層：
+
+| 層 | 範例 | 「平衡」模式下行為 |
+|---|---|---|
+| **L0**（低風險） | 寫一條觀察 | 自動執行、24h 內可撤銷 |
+| **L1**（中） | 建新檔、新排程、週摘要 | 跳一張審批卡 |
+| **L2**（不可逆） | 改既有檔、更新剪影 | 永遠要使用者批 |
+
+三檔旋鈕在 page-b 的 04 信任分層：**謹慎**（全部要批）/ **平衡**（L0 自動）/ **奔放**（L0+L1 自動）。預設謹慎。
+
+### 自適應信任：Duffy 會學
+
+每次 approve / reject 都被記為訊號。累積到 ≥90% 通過率、Duffy 會在 banner 主動提案：「過去 30 天觀察通過 58/60，要不要升為自動？」使用者拍板。進階開關 **Auto-pilot** 打開後、Duffy 自己升降 tier、每次調整寫 audit log、可隨時關掉。
+
+### Telegram 雙向對話
+
+設定一個 BotFather 建的 Telegram bot，Yen Hub 後端長輪詢、訊息走 chat_id 白名單。使用者不在 Mac 前也能跟 Duffy 對話、提醒觸發時也會推 Telegram。需要 Yen Hub 持續運行（macOS 醒著、.app 不關）。
+
+---
+
 ## 設計選擇
 
 每一個細節都是從「使用者自己每天要用」出發——不是先想功能再找需求。
@@ -66,7 +99,9 @@ Yen Hub 把這些都收進**一個視窗**。打開就是當天的全景：US30 
 - 桌面殼：Tauri 2（Rust）
 - 前端：Next.js 16 + React 19 + TypeScript
 - AI：Claude（Anthropic）+ Kimi，透過 Vercel AI SDK
-- 認證：WebAuthn / Touch ID
+- 認證：WebAuthn / 點擊式（Mac 解鎖即可進入）
+- 持久化：JSON store（`~/Library/Application Support/com.yen.hub/`、單檔案 + 行式 JSONL audit log）
+- 對外整合：macOS notification（osascript）、Telegram Bot API（long-poll）
 - 資料來源：Obsidian vault（檔案系統直讀）、TwelveData（市場資料）
 
 架構決策、開發流程、踩坑紀錄見 [`DEVELOPING.md`](./DEVELOPING.md)。
@@ -78,3 +113,5 @@ Yen Hub 把這些都收進**一個視窗**。打開就是當天的全景：US30 
 - 只支援 macOS（Apple Silicon）
 - 個人工具，沒有公開發行；repo 公開是為了 AI 協作方便
 - 未簽署 / 公證 → 第一次打開系統會跳防護提示
+- Telegram 雙向對話需要 .app 開著、Mac 醒著（長輪詢、無公網 webhook）
+- 提醒類 cron 觸發時的「missed-fire 補打」對「明天下午 X 點」這種單次語意還不完美——若 Mac 在指定時間後才開機、會立刻補打一次（已記入後續微調）
