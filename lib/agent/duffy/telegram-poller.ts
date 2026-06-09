@@ -12,10 +12,12 @@
  */
 
 import {
+  downloadTelegramFile,
   getTelegramUpdates,
   sendTelegram,
   type TgMessage,
 } from "@/lib/agent/telegram";
+import { transcribeAudio } from "@/lib/agent/voice/transcribe";
 import {
   getTrustConfig,
   setTelegramLastUpdateId,
@@ -78,19 +80,66 @@ async function processMessage(m: TgMessage): Promise<void> {
     await sendTelegram({
       token: cfg.telegram_bot_token,
       chat_id: m.chat_id,
-      text: "👋 Duffy 在線。直接打字跟我聊就行。",
+      text: "👋 Duffy 在線。直接打字、或按住麥克風錄語音都可以。",
     });
+    return;
+  }
+
+  // Slice 元能力 #3 — voice / audio handling.
+  // If the message is audio, download → Whisper → use transcription as
+  // the user's text. Echo the transcription back so user can verify.
+  let userText = m.text;
+  if (m.audio) {
+    const dl = await downloadTelegramFile({
+      token: cfg.telegram_bot_token,
+      file_id: m.audio.file_id,
+    });
+    if (!dl.ok) {
+      await sendTelegram({
+        token: cfg.telegram_bot_token,
+        chat_id: m.chat_id,
+        text: `⚠️ 抓不到語音檔：${dl.error}`,
+      });
+      return;
+    }
+    const tx = await transcribeAudio({
+      buffer: dl.buffer,
+      mimeType: m.audio.mime_type,
+      filename: m.audio.filename,
+    });
+    if (!tx.ok) {
+      await sendTelegram({
+        token: cfg.telegram_bot_token,
+        chat_id: m.chat_id,
+        text: `⚠️ 轉錄失敗：${tx.error}`,
+      });
+      return;
+    }
+    userText = tx.text;
+    // Echo what we heard so user can correct it. Tiny duration label too.
+    const durLabel = tx.duration_seconds
+      ? ` · ${Math.round(tx.duration_seconds)}秒`
+      : "";
+    await sendTelegram({
+      token: cfg.telegram_bot_token,
+      chat_id: m.chat_id,
+      text: `🎙 ${userText}${durLabel}`,
+    });
+  }
+
+  if (!userText || !userText.trim()) {
+    // Nothing usable to send to Duffy (empty text, empty transcription).
     return;
   }
 
   const history = await readTelegramHistory(m.chat_id);
   await appendTelegramMessage(m.chat_id, {
     role: "user",
-    text: m.text,
+    text: userText,
     ts: Date.now(),
   });
 
-  const uiMessages = tgHistoryToUiMessages(history, m.text);
+  const uiMessages = tgHistoryToUiMessages(history, userText);
   const result = await runDuffyHeadless({
     messages: uiMessages,
     surface: "telegram",

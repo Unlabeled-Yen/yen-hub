@@ -98,8 +98,17 @@ export type TgMessage = {
   chat_id: number;
   from_user_id: number;
   from_username?: string;
+  /** Text content. Empty string when the message is voice / audio / document. */
   text: string;
   date: number;
+  /** Slice 元能力 #3 — present when message is voice / audio / m4a doc. */
+  audio?: {
+    file_id: string;
+    mime_type: string;
+    duration?: number;
+    /** Original filename for documents; synthesised for voice/audio. */
+    filename: string;
+  };
 };
 
 export async function getTelegramUpdates(args: {
@@ -134,20 +143,123 @@ export async function getTelegramUpdates(args: {
     if (!data.ok || !Array.isArray(data.result)) return [];
     const out: TgMessage[] = [];
     for (const u of data.result) {
-      const m = u.message;
-      if (!m || typeof m.text !== "string" || !m.chat?.id || !m.from?.id) continue;
+      const m = u.message as
+        | {
+            message_id: number;
+            chat?: { id: number };
+            from?: { id: number; username?: string };
+            text?: string;
+            date: number;
+            voice?: { file_id: string; mime_type: string; duration?: number };
+            audio?: {
+              file_id: string;
+              mime_type: string;
+              duration?: number;
+              file_name?: string;
+            };
+            document?: {
+              file_id: string;
+              mime_type?: string;
+              file_name?: string;
+            };
+          }
+        | undefined;
+      if (!m || !m.chat?.id || !m.from?.id) continue;
+
+      // Detect voice / audio / m4a-document. Telegram represents these
+      // with different message keys depending on how the user sent them.
+      let audio: TgMessage["audio"] | undefined;
+      if (m.voice) {
+        audio = {
+          file_id: m.voice.file_id,
+          mime_type: m.voice.mime_type,
+          duration: m.voice.duration,
+          filename: `voice-${u.update_id}.ogg`,
+        };
+      } else if (m.audio) {
+        audio = {
+          file_id: m.audio.file_id,
+          mime_type: m.audio.mime_type,
+          duration: m.audio.duration,
+          filename:
+            m.audio.file_name ?? `audio-${u.update_id}.${guessExt(m.audio.mime_type)}`,
+        };
+      } else if (
+        m.document &&
+        m.document.mime_type &&
+        m.document.mime_type.startsWith("audio/")
+      ) {
+        audio = {
+          file_id: m.document.file_id,
+          mime_type: m.document.mime_type,
+          filename: m.document.file_name ?? `audio-${u.update_id}.m4a`,
+        };
+      }
+
+      // Need either text or audio to be useful.
+      if (!audio && typeof m.text !== "string") continue;
+
       out.push({
         update_id: u.update_id,
         message_id: m.message_id,
         chat_id: m.chat.id,
         from_user_id: m.from.id,
         from_username: m.from.username,
-        text: m.text,
+        text: m.text ?? "",
         date: m.date,
+        audio,
       });
     }
     return out;
   } catch {
     return [];
+  }
+}
+
+function guessExt(mime: string): string {
+  if (mime.includes("ogg")) return "ogg";
+  if (mime.includes("mp4") || mime.includes("m4a")) return "m4a";
+  if (mime.includes("mpeg") || mime.includes("mp3")) return "mp3";
+  if (mime.includes("wav")) return "wav";
+  return "bin";
+}
+
+/* -------------------------------------------------------------------------- */
+/*  File download — used by voice/audio handling                               */
+/* -------------------------------------------------------------------------- */
+
+export async function downloadTelegramFile(args: {
+  token: string;
+  file_id: string;
+}): Promise<{ ok: true; buffer: ArrayBuffer } | { ok: false; error: string }> {
+  try {
+    // Step 1: get file_path
+    const infoRes = await fetch(
+      `${API}/bot${args.token}/getFile?file_id=${encodeURIComponent(args.file_id)}`,
+    );
+    if (!infoRes.ok) {
+      return { ok: false, error: `getFile HTTP ${infoRes.status}` };
+    }
+    const info = (await infoRes.json()) as {
+      ok: boolean;
+      result?: { file_path?: string };
+    };
+    if (!info.ok || !info.result?.file_path) {
+      return { ok: false, error: "no file_path in getFile response" };
+    }
+
+    // Step 2: download bytes
+    const fileURL = `${API}/file/bot${args.token}/${info.result.file_path}`;
+    const fileRes = await fetch(fileURL);
+    if (!fileRes.ok) {
+      return { ok: false, error: `download HTTP ${fileRes.status}` };
+    }
+    const buffer = await fileRes.arrayBuffer();
+    return { ok: true, buffer };
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : String(e),
+    };
   }
 }
