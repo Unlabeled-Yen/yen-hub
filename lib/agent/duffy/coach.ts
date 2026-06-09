@@ -53,28 +53,32 @@ type CoachCard = {
 };
 
 let cached: CoachCard | null = null;
-let hydrateAttempted = false;
+/** Inflight hydrate promise — subsequent callers piggy-back on the same
+ *  await rather than racing past it. 2026-06-09 fix: previous code used a
+ *  bare `hydrateAttempted` flag, so concurrent callers got `if (true)
+ *  return` immediately while the first call's fs.readFile was still
+ *  pending → cached stayed null → unnecessary LLM call (or hang). */
+let hydratePromise: Promise<void> | null = null;
 
-/** Lazy-hydrate the in-memory cache from disk on first call.
- *  Persistent cache survives sidecar restart (which happens every .app
- *  launch — new ephemeral port = new Node process). Without this, the
- *  first visit to Page B after each restart triggers a fresh LLM call. */
 async function hydrateFromDisk(): Promise<void> {
-  if (hydrateAttempted) return;
-  hydrateAttempted = true;
-  try {
-    const raw = await fs.readFile(CACHE_FILE, "utf8");
-    const parsed = JSON.parse(raw) as CoachCard;
-    if (
-      parsed &&
-      typeof parsed.generated_at === "number" &&
-      typeof parsed.message === "string"
-    ) {
-      cached = parsed;
+  if (cached) return;
+  if (hydratePromise) return hydratePromise;
+  hydratePromise = (async () => {
+    try {
+      const raw = await fs.readFile(CACHE_FILE, "utf8");
+      const parsed = JSON.parse(raw) as CoachCard;
+      if (
+        parsed &&
+        typeof parsed.generated_at === "number" &&
+        typeof parsed.message === "string"
+      ) {
+        cached = parsed;
+      }
+    } catch {
+      /* no cache file or unparseable — fine, we'll regenerate */
     }
-  } catch {
-    /* no cache file or unparseable — fine, we'll regenerate */
-  }
+  })();
+  return hydratePromise;
 }
 
 async function writeToDisk(card: CoachCard): Promise<void> {

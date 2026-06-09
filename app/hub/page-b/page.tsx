@@ -63,11 +63,19 @@ export default async function PageB() {
   // already contains today's message. Zero "loading…" flash even on
   // first visit after .app restart (disk cache lives in
   // ~/Library/Application Support/com.yen.hub/coach.json).
-  // If generation fails (e.g., LLM down), we pass null and the client
-  // falls back to its own fetch / loading state.
+  //
+  // 2026-06-09 fix: cap the await at 3s. Without a timeout, an LLM
+  // hang (slow Kimi response, network issue, API outage) blocks the
+  // RSC render forever — Next never replaces loading.tsx with the
+  // page, the user sees a permanent skeleton until they reopen the
+  // .app. With the timeout, we degrade gracefully: pass null and let
+  // CoachCard's client-side useEffect fetch /api/coach itself.
   let initialCoach = null;
   try {
-    initialCoach = await generateCoachCard();
+    initialCoach = await Promise.race([
+      generateCoachCard(),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000)),
+    ]);
   } catch {
     /* silent — client will retry */
   }
