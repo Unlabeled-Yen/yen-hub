@@ -3,15 +3,9 @@
  *
  * Body: { decision: "approve" | "reject" }
  *
- * Kind-aware dispatch: on approve, the intent's `kind` decides which store
- * to materialise into:
- *   - "observation"        → observations.json (createObservationFromIntent)
- *   - "silhouette_update"  → silhouettes.json (createSilhouetteFromIntent)
- *   - "summary"            → summaries.json   (createSummaryFromIntent)
- *
- * After materialisation, vault-bridge writes a Markdown mirror under
- * `06 - AI Data/{Observations,Silhouettes,Summaries}/` (Slice 7A Step 2;
- * placeholder import for now, will land in next commit).
+ * Slice 8.7B v2 refactor: the per-kind side effects were extracted into
+ * `lib/agent/intent-materialize.ts` so the same logic runs for HTTP
+ * approve AND for createIntent auto-execute under L0 trust.
  *
  * Idempotent: deciding an already-decided intent returns the existing record
  * without re-running side effects.
@@ -20,35 +14,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
 import { decideIntent, getIntent } from "@/lib/agent/storage/intents";
-import {
-  createObservationFromIntent,
-  touchIntention,
-} from "@/lib/agent/storage/observations";
-import { createSilhouetteFromIntent } from "@/lib/agent/storage/silhouettes";
-import { createSummaryFromIntent } from "@/lib/agent/storage/summaries";
-import {
-  isObservationPayload,
-  isSilhouetteUpdatePayload,
-  isSummaryPayload,
-  isFileCreatePayload,
-  isFileEditPayload,
-  isTodoPlanPayload,
-  isScheduleCreatePayload,
-  isScheduleCancelPayload,
-} from "@/lib/agent/storage/types";
-import { parseCron, minIntervalMinutes } from "@/lib/agent/duffy/cron-utils";
-import {
-  createSchedule,
-  setEnabled as setScheduleEnabled,
-} from "@/lib/agent/storage/schedules";
-import { promises as fs } from "node:fs";
-import { resolve, sep, dirname } from "node:path";
-import { vaultPath } from "@/lib/vault/reader";
-import {
-  writeObservationToVault,
-  writeSilhouetteToVault,
-  writeSummaryToVault,
-} from "@/lib/agent/vault-bridge";
+import { materializeIntent } from "@/lib/agent/intent-materialize";
 import { bustCoachCache } from "@/lib/agent/duffy/coach";
 
 export const dynamic = "force-dynamic";
@@ -97,199 +63,15 @@ export async function POST(
     return NextResponse.json({ intent: updated, materialised: null });
   }
 
-  // Approve path — dispatch by kind.
-  let resulted_in: string | undefined;
-  let materialised: unknown = null;
-
-  if (isObservationPayload(existing)) {
-    const obs = await createObservationFromIntent({
-      intent_id: existing.id,
-      title: existing.payload.title,
-      body: existing.payload.body,
-      zone: existing.payload.zone,
-      window: existing.payload.window,
-      evidence: existing.evidence,
-      source_agent_id: existing.proposed_by,
-      reason: existing.rationale,
-      importance: existing.importance,
-      intention: existing.payload.intention,   // Slice 8
-      nudge_for: existing.payload.nudge_for,   // Slice 8
-    });
-    resulted_in = obs.id;
-    materialised = { kind: "observation", record: obs };
-    // Approving a nudge bumps the source intention's last_touched_at so
-    // it leaves the stale cohort for another N days. Yen acknowledged
-    // it; cron shouldn't re-nudge immediately.
-    if (existing.payload.nudge_for) {
-      await touchIntention(existing.payload.nudge_for);
-    }
-    await writeObservationToVault(obs);
-  } else if (isSilhouetteUpdatePayload(existing)) {
-    const sil = await createSilhouetteFromIntent({
-      intent_id: existing.id,
-      source_agent_id: existing.proposed_by,
-      reason: existing.rationale,
-      payload: existing.payload,
-    });
-    resulted_in = sil.id;
-    materialised = { kind: "silhouette", record: sil };
-    await writeSilhouetteToVault(sil);
-  } else if (isSummaryPayload(existing)) {
-    const sum = await createSummaryFromIntent({
-      intent_id: existing.id,
-      source_agent_id: existing.proposed_by,
-      payload: existing.payload,
-    });
-    resulted_in = sum.id;
-    materialised = { kind: "summary", record: sum };
-    await writeSummaryToVault(sum);
-  } else if (isFileCreatePayload(existing)) {
-    // Slice 9 L2 — create a new vault file.
-    const root = vaultPath();
-    const abs = resolve(root, existing.payload.path);
-    if (!(abs === root || abs.startsWith(root + sep))) {
-      return NextResponse.json(
-        { error: "path escapes vault", payload_path: existing.payload.path },
-        { status: 400 },
-      );
-    }
-    try {
-      await fs.access(abs);
-      return NextResponse.json(
-        { error: "file already exists; refusing to overwrite", path: existing.payload.path },
-        { status: 409 },
-      );
-    } catch {
-      /* file doesn't exist — good, proceed */
-    }
-    await fs.mkdir(dirname(abs), { recursive: true });
-    // Atomic write: tmp + rename.
-    const tmp = abs + ".tmp-" + Date.now();
-    await fs.writeFile(tmp, existing.payload.content, "utf8");
-    await fs.rename(tmp, abs);
-    materialised = { kind: "file_create", path: existing.payload.path };
-  } else if (isFileEditPayload(existing)) {
-    // Slice 9 L2 — edit existing vault file.
-    const root = vaultPath();
-    const abs = resolve(root, existing.payload.path);
-    if (!(abs === root || abs.startsWith(root + sep))) {
-      return NextResponse.json(
-        { error: "path escapes vault" },
-        { status: 400 },
-      );
-    }
-    let original: string;
-    try {
-      original = await fs.readFile(abs, "utf8");
-    } catch (e) {
-      return NextResponse.json(
-        { error: `cannot read file: ${e instanceof Error ? e.message : String(e)}` },
-        { status: 404 },
-      );
-    }
-    // old_text must appear EXACTLY ONCE — otherwise the edit is ambiguous.
-    const firstIdx = original.indexOf(existing.payload.old_text);
-    const lastIdx = original.lastIndexOf(existing.payload.old_text);
-    if (firstIdx === -1) {
-      return NextResponse.json(
-        { error: "old_text not found in file" },
-        { status: 422 },
-      );
-    }
-    if (firstIdx !== lastIdx) {
-      return NextResponse.json(
-        { error: "old_text appears multiple times; ambiguous edit refused" },
-        { status: 422 },
-      );
-    }
-    const updated =
-      original.slice(0, firstIdx) +
-      existing.payload.new_text +
-      original.slice(firstIdx + existing.payload.old_text.length);
-    // Backup + atomic write.
-    await fs.writeFile(abs + ".bak", original, "utf8");
-    const tmp = abs + ".tmp-" + Date.now();
-    await fs.writeFile(tmp, updated, "utf8");
-    await fs.rename(tmp, abs);
-    materialised = { kind: "file_edit", path: existing.payload.path };
-  } else if (isTodoPlanPayload(existing)) {
-    // Slice 9 L2 — append todo plan to Duffy Todo Inbox.
-    const root = vaultPath();
-    const inboxRel = "05 - Queue/Duffy Todo Inbox.md";
-    const abs = resolve(root, inboxRel);
-    if (!(abs === root || abs.startsWith(root + sep))) {
-      return NextResponse.json(
-        { error: "path escapes vault" },
-        { status: 400 },
-      );
-    }
-    await fs.mkdir(dirname(abs), { recursive: true });
-    const stamp = new Date().toLocaleString("zh-TW", {
-      month: "numeric",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-    const header = `\n\n## ${existing.payload.title}  · ${stamp}\n`;
-    const lines = existing.payload.items
-      .map((it) => `- [ ] ${it.text}${it.category ? ` _(${it.category})_` : ""}`)
-      .join("\n");
-    let prior = "";
-    try {
-      prior = await fs.readFile(abs, "utf8");
-    } catch {
-      prior = "# Duffy Todo Inbox\n\n_由 Duffy propose、Yen approve 後寫入。_\n";
-    }
-    await fs.writeFile(abs, prior + header + lines + "\n", "utf8");
-    materialised = { kind: "todo_plan", path: inboxRel, count: existing.payload.items.length };
-  } else if (isScheduleCreatePayload(existing)) {
-    // Slice 11 — materialise an approved schedule into schedules.json.
-    const p = existing.payload;
-    let parsed;
-    try {
-      parsed = parseCron(p.cron_expr);
-    } catch (e) {
-      return NextResponse.json(
-        { error: `invalid cron_expr: ${e instanceof Error ? e.message : String(e)}` },
-        { status: 422 },
-      );
-    }
-    if (minIntervalMinutes(parsed) < 60) {
-      return NextResponse.json(
-        { error: "cron interval below 60 min minimum", cron_expr: p.cron_expr },
-        { status: 422 },
-      );
-    }
-    const sched = await createSchedule({
-      intent_id: existing.id,
-      created_by: existing.proposed_by,
-      name: p.name,
-      cron_expr: p.cron_expr,
-      action_kind: p.action_kind,
-      action_payload: p.action_payload,
-      rationale: p.rationale,
-      one_shot: p.one_shot,
-      not_before: p.not_before,
-    });
-    resulted_in = sched.id;
-    materialised = { kind: "schedule_create", record: sched };
-  } else if (isScheduleCancelPayload(existing)) {
-    // Slice 11 — cancel = enabled=false. Soft delete, audit kept.
-    const p = existing.payload;
-    const sched = await setScheduleEnabled(p.schedule_id, false);
-    if (!sched) {
-      return NextResponse.json(
-        { error: `schedule ${p.schedule_id} not found` },
-        { status: 404 },
-      );
-    }
-    resulted_in = sched.id;
-    materialised = { kind: "schedule_cancel", record: sched };
+  // Approve path — delegate side effects to the shared materializer.
+  const r = await materializeIntent(existing);
+  if (!r.ok) {
+    return NextResponse.json(
+      { error: r.error.message, ...(r.error.extra ?? {}) },
+      { status: r.error.code },
+    );
   }
-
-  const updated = await decideIntent(id, "approved", resulted_in);
-  // Any approval invalidates the coach card so the next /api/coach pulls
-  // a fresh read that reflects the new state.
+  const updated = await decideIntent(id, "approved", r.resulted_in, "user");
   bustCoachCache();
-  return NextResponse.json({ intent: updated, materialised });
+  return NextResponse.json({ intent: updated, materialised: r.materialised });
 }
