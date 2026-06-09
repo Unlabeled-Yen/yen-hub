@@ -17,7 +17,20 @@ import { useCallback, useEffect, useState } from "react";
 import { AnimatePresence } from "motion/react";
 import { tokenFetch } from "@/lib/security/sidecar-token";
 import { IntentDeck } from "@/components/page-b/intent-deck";
-import type { Intent, IntentStatus } from "@/lib/agent/storage/types";
+import type {
+  Intent,
+  IntentStatus,
+  ObservationPayload,
+} from "@/lib/agent/storage/types";
+
+/** Minimal title extractor — only observations auto-execute under v1, so
+ *  this is intentionally narrow. Expand if more L0 kinds land. */
+function autoTitle(i: Intent): string {
+  if (i.kind === "observation") {
+    return (i.payload as ObservationPayload).title;
+  }
+  return `${i.kind}`;
+}
 
 const POLL_MS = 30_000;
 const RECENT_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -67,6 +80,23 @@ export function IntentQueue() {
   const approvedCount = byStatus.approved.length;
   const rejectedCount = byStatus.rejected.length;
   const hasPending = pendingCount > 0;
+
+  // Slice 8.7B v2 — recent auto-executed (within 24h, not undone).
+  const recentAuto = byStatus.approved.filter(
+    (i) => i.decided_by === "auto" && !i.undone_at,
+  );
+  const [undoBusy, setUndoBusy] = useState<string | null>(null);
+
+  const onUndo = async (id: string) => {
+    if (undoBusy === id) return;
+    setUndoBusy(id);
+    try {
+      await tokenFetch(`/api/intents/${id}/undo`, { method: "POST" });
+      await load();
+    } finally {
+      setUndoBusy(null);
+    }
+  };
 
   return (
     <>
@@ -146,6 +176,48 @@ export function IntentQueue() {
           </div>
         )}
       </div>
+
+      {/* ── Recent auto-executed (Slice 8.7B v2) — only when ≥1 ───────── */}
+      {recentAuto.length > 0 && (
+        <div
+          className="mt-3 rounded-lg border px-3 py-2.5"
+          style={{
+            background: "rgba(0, 229, 180, 0.025)",
+            borderColor: "rgba(0, 229, 180, 0.15)",
+          }}
+        >
+          <div className="text-[9px] font-mono tracking-[0.24em] uppercase text-[var(--fg-3)] mb-2">
+            近 24h 自動執行 · {recentAuto.length}
+          </div>
+          <ul className="flex flex-col gap-1">
+            {recentAuto.slice(0, 5).map((i) => (
+              <li
+                key={i.id}
+                className="flex items-center gap-2 text-[11px]"
+              >
+                <span className="text-[var(--fg-1)] truncate flex-1" title={autoTitle(i)}>
+                  · {autoTitle(i)}
+                </span>
+                <button
+                  type="button"
+                  disabled={undoBusy === i.id}
+                  onClick={() => onUndo(i.id)}
+                  className="shrink-0 px-1.5 py-0.5 text-[9px] font-mono tracking-[0.18em] uppercase rounded border text-[var(--fg-3)] hover:text-[var(--warn)] hover:border-[var(--warn)] transition-colors disabled:opacity-40"
+                  style={{ borderColor: "rgba(255,255,255,0.10)" }}
+                  title="從 observations.json 移除（vault Markdown 鏡像不動）"
+                >
+                  {undoBusy === i.id ? "..." : "撤銷"}
+                </button>
+              </li>
+            ))}
+          </ul>
+          {recentAuto.length > 5 && (
+            <div className="mt-1 text-[9px] font-mono tracking-[0.18em] uppercase text-[var(--fg-3)]">
+              還有 {recentAuto.length - 5} 筆未顯示
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── Deck modal (rendered via AnimatePresence for smooth exit) ── */}
       <AnimatePresence>

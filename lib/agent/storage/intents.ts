@@ -102,6 +102,53 @@ export async function createIntent(args: {
   };
   m[intent.id] = intent;
   await save();
+
+  // Slice 8.7B v2 — L0 auto-execute path.
+  // Under "balanced" mode, L0 intents materialise immediately and skip the
+  // pending queue. Under "cautious" (default), this branch is inert and
+  // behavior matches pre-v2. Lazy import keeps the storage layer free of
+  // a static dep on materializer / trust-config.
+  try {
+    const { getTrustConfig, effectiveAction, tierForIntent } = await import(
+      "./trust-config"
+    );
+    const cfg = await getTrustConfig();
+    const effectiveTier = tierForIntent(intent, cfg);
+    const action = effectiveAction(effectiveTier, cfg.mode);
+    if (action === "auto") {
+      const { materializeIntent } = await import("../intent-materialize");
+      const r = await materializeIntent(intent);
+      if (r.ok) {
+        intent.status = "approved";
+        intent.decided_at = Date.now();
+        intent.decided_by = "auto";
+        if (r.resulted_in) intent.resulted_in = r.resulted_in;
+        m[intent.id] = intent;
+        await save();
+        // Slice 12 Phase 2 — record the auto-approval as a trust signal.
+        try {
+          const { recordDecision } = await import("./trust-signals");
+          await recordDecision({
+            intent,
+            decision: "auto_approved",
+            decided_by: "auto",
+          });
+        } catch (e) {
+          console.warn("[createIntent] auto-approve signal failed:", e);
+        }
+      } else {
+        // Materialise failed under auto path — leave as pending so user
+        // can still see + manually approve / inspect.
+        console.warn(
+          `[createIntent] auto-execute failed for ${intent.id}: ${r.error.message}`,
+        );
+      }
+    }
+  } catch (e) {
+    // Trust-config / materialiser blew up — fall back to pending behavior.
+    console.warn(`[createIntent] auto-execute path threw:`, e);
+  }
+
   return intent;
 }
 
@@ -117,6 +164,7 @@ export async function decideIntent(
   id: string,
   status: Extract<IntentStatus, "approved" | "rejected">,
   resulted_in?: string,
+  decided_by: "user" | "auto" = "user",
 ): Promise<Intent | undefined> {
   const m = await load();
   const intent = m[id];
@@ -124,9 +172,49 @@ export async function decideIntent(
   if (intent.status !== "pending") return intent; // idempotent — don't re-decide
   intent.status = status;
   intent.decided_at = Date.now();
-  intent.decided_by = "user";
+  intent.decided_by = decided_by;
   if (resulted_in) intent.resulted_in = resulted_in;
   await save();
+
+  // Slice 12 Phase 2 — append a trust signal. Best-effort: never blocks
+  // the decision flow on a signal-log failure.
+  try {
+    const { recordDecision } = await import("./trust-signals");
+    await recordDecision({
+      intent,
+      decision: status === "approved" ? "approved" : "rejected",
+      decided_by,
+    });
+  } catch (e) {
+    console.warn("[decideIntent] signal append failed:", e);
+  }
+
+  return intent;
+}
+
+/** Slice 8.7B v2 — used by undo endpoint. Marks an auto-executed intent as
+ *  undone. Doesn't itself perform the side-effect reversal — that's the
+ *  endpoint's job; this just records the fact. */
+export async function markUndone(id: string): Promise<Intent | undefined> {
+  const m = await load();
+  const intent = m[id];
+  if (!intent) return undefined;
+  intent.undone_at = Date.now();
+  await save();
+
+  // Slice 12 Phase 2 — undo is a negative signal: Yen had to fix something
+  // that auto-executed. Phase 3 banner uses this to suggest tier downgrades.
+  try {
+    const { recordDecision } = await import("./trust-signals");
+    await recordDecision({
+      intent,
+      decision: "auto_undone",
+      decided_by: "user",
+    });
+  } catch (e) {
+    console.warn("[markUndone] signal append failed:", e);
+  }
+
   return intent;
 }
 

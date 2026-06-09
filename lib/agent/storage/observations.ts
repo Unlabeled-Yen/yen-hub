@@ -124,6 +124,22 @@ export async function touchIntention(id: string): Promise<Observation | undefine
   return obs;
 }
 
+/**
+ * Slice 8.7B v2 — delete an observation, used by the undo endpoint when an
+ * L0 auto-executed intent is rolled back. Returns the deleted record (or
+ * undefined if absent). The Markdown mirror in vault is NOT removed
+ * automatically — Yen's vault is sacred ground, we don't reach in. The
+ * undo endpoint surfaces this caveat to the caller.
+ */
+export async function deleteObservation(id: string): Promise<Observation | undefined> {
+  const m = await load();
+  const obs = m[id];
+  if (!obs) return undefined;
+  delete m[id];
+  await save();
+  return obs;
+}
+
 /** List observations that carry an open/in_progress intention. */
 export async function listIntentionObservations(): Promise<Observation[]> {
   const m = await load();

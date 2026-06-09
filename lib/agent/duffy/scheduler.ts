@@ -18,6 +18,7 @@ import {
 } from "@/lib/agent/storage/schedules";
 import { parseCron, prevFire } from "@/lib/agent/duffy/cron-utils";
 import { runScheduleAction } from "@/lib/agent/duffy/schedule-actions";
+import { maybeRunAutoPilot } from "@/lib/agent/duffy/auto-pilot";
 
 const POLL_INTERVAL_MS = 60 * 1000; // 1 min
 
@@ -30,6 +31,10 @@ const state: State = { started: false, timer: null };
 
 async function tick(): Promise<void> {
   const now = new Date();
+  // Slice 12 Phase 4 — fire-and-forget auto-pilot evaluation. It has its
+  // own 24h internal cooldown so calling on every tick is cheap.
+  void maybeRunAutoPilot();
+
   const schedules = await listSchedules({ enabled: true });
 
   for (const s of schedules) {

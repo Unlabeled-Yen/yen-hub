@@ -312,19 +312,25 @@ export type Intent = {
   evidence: EvidenceRef[];
   importance: Importance;     // ← Slice 7A
   decided_at?: number;
-  decided_by?: "user";
+  decided_by?: "user" | "auto";  // ← Slice 8.7B v2: "auto" for L0 auto-execute
   resulted_in?: string;       // observation / silhouette / summary id
   /** Slice 8.7B / 11.4 — trust tier. Absent on legacy records → treated as L1. */
   trust_tier?: TrustTier;
+  /** Slice 8.7B v2 — when this intent was auto-executed and later undone. */
+  undone_at?: number;
 };
 
 /** Default trust tier per IntentKind. Slice 8.7B will let the user override
- *  via Capability Matrix; until then this is the only mapping. */
+ *  via Capability Matrix; until then this is the only mapping.
+ *
+ *  L0 is reserved for kinds whose undo is mechanical and total — currently
+ *  only `observation`. `todo_plan` was demoted to L1 because rolling back
+ *  an appended Markdown block is fragile (Yen may have edited the file). */
 export function defaultTrustTier(kind: IntentKind): TrustTier {
   switch (kind) {
     case "observation":
+      return "L0";                  // delete from observations.json — clean undo
     case "todo_plan":
-      return "L0";                  // append-only, easy to undo
     case "summary":
     case "schedule_create":
     case "schedule_cancel":

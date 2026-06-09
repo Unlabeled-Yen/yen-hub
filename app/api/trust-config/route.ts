@@ -47,6 +47,10 @@ export async function GET() {
     mode: cfg.mode,
     updated_at: cfg.updated_at,
     stats,
+    kind_overrides: cfg.kind_overrides ?? {},
+    auto_pilot: cfg.auto_pilot ?? false,
+    auto_pilot_last_run: cfg.auto_pilot_last_run ?? null,
+    notifications_enabled: cfg.notifications_enabled ?? false,
   });
 }
 
