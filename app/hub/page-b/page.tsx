@@ -23,6 +23,10 @@ import { MarkHighReadOnMount } from "@/components/page-b/mark-high-read-on-mount
 import { MemoryTabs } from "@/components/page-b/memory-tabs";
 import { SchedulesPanel } from "@/components/page-b/schedules-panel";
 import { SensorStrip } from "@/components/page-b/sensor-strip";
+import { AutoPilotToggle } from "@/components/page-b/auto-pilot-toggle";
+import { NotificationsToggle } from "@/components/page-b/notifications-toggle";
+import { TelegramToggle } from "@/components/page-b/telegram-toggle";
+import { TierSuggestion } from "@/components/page-b/tier-suggestion";
 import { TrustDial } from "@/components/page-b/trust-dial";
 import { generateCoachCard } from "@/lib/agent/duffy/coach";
 
@@ -118,10 +122,14 @@ export default async function PageB() {
           <SchedulesPanel />
         </section>
 
-        {/* ── Tier 2.5: 信任分層（Slice 8.7B v1 — dial only, behavior v2） */}
+        {/* ── Tier 2.5: 信任分層（Slice 8.7B v2 + Slice 12 Phase 3+4 + 通知） */}
         <section className="mb-14">
           <SectionMark num="04" name="信任分層" />
+          <TierSuggestion />
           <TrustDial />
+          <AutoPilotToggle />
+          <NotificationsToggle />
+          <TelegramToggle />
         </section>
 
         {/* ── Tier 3: 記憶（合併 tabbed、預設折疊風格的低調區）────── */}

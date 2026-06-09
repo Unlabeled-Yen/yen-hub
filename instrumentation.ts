@@ -21,5 +21,11 @@ export async function register() {
       "@/lib/agent/duffy/scheduler"
     );
     startScheduler();
+
+    // Telegram integration — long-poll loop (idles when not configured).
+    const { startTelegramPoller } = await import(
+      "@/lib/agent/duffy/telegram-poller"
+    );
+    startTelegramPoller();
   }
 }

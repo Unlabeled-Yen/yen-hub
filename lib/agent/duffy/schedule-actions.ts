@@ -135,6 +135,37 @@ async function reminderAction(s: Schedule): Promise<Finding | null> {
   const payload = s.action_payload as ReminderPayload;
   const message = (payload?.message ?? "").trim();
   if (!message) return null;
+
+  // 方向 2 收尾 — fire macOS notification in parallel. maybeNotify
+  // checks the opt-in flag itself and never throws.
+  try {
+    const { maybeNotify } = await import("@/lib/agent/notifications");
+    void maybeNotify({
+      title: s.name,
+      body: message,
+      subtitle: "Duffy 提醒",
+    });
+  } catch {
+    /* notifications are nice-to-have */
+  }
+
+  // Telegram integration — push to user's bot if enabled. Same opt-in
+  // posture as macOS notifications.
+  try {
+    const { getTrustConfig } = await import("@/lib/agent/storage/trust-config");
+    const { sendTelegram } = await import("@/lib/agent/telegram");
+    const cfg = await getTrustConfig();
+    if (cfg.telegram_enabled && cfg.telegram_bot_token && cfg.telegram_chat_id) {
+      void sendTelegram({
+        token: cfg.telegram_bot_token,
+        chat_id: cfg.telegram_chat_id,
+        text: `⏰ ${s.name}\n${message}`,
+      });
+    }
+  } catch {
+    /* nice-to-have */
+  }
+
   return {
     title: s.name,
     body: message,
@@ -177,7 +208,17 @@ export async function runScheduleAction(s: Schedule): Promise<string | null> {
   if (!finding) return null;
 
   // Surface as a self-approved observation — schedules ARE the approval.
-  // (Slice 8.7B will let users dial this to L1/L2 for risky action_kinds.)
+  //
+  // 2026-06-09 fix: under Slice 8.7B v2 the global `createIntent` already
+  // auto-materializes L0-tier observations under balanced/free trust mode
+  // (calls materializeIntent → createObservationFromIntent internally).
+  // The previous code then ALSO called createObservationFromIntent
+  // explicitly, producing a duplicate observation every fire.
+  //
+  // Now we let createIntent do its thing, then:
+  //   - if it auto-executed (mode=balanced/free + L0): use its resulted_in
+  //   - if it didn't (mode=cautious): manually approve + materialise once
+  // Either way, ONE observation per fire.
   const payload: ObservationPayload = {
     title: finding.title,
     body: finding.body,
@@ -190,7 +231,14 @@ export async function runScheduleAction(s: Schedule): Promise<string | null> {
     evidence: [],
     importance: finding.importance,
   });
-  // Auto-approve since the schedule itself was approved.
+
+  if (intent.status === "approved" && intent.resulted_in) {
+    // Auto-execute path already materialised. Done.
+    return intent.resulted_in;
+  }
+
+  // Manual path — trust mode = cautious, so createIntent left it pending.
+  // Schedules ARE the user's prior approval, so we force-approve here.
   await decideIntent(intent.id, "approved");
   const obs = await createObservationFromIntent({
     intent_id: intent.id,

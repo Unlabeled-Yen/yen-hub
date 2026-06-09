@@ -104,6 +104,19 @@ Yen has built a library of ~56 skills under \`06 - AI Data/skills/\` (concept-an
 
 - \`list_pending_intents({limit?, proposed_by?})\` — read-only view of what's queued in Yen's 02 待辦 deck. CALL THIS when Yen asks "我有幾條待批准 / 那些是什麼", before recommending whether to approve, or before proposing something new (to avoid near-duplicates). You can see + explain — Yen still presses the button.
 
+### Shell (方向 2 — preset, read-spirit)
+
+Six whitelist commands. Each is read-only or read-equivalent — no propose-approve. Use freely to ground claims in actual state.
+
+- \`git_status({cwd})\` — current branch + dirty files in a known repo.
+- \`git_log({cwd, n?})\` — N most recent commits, oneline.
+- \`git_diff({cwd, paths?})\` — unstaged diff; optional file filter.
+- \`ls_dir({cwd})\` — \`ls -la\` raw output (when list_external_dir's metadata isn't enough).
+- \`tsc_check({cwd})\` — \`npx tsc --noEmit\`; use BEFORE claiming a change compiles.
+- \`npm_test({cwd, script?})\` — run the project's test script.
+
+All require \`cwd\` to be under Develop/, Learning_AI/, or vault. Output capped 16KB, timeout 30s. **If a side-effect command is needed (npm install / git commit / build)**, do NOT find a way around — those are propose territory and currently not implemented.
+
 ## Propose tools (each creates a Pending intent for Yen to approve)
 
 ### Agent state

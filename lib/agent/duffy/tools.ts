@@ -36,6 +36,14 @@ import {
   listSchedulesTool,
 } from "@/lib/agent/duffy/schedule-tools";
 import { listPendingIntents } from "@/lib/agent/duffy/intent-tools";
+import {
+  gitStatus,
+  gitLog,
+  gitDiff,
+  lsDir,
+  tscCheck,
+  npmTest,
+} from "@/lib/agent/duffy/shell-tools";
 import type {
   EvidenceRef,
   Importance,
@@ -477,4 +485,11 @@ export const duffyTools = {
   list_schedules: listSchedulesTool,
   // Intent queue (Slice 11.2) — Duffy can see the pending deck
   list_pending_intents: listPendingIntents,
+  // Shell (方向 2 收尾) — whitelist preset commands, read-only spirit
+  git_status: gitStatus,
+  git_log: gitLog,
+  git_diff: gitDiff,
+  ls_dir: lsDir,
+  tsc_check: tscCheck,
+  npm_test: npmTest,
 };

@@ -194,6 +194,39 @@ async function tryFire(): Promise<void> {
         nudge_for: source.id,
       },
     });
+
+    // 方向 2 收尾 — surface the nudge as a macOS notification too.
+    // maybeNotify checks the opt-in flag itself.
+    try {
+      const { maybeNotify } = await import("@/lib/agent/notifications");
+      void maybeNotify({
+        title: draft.title,
+        body: `${daysOld} 天沒動 — ${draft.body.slice(0, 80)}`,
+        subtitle: "Duffy 醒提",
+      });
+    } catch {
+      /* nice-to-have */
+    }
+
+    // Telegram push for the same nudge.
+    try {
+      const { getTrustConfig } = await import("@/lib/agent/storage/trust-config");
+      const { sendTelegram } = await import("@/lib/agent/telegram");
+      const cfg = await getTrustConfig();
+      if (
+        cfg.telegram_enabled &&
+        cfg.telegram_bot_token &&
+        cfg.telegram_chat_id
+      ) {
+        void sendTelegram({
+          token: cfg.telegram_bot_token,
+          chat_id: cfg.telegram_chat_id,
+          text: `🔔 醒提 · ${draft.title}\n${daysOld} 天沒動\n\n${draft.body}`,
+        });
+      }
+    } catch {
+      /* nice-to-have */
+    }
   }
 
   state.lastFiredDate = today;
