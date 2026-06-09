@@ -61,22 +61,34 @@ type Props = {
 };
 
 export function CoachCard({ initial }: Props = {}) {
-  // Initial-state priority: server prop > localStorage > "loading".
-  // Server prop wins because it bypasses the per-port localStorage limit
-  // (localStorage is wiped every .app restart because the port changes).
-  const [state, setState] = useState<State>(() => {
-    if (initial) return { kind: "loaded", card: initial, stale: false };
-    if (typeof window === "undefined") return { kind: "loading" };
-    const local = readLocal();
-    return local
-      ? { kind: "loaded", card: local, stale: true }
-      : { kind: "loading" };
-  });
+  // Hydration-safe initial state: must produce identical markup on server
+  // and client's first render. Server prop wins if present; otherwise both
+  // sides render "loading…". localStorage rehydration moves to useEffect
+  // (runs only after hydration, so a mismatch can't happen).
+  const [state, setState] = useState<State>(() =>
+    initial
+      ? { kind: "loaded", card: initial, stale: false }
+      : { kind: "loading" },
+  );
   // Persist server-supplied initial to localStorage so within-session
   // navigations (Page A → Page B → A → B) keep being instant.
   useEffect(() => {
     if (initial) writeLocal(initial);
   }, [initial]);
+  // Post-hydration localStorage rehydration — only kicks in when there's
+  // no server prop AND we haven't already loaded from the network.
+  useEffect(() => {
+    if (initial) return;
+    setState((prev) => {
+      if (prev.kind !== "loading") return prev;
+      const local = readLocal();
+      return local
+        ? { kind: "loaded", card: local, stale: true }
+        : prev;
+    });
+    // run once on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async (refresh: boolean) => {

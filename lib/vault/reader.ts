@@ -203,14 +203,38 @@ export function parseTagLine(content: string): string[] {
 }
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
-const cache = new Map<string, { at: number; data: unknown }>();
+
+/** Cache entry — either a settled value with timestamp, OR an inflight
+ *  promise that subsequent callers piggy-back onto. Inflight dedupe was
+ *  added 2026-06-09 after first-page-load race: AttentionGrid + DuffyBadge
+ *  both kick `/api/vault/attention` in parallel, both saw cache miss, both
+ *  ran buildAttention concurrently, one of them died with 500 from
+ *  overlapping fs ops. With dedupe, both callers await the same fn(). */
+type CacheEntry<T = unknown> =
+  | { kind: "ready"; at: number; data: T }
+  | { kind: "inflight"; promise: Promise<T> };
+
+const cache = new Map<string, CacheEntry>();
 
 export async function cached<T>(key: string, fn: () => Promise<T>): Promise<T> {
-  const hit = cache.get(key);
-  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.data as T;
-  const data = await fn();
-  cache.set(key, { at: Date.now(), data });
-  return data;
+  const hit = cache.get(key) as CacheEntry<T> | undefined;
+  if (hit) {
+    if (hit.kind === "inflight") return hit.promise;
+    if (Date.now() - hit.at < CACHE_TTL_MS) return hit.data;
+  }
+  const promise = (async () => {
+    try {
+      const data = await fn();
+      cache.set(key, { kind: "ready", at: Date.now(), data });
+      return data;
+    } catch (e) {
+      // Failed runs are NOT cached — the next caller retries.
+      cache.delete(key);
+      throw e;
+    }
+  })();
+  cache.set(key, { kind: "inflight", promise });
+  return promise;
 }
 
 export function bustCache(prefix: string): void {

@@ -18,6 +18,21 @@ if [ ! -f "$SRC/server.js" ]; then
   exit 1
 fi
 
+# 2026-06-09 — Next's NFT pulls src-tauri/ into .next/standalone because
+# lib/auth/passkeys.ts uses `join(process.cwd(), ...)`. Strip it BEFORE
+# copying so a single 10GB Rust target dir doesn't blow up the cp -R.
+# next.config.ts has outputFileTracingExcludes but it doesn't catch this.
+if [ -d "$SRC/src-tauri" ]; then
+  echo "[prep-sidecar] pruning $SRC/src-tauri ($(du -sh "$SRC/src-tauri" | cut -f1)) before copy"
+  rm -rf "$SRC/src-tauri"
+fi
+for stray in target node_modules/.cache .git; do
+  if [ -d "$SRC/$stray" ]; then
+    echo "[prep-sidecar] pruning $SRC/$stray ($(du -sh "$SRC/$stray" | cut -f1)) before copy"
+    rm -rf "$SRC/$stray"
+  fi
+done
+
 rm -rf "$DST"
 mkdir -p "$DST"
 
@@ -30,5 +45,21 @@ cp -R "$ROOT/.next/static" "$DST/.next/static"
 if [ -d "$ROOT/public" ]; then
   cp -R "$ROOT/public" "$DST/public"
 fi
+
+# 2026-06-09 — defensive cleanup against Next File Tracing pulling in
+# src-tauri/ (Rust build artifacts). The outputFileTracingExcludes in
+# next.config.ts doesn't catch dynamic-path code (child_process / homedir
+# in app routes), and NFT then walks the project tree and stages the whole
+# Rust target dir. Without this rm, the .app bloats from ~160MB → 10GB+.
+if [ -d "$DST/src-tauri" ]; then
+  echo "[prep-sidecar] pruning stray src-tauri/ ($(du -sh "$DST/src-tauri" | cut -f1))"
+  rm -rf "$DST/src-tauri"
+fi
+for stray in target node_modules/.cache .git; do
+  if [ -d "$DST/$stray" ]; then
+    echo "[prep-sidecar] pruning stray $stray ($(du -sh "$DST/$stray" | cut -f1))"
+    rm -rf "$DST/$stray"
+  fi
+done
 
 echo "[prep-sidecar] staged $(du -sh "$DST" | cut -f1) into src-tauri/sidecar/"
