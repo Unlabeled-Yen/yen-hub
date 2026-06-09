@@ -17,6 +17,7 @@ import { useCallback, useEffect, useState } from "react";
 import { AnimatePresence } from "motion/react";
 import { tokenFetch } from "@/lib/security/sidecar-token";
 import { IntentDeck } from "@/components/page-b/intent-deck";
+import { IntentExplanation } from "@/components/page-b/intent-explanation";
 import type {
   Intent,
   IntentStatus,
@@ -86,6 +87,8 @@ export function IntentQueue() {
     (i) => i.decided_by === "auto" && !i.undone_at,
   );
   const [undoBusy, setUndoBusy] = useState<string | null>(null);
+  // Slice 元能力 #2 — which auto-row's "?" explanation is open. Null = none.
+  const [explainOpen, setExplainOpen] = useState<string | null>(null);
 
   const onUndo = async (id: string) => {
     if (undoBusy === id) return;
@@ -190,26 +193,50 @@ export function IntentQueue() {
             近 24h 自動執行 · {recentAuto.length}
           </div>
           <ul className="flex flex-col gap-1">
-            {recentAuto.slice(0, 5).map((i) => (
-              <li
-                key={i.id}
-                className="flex items-center gap-2 text-[11px]"
-              >
-                <span className="text-[var(--fg-1)] truncate flex-1" title={autoTitle(i)}>
-                  · {autoTitle(i)}
-                </span>
-                <button
-                  type="button"
-                  disabled={undoBusy === i.id}
-                  onClick={() => onUndo(i.id)}
-                  className="shrink-0 px-1.5 py-0.5 text-[9px] font-mono tracking-[0.18em] uppercase rounded border text-[var(--fg-3)] hover:text-[var(--warn)] hover:border-[var(--warn)] transition-colors disabled:opacity-40"
-                  style={{ borderColor: "rgba(255,255,255,0.10)" }}
-                  title="從 observations.json 移除（vault Markdown 鏡像不動）"
-                >
-                  {undoBusy === i.id ? "..." : "撤銷"}
-                </button>
-              </li>
-            ))}
+            {recentAuto.slice(0, 5).map((i) => {
+              const isOpen = explainOpen === i.id;
+              return (
+                <li key={i.id} className="flex flex-col gap-1">
+                  <div className="flex items-center gap-2 text-[11px]">
+                    <span
+                      className="text-[var(--fg-1)] truncate flex-1"
+                      title={autoTitle(i)}
+                    >
+                      · {autoTitle(i)}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setExplainOpen(isOpen ? null : i.id)
+                      }
+                      title="為什麼 Duffy 自動寫了這條"
+                      className="shrink-0 px-1.5 py-0.5 text-[9px] font-mono tracking-[0.18em] uppercase rounded border text-[var(--fg-3)] hover:text-[var(--accent)] hover:border-[var(--accent)] transition-colors"
+                      style={{ borderColor: "rgba(255,255,255,0.10)" }}
+                    >
+                      {isOpen ? "✕" : "?"}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={undoBusy === i.id}
+                      onClick={() => onUndo(i.id)}
+                      className="shrink-0 px-1.5 py-0.5 text-[9px] font-mono tracking-[0.18em] uppercase rounded border text-[var(--fg-3)] hover:text-[var(--warn)] hover:border-[var(--warn)] transition-colors disabled:opacity-40"
+                      style={{ borderColor: "rgba(255,255,255,0.10)" }}
+                      title="從 observations.json 移除（vault Markdown 鏡像不動）"
+                    >
+                      {undoBusy === i.id ? "..." : "撤銷"}
+                    </button>
+                  </div>
+                  {isOpen && (
+                    <div
+                      className="ml-2 pl-3 border-l border-[var(--border-subtle)]"
+                      style={{ background: "rgba(0,229,180,0.02)" }}
+                    >
+                      <IntentExplanation intent={i} compact />
+                    </div>
+                  )}
+                </li>
+              );
+            })}
           </ul>
           {recentAuto.length > 5 && (
             <div className="mt-1 text-[9px] font-mono tracking-[0.18em] uppercase text-[var(--fg-3)]">

@@ -21,6 +21,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { tokenFetch } from "@/lib/security/sidecar-token";
+import { IntentExplanation } from "@/components/page-b/intent-explanation";
 import type {
   FileCreatePayload,
   FileEditPayload,
@@ -280,33 +281,26 @@ export function IntentDeck({ intents, onClose, onDecided }: Props) {
                 </div>
               </div>
 
-              {/* Card body — rationale + payload */}
+              {/* Card body — payload (the proposal content itself) */}
               <div className="px-6 py-4 flex-1 overflow-y-auto">
-                <div className="text-[11px] text-[var(--fg-2)] leading-relaxed mb-3 italic">
-                  {top.rationale}
-                </div>
-                <div className="text-[12px] text-[var(--fg-1)] leading-relaxed whitespace-pre-wrap">
+                <div className="text-[12px] text-[var(--fg-1)] leading-relaxed whitespace-pre-wrap mb-4">
                   {describePayload(top).body}
                 </div>
-              </div>
 
-              {/* Card footer — evidence chips */}
-              {top.evidence.length > 0 && (
-                <div className="px-6 pb-3 flex flex-wrap gap-1.5">
-                  {top.evidence.map((e, i) => (
-                    <span
-                      key={i}
-                      className="px-1.5 py-0.5 text-[10px] font-mono tracking-wide rounded text-[var(--fg-2)]"
-                      style={{
-                        background: "rgba(255,255,255,0.04)",
-                        border: "1px solid rgba(255,255,255,0.08)",
-                      }}
-                    >
-                      {evidenceLabel(e)}
-                    </span>
-                  ))}
-                </div>
-              )}
+                {/* Slice 元能力 #2 — structured "why" panel replaces the
+                    plain italic rationale + standalone evidence chips. */}
+                <details className="mt-4 border-t border-[var(--border-subtle)] pt-3">
+                  <summary
+                    className="cursor-pointer text-[10px] font-mono tracking-[0.24em] uppercase text-[var(--fg-3)] hover:text-[var(--fg-1)] select-none"
+                    style={{ listStyle: "none" }}
+                  >
+                    ▸ Duffy 為什麼提這個
+                  </summary>
+                  <div className="mt-3">
+                    <IntentExplanation intent={top} />
+                  </div>
+                </details>
+              </div>
             </motion.div>
           )}
 
