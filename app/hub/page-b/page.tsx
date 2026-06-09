@@ -27,6 +27,7 @@ import { AutoPilotToggle } from "@/components/page-b/auto-pilot-toggle";
 import { NotificationsToggle } from "@/components/page-b/notifications-toggle";
 import { TelegramToggle } from "@/components/page-b/telegram-toggle";
 import { TierSuggestion } from "@/components/page-b/tier-suggestion";
+import { TokenUsageBar } from "@/components/page-b/token-usage-bar";
 import { TrustDial } from "@/components/page-b/trust-dial";
 import { generateCoachCard } from "@/lib/agent/duffy/coach";
 
@@ -138,6 +139,7 @@ export default async function PageB() {
           <AutoPilotToggle />
           <NotificationsToggle />
           <TelegramToggle />
+          <TokenUsageBar />
         </section>
 
         {/* ── Tier 3: 記憶（合併 tabbed、預設折疊風格的低調區）────── */}

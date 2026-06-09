@@ -19,7 +19,7 @@ import { generateText } from "ai";
 import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { hasAnyLLMKey, pickModel } from "@/lib/ai/model";
+import { hasAnyLLMKey, pickModel, modelLabel } from "@/lib/ai/model";
 import {
   getCurrentSilhouette,
   renderSilhouetteForPrompt,
@@ -203,6 +203,19 @@ export async function generateCoachCard(): Promise<CoachCard> {
       prompt: ctxParts.join("\n\n---\n\n"),
     });
     message = result.text.trim();
+    // Slice 元能力 #1 — record usage.
+    try {
+      const { recordTokenUsage } = await import(
+        "@/lib/agent/storage/token-usage"
+      );
+      await recordTokenUsage({
+        call_site: "coach-card",
+        model: modelLabel(),
+        usage: result.usage,
+      });
+    } catch {
+      /* swallow */
+    }
   }
 
   cached = {

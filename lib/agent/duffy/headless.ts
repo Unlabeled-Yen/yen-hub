@@ -24,7 +24,7 @@ import {
   renderSilhouetteForPrompt,
 } from "@/lib/agent/storage/silhouettes";
 import { getCurrentWeekSummary } from "@/lib/agent/storage/summaries";
-import { hasAnyLLMKey, pickModel } from "@/lib/ai/model";
+import { hasAnyLLMKey, pickModel, modelLabel } from "@/lib/ai/model";
 
 async function composeHeadlessSystemPrompt(surface: string): Promise<string> {
   const [soul, sil, sum] = await Promise.all([
@@ -73,6 +73,20 @@ export async function runDuffyHeadless(args: {
       tools: duffyTools,
       stopWhen: stepCountIs(5),
     });
+    // Slice 元能力 #1 — record usage.
+    try {
+      const { recordTokenUsage } = await import(
+        "@/lib/agent/storage/token-usage"
+      );
+      await recordTokenUsage({
+        call_site:
+          args.surface === "telegram" ? "headless-telegram" : "other",
+        model: modelLabel(),
+        usage: result.usage,
+      });
+    } catch {
+      /* swallow */
+    }
     return { ok: true, text: result.text };
   } catch (e) {
     return {

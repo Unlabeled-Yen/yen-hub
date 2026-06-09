@@ -13,7 +13,7 @@
  */
 
 import { generateText } from "ai";
-import { hasAnyLLMKey, pickModel } from "@/lib/ai/model";
+import { hasAnyLLMKey, pickModel, modelLabel } from "@/lib/ai/model";
 import { createIntent } from "@/lib/agent/storage/intents";
 import { listIntents } from "@/lib/agent/storage/intents";
 import { listObservations } from "@/lib/agent/storage/observations";
@@ -149,6 +149,20 @@ export async function proposeWeeklySummary(week: string): Promise<void> {
     system: SUMMARY_SYSTEM,
     prompt: ctxParts.join("\n\n---\n\n"),
   });
+  // Slice 元能力 #1 — record usage.
+  try {
+    const { recordTokenUsage } = await import(
+      "@/lib/agent/storage/token-usage"
+    );
+    await recordTokenUsage({
+      call_site: "summary-cron",
+      model: modelLabel(),
+      usage: result.usage,
+      ref: week,
+    });
+  } catch {
+    /* swallow */
+  }
 
   // Parse JSON, tolerate code fence.
   const trimmed = result.text

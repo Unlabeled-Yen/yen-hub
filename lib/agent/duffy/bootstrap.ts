@@ -8,7 +8,7 @@
  */
 
 import { generateText } from "ai";
-import { hasAnyLLMKey, pickModel } from "@/lib/ai/model";
+import { hasAnyLLMKey, pickModel, modelLabel } from "@/lib/ai/model";
 import { getCurrentSilhouette } from "@/lib/agent/storage/silhouettes";
 import { listObservations } from "@/lib/agent/storage/observations";
 import { createIntent } from "@/lib/agent/storage/intents";
@@ -116,6 +116,19 @@ Draft Yen's silhouette v1 as JSON.`;
     system: BOOTSTRAP_SYSTEM,
     prompt: userPrompt,
   });
+  // Slice 元能力 #1 — record usage.
+  try {
+    const { recordTokenUsage } = await import(
+      "@/lib/agent/storage/token-usage"
+    );
+    await recordTokenUsage({
+      call_site: "bootstrap",
+      model: modelLabel(),
+      usage: result.usage,
+    });
+  } catch {
+    /* swallow */
+  }
 
   // Parse the JSON robustly — LLM may wrap in code fence despite instruction.
   let parsed: Record<string, string>;

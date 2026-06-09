@@ -23,7 +23,7 @@
  */
 
 import { generateText } from "ai";
-import { hasAnyLLMKey, pickModel } from "@/lib/ai/model";
+import { hasAnyLLMKey, pickModel, modelLabel } from "@/lib/ai/model";
 import { createIntent, listIntents } from "@/lib/agent/storage/intents";
 import { listIntentionObservations } from "@/lib/agent/storage/observations";
 import type {
@@ -120,6 +120,19 @@ async function draftNudge(source: Observation): Promise<{
       system: NUDGE_SYSTEM,
       prompt: ctx,
     });
+    // Slice 元能力 #1 — record usage.
+    try {
+      const { recordTokenUsage } = await import(
+        "@/lib/agent/storage/token-usage"
+      );
+      await recordTokenUsage({
+        call_site: "nudge-draft",
+        model: modelLabel(),
+        usage: result.usage,
+      });
+    } catch {
+      /* swallow */
+    }
     const trimmed = result.text
       .trim()
       .replace(/^```(json)?/i, "")

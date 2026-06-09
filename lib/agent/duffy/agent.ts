@@ -37,7 +37,7 @@ import {
   getCurrentWeekSummary,
   renderSummaryForPrompt,
 } from "@/lib/agent/storage/summaries";
-import { hasAnyLLMKey, pickModel } from "@/lib/ai/model";
+import { hasAnyLLMKey, pickModel, modelLabel } from "@/lib/ai/model";
 
 export type DuffyContext = {
   /** Yen's request, with the leading "Duffy" stripped. */
@@ -191,7 +191,22 @@ export async function runDuffy(ctx: DuffyContext): Promise<Response> {
     },
     // Slice 7.7: on natural completion, finalize the inflight entry with
     // the full text. Client will see this on next /api/chat/inflight read.
-    async onFinish({ text }) {
+    async onFinish({ text, usage }) {
+      // Slice 元能力 #1 — record LLM usage for budget tracking. Lazy
+      // import + try/catch so observability never breaks the stream.
+      try {
+        const { recordTokenUsage } = await import(
+          "@/lib/agent/storage/token-usage"
+        );
+        await recordTokenUsage({
+          call_site: "duffy-chat",
+          model: modelLabel(),
+          usage,
+          ref: convoId,
+        });
+      } catch {
+        /* swallow */
+      }
       if (!convoId) return;
       await finalizeInflight({
         conversationId: convoId,

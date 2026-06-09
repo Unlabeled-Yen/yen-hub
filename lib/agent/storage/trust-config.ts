@@ -58,6 +58,10 @@ export type TrustConfig = {
   telegram_enabled?: boolean;
   /** Long-poll cursor — tracks the next update_id to fetch from. */
   telegram_last_update_id?: number;
+  /** Slice 元能力 #1 — daily LLM token budget (total tokens, all callsites
+   *  combined). null/omitted = unlimited. UI surfaces a warning at 80% and
+   *  red at 100% but does NOT hard-stop calls in v1 (just observability). */
+  daily_token_budget?: number;
 };
 
 /** Default is "cautious" — opt-in for auto-execute. Users who want
@@ -106,6 +110,10 @@ async function load(): Promise<TrustConfig> {
       telegram_last_update_id:
         typeof parsed.telegram_last_update_id === "number"
           ? parsed.telegram_last_update_id
+          : undefined,
+      daily_token_budget:
+        typeof parsed.daily_token_budget === "number"
+          ? parsed.daily_token_budget
           : undefined,
     };
   } catch {
@@ -210,6 +218,16 @@ export async function setTelegramLastUpdateId(id: number): Promise<void> {
   const current = await load();
   current.telegram_last_update_id = id;
   await save();
+}
+
+/** Slice 元能力 #1 — set the daily token budget (pass null/0 to clear). */
+export async function setDailyTokenBudget(budget: number | null): Promise<TrustConfig> {
+  const current = await load();
+  current.daily_token_budget =
+    budget !== null && budget > 0 ? budget : undefined;
+  current.updated_at = Date.now();
+  await save();
+  return { ...current };
 }
 
 /* -------------------------------------------------------------------------- */

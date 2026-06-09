@@ -34,6 +34,16 @@ export function hasAnyLLMKey(): boolean {
   return !!process.env.ANTHROPIC_API_KEY || !!process.env.KIMI_API_KEY;
 }
 
+/** Human-readable label of the currently-active model, for token-usage
+ *  attribution. Returns the explicit DUFFY_MODEL when set, else the
+ *  provider default. */
+export function modelLabel(): string {
+  const explicit = process.env.DUFFY_MODEL;
+  if (explicit) return explicit;
+  const provider = resolveProvider();
+  return provider === "kimi" ? "kimi-latest" : "claude-sonnet-4-5";
+}
+
 /** Pick the configured LanguageModel. May return an unusable model if no
  *  key is set — callers should check `hasAnyLLMKey()` first and fall back
  *  to mock if false. */
