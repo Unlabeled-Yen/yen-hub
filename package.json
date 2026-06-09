@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "next build && bash scripts/prune-nft-bloat.sh",
     "start": "next start",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
