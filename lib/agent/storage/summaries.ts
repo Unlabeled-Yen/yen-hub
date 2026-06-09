@@ -26,12 +26,17 @@ type SummaryMap = Record<string, Summary>;
 
 let mem: SummaryMap | null = null;
 
+// Always re-read from disk — no forever-cache. Real bug (2026-06-10, see
+// schedules.ts): in Next standalone, API routes and instrumentation.ts
+// bundle SEPARATE instances of this module. Summaries are written from
+// the cron side (summary-cron → intent-materialize) and read from routes
+// (/api/summaries). A boot-time cache lets the route bundle keep serving
+// last-boot's summaries forever even after a new week's summary lands.
 async function load(): Promise<SummaryMap> {
-  if (mem) return mem;
   try {
     mem = JSON.parse(await fs.readFile(FILE, "utf8")) as SummaryMap;
   } catch {
-    mem = {};
+    mem = mem ?? {};
   }
   return mem;
 }

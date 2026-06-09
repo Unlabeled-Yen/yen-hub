@@ -58,7 +58,7 @@ HOW TO BUILD THE PROPOSAL:
    - 每月 1 號 9:00      → "0 9 1 * *"
    - Single event "明天下午 1 點" → use "0 13 * * *" + one_shot=true + not_before=tomorrow 00:00 epoch ms
    - Single event "今晚 9 點"     → use "0 21 * * *" + one_shot=true + not_before=now (no not_before needed if 9 PM is in the future)
-   - Minimum interval 60 minutes — sub-hour expressions are refused.
+   - Minimum interval 15 minutes — anything tighter is refused.
 
 3. one_shot — SET TO TRUE for any single-event request ("明天...", "今晚...", "12/31 前...", "下週四"). Default false for recurring.
 
@@ -84,15 +84,38 @@ After calling, END your text response with <<INTENT:{intent_id}>>.`,
       .min(5)
       .max(80)
       .describe(
-        "Standard 5-field cron expression. Min interval 60 minutes.",
+        "Standard 5-field cron expression. Min interval 15 minutes.",
       ),
     action_kind: z
       .enum(["reminder", "git_unpushed_check", "vault_zone_check"])
       .describe(
         "Default to 'reminder' unless Yen literally asks for git or vault-zone checks.",
       ),
+    // NOTE: must be an explicit z.object — NOT z.record. Some providers
+    // (Moonshot/Kimi) run constrained decoding from the JSON schema, and
+    // z.record converts to `additionalProperties: {}` which their decoder
+    // treats as falsy/false — the model is then grammatically unable to
+    // emit ANY key and always sends `{}`, no matter what its reasoning
+    // says. Explicit optional properties keep every field emittable.
     action_payload: z
-      .record(z.string(), z.unknown())
+      .object({
+        message: z
+          .string()
+          .optional()
+          .describe("reminder: what to remind Yen about. REQUIRED for reminder."),
+        repos: z
+          .array(z.string())
+          .optional()
+          .describe("git_unpushed_check: repo paths to check. REQUIRED for it."),
+        zone: z
+          .string()
+          .optional()
+          .describe("vault_zone_check: zone name. REQUIRED for it."),
+        days_idle: z
+          .number()
+          .optional()
+          .describe("vault_zone_check: idle-day threshold. REQUIRED for it."),
+      })
       .describe(
         "reminder needs { message }. git_unpushed_check needs { repos: string[] }. vault_zone_check needs { zone: string, days_idle: number }.",
       ),
@@ -134,10 +157,10 @@ After calling, END your text response with <<INTENT:{intent_id}>>.`,
       };
     }
     const interval = minIntervalMinutes(parsed);
-    if (interval < 60) {
+    if (interval < 15) {
       return {
         ok: false as const,
-        error: `最小間隔限制 60 分鐘、此表達式約 ${interval} 分鐘一次`,
+        error: `最小間隔限制 15 分鐘、此表達式約 ${interval} 分鐘一次`,
       };
     }
 

@@ -108,7 +108,7 @@ export function SchedulesPanel() {
         <div className="text-[11px] text-[var(--fg-2)] mb-1">
           目前沒有排程
         </div>
-        <div className="text-[9px] font-mono tracking-[0.24em] uppercase text-[var(--fg-3)]">
+        <div className="text-[11px] text-[var(--fg-2)]">
           跟 Duffy 講「明天下午 1 點提醒我 X」、他會幫你排
         </div>
       </div>

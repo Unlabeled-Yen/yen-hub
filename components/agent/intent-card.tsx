@@ -140,6 +140,7 @@ export function IntentCard({ intentId }: Props) {
   const [state, setState] = useState<FetchState>({ kind: "loading" });
   const [expanded, setExpanded] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [decideError, setDecideError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -148,7 +149,11 @@ export function IntentCard({ intentId }: Props) {
         setState({ kind: "missing" });
         return;
       }
-      const data = (await res.json()) as { intent: Intent };
+      const data = (await res.json()) as { intent?: Intent };
+      if (!data.intent) {
+        setState({ kind: "missing" });
+        return;
+      }
       setState({ kind: "loaded", intent: data.intent });
     } catch {
       setState({ kind: "missing" });
@@ -164,14 +169,29 @@ export function IntentCard({ intentId }: Props) {
       if (state.kind !== "loaded") return;
       if (state.intent.status !== "pending") return;
       setBusy(true);
+      setDecideError(null);
       try {
         const res = await tokenFetch(`/api/intents/${intentId}/decide`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ decision }),
         });
-        const data = (await res.json()) as { intent: Intent };
+        // Server returns { intent } on success, { error } on failure
+        // (422 invalid cron, 401 session, 500 materialize). Blindly
+        // reading data.intent used to crash the whole page to Next's
+        // global-error when the server said no — keep the card alive
+        // and surface the message instead.
+        const data = (await res.json().catch(() => ({}))) as {
+          intent?: Intent;
+          error?: string;
+        };
+        if (!res.ok || !data.intent) {
+          setDecideError(data.error ?? `server error (${res.status})`);
+          return;
+        }
         setState({ kind: "loaded", intent: data.intent });
+      } catch (e) {
+        setDecideError(e instanceof Error ? e.message : "network error");
       } finally {
         setBusy(false);
       }
@@ -329,6 +349,11 @@ export function IntentCard({ intentId }: Props) {
         </div>
       ) : (
         <Provenance intent={intent} />
+      )}
+      {decideError && (
+        <div className="mt-2 text-[11px] leading-relaxed" style={{ color: "#f0a05a" }}>
+          決定沒成功：{decideError}
+        </div>
       )}
     </motion.div>
   );

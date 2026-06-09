@@ -73,7 +73,7 @@ export function NotificationsToggle() {
       <div className="flex items-center justify-between gap-4">
         <div className="flex-1 min-w-0">
           <div className="text-[12px] text-[var(--fg-0)]">macOS 通知</div>
-          <div className="text-[10px] font-mono tracking-[0.18em] uppercase text-[var(--fg-3)] mt-1 leading-relaxed">
+          <div className="text-[11px] text-[var(--fg-2)] mt-1 leading-relaxed">
             reminder 排程 + 醒提觸發時、桌面通知會跳出來、你不在 .app 也戳得到。
           </div>
         </div>

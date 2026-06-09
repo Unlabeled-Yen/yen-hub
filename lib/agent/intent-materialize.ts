@@ -251,12 +251,13 @@ export async function materializeIntent(
         },
       };
     }
-    if (minIntervalMinutes(parsed) < 60) {
+    // Keep in sync with schedule-tools.ts propose-side validation (15 min).
+    if (minIntervalMinutes(parsed) < 15) {
       return {
         ok: false,
         error: {
           code: 422,
-          message: "cron interval below 60 min minimum",
+          message: "cron interval below 15 min minimum",
           extra: { cron_expr: p.cron_expr },
         },
       };

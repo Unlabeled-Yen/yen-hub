@@ -1,55 +1,55 @@
 /**
- * macOS notifications — 方向 2 收尾.
+ * macOS notifications — 方向 2 收尾, 2026-06-10 重寫.
  *
- * Surface Duffy-side events outside the .app window. Right now two
- * call sites fire notifications:
+ * Surface Duffy-side events outside the .app window. Call sites:
  *   - reminder schedule action (Slice 11.1)
  *   - stale-intention nudge cron (Slice 8)
+ *   - manual test from NotificationsToggle (page-b 04 信任分層)
  *
- * Implementation: shell out to `osascript -e 'display notification ...'`.
- * No Tauri Rust changes needed — node child_process is enough. Failure
- * silently swallowed (notifications are nice-to-have, not load-bearing).
+ * Implementation history:
+ *   v1 (─ 2026-06-09): `osascript -e 'display notification ...'` from
+ *     Node child_process. Worked on signed binaries; on recent macOS
+ *     (Sequoia / Tahoe) the OS silently dropped them because Yen.app is
+ *     unsigned and osascript has no bundle identity to attribute the
+ *     notification to. No system permission prompt ever appeared.
+ *
+ *   v2 (2026-06-10 — current): pipe a `[NOTIFY]{json}` line to stdout.
+ *     Rust side (sidecar.rs `handle_notify_payload`) reads the existing
+ *     stdout drain, parses the line, and fires via
+ *     tauri-plugin-notification — which goes through Yen.app's bundle
+ *     identity (com.yen.hub). First send triggers macOS's permission
+ *     prompt; afterwards Yen appears in System Settings → Notifications.
  *
  * Opt-in: gated by trust-config.notifications_enabled. Default off so
  * upgrade doesn't silently add OS-level surface area.
  */
 
-import { execFile } from "node:child_process";
 import { getTrustConfig } from "@/lib/agent/storage/trust-config";
-
-const APP_TITLE = "Duffy";
-
-function escapeForAppleScript(s: string): string {
-  // AppleScript strings escape " and \ with a leading backslash.
-  return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-}
 
 export async function sendMacosNotification(args: {
   title: string;
   body: string;
   subtitle?: string;
 }): Promise<{ ok: boolean; error?: string }> {
-  return new Promise((res) => {
-    const title = escapeForAppleScript(args.title);
-    const body = escapeForAppleScript(args.body);
-    const subtitle = args.subtitle
-      ? `with title "${title}" subtitle "${escapeForAppleScript(args.subtitle)}"`
-      : `with title "${title}"`;
-    const script = `display notification "${body}" ${subtitle} sound name "Glass"`;
-    execFile(
-      "osascript",
-      ["-e", script],
-      { timeout: 5000 },
-      (err) => {
-        if (err) {
-          res({ ok: false, error: err.message });
-        } else {
-          res({ ok: true });
-        }
-      },
-    );
-    void APP_TITLE;
-  });
+  try {
+    // Single-line JSON so the Rust-side line-based stdout parser can
+    // recover the full payload from one `[NOTIFY]` event. Embedded
+    // newlines in body/subtitle would split the marker line, so we
+    // strip them defensively — the Rust handler trims and json-parses
+    // exactly one line.
+    const payload = JSON.stringify({
+      title: args.title.replace(/[\r\n]+/g, " "),
+      body: args.body.replace(/[\r\n]+/g, " "),
+      subtitle: args.subtitle?.replace(/[\r\n]+/g, " "),
+    });
+    // process.stdout.write is synchronous on TTY/pipes; we use it
+    // directly (not console.log) so the marker is never accidentally
+    // co-mingled with another log line in a chunk boundary.
+    process.stdout.write(`[NOTIFY]${payload}\n`);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 /** Best-effort: check config, send if enabled, swallow errors. Use this

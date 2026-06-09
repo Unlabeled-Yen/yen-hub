@@ -22,12 +22,17 @@ type ScheduleMap = Record<string, Schedule>;
 
 let mem: ScheduleMap | null = null;
 
+// Always re-read from disk — no forever-cache. Real bug (2026-06-10):
+// in Next standalone, API routes and instrumentation.ts bundle SEPARATE
+// instances of this module. The scheduler's instance cached the file at
+// boot and never saw schedules created later through a route's instance,
+// so new schedules silently never fired until app restart. The file is
+// tiny and the scheduler polls once a minute; disk reads are free.
 async function load(): Promise<ScheduleMap> {
-  if (mem) return mem;
   try {
     mem = JSON.parse(await fs.readFile(FILE, "utf8")) as ScheduleMap;
   } catch {
-    mem = {};
+    mem = mem ?? {};
   }
   return mem;
 }

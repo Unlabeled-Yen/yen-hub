@@ -58,10 +58,14 @@ async function tick(): Promise<void> {
     if (s.not_before && prev.getTime() < s.not_before) continue;
 
     // Fire if the most recent scheduled time is strictly after the last
-    // recorded fire. New schedules with no last_fired_at are eligible
-    // immediately if a scheduled time has already passed in the last
-    // minute window.
-    const last = s.last_fired_at ?? 0;
+    // recorded fire. For new schedules (last_fired_at = null), missed
+    // fires only count from creation time forward — a schedule didn't
+    // exist before created_at, so a cron boundary that passed before
+    // creation isn't a missed fire. This caused a real bug (2026-06-10):
+    // Duffy creates `*/15 * * * *` one_shot at 06:41 → scheduler treats
+    // 06:30 as a missed fire → notification fires immediately instead of
+    // at the promised 06:45 boundary.
+    const last = s.last_fired_at ?? s.created_at;
     const sinceLastTick = now.getTime() - POLL_INTERVAL_MS;
     if (prev.getTime() <= last) continue;
     if (prev.getTime() < sinceLastTick) {

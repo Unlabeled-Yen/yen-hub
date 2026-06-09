@@ -13,6 +13,7 @@ use std::{
 };
 
 use tauri::{AppHandle, Manager, WebviewWindow};
+use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_shell::{process::CommandEvent, ShellExt};
 
 const READY_TIMEOUT: Duration = Duration::from_secs(20);
@@ -234,13 +235,29 @@ pub fn launch(app: &AppHandle, window: WebviewWindow) -> Result<String, String> 
 
     // Drain stdout/stderr in the background so the child doesn't block on
     // a full pipe, and so we get logs in the Tauri console.
+    //
+    // Special case: lines beginning with `[NOTIFY]` are treated as
+    // notification requests from the sidecar (lib/agent/notifications.ts)
+    // rather than log output. We parse the JSON payload after the prefix
+    // and fire a native macOS notification via tauri-plugin-notification,
+    // which uses Yen.app's own bundle identity (com.yen.hub) so macOS will
+    // prompt for permission on first send and show notifications under the
+    // Yen entry in System Settings → Notifications. This replaces the
+    // earlier osascript path, which silently fails on unsigned apps in
+    // recent macOS releases (Sequoia / Tahoe).
+    let app_handle = app.clone();
     tauri::async_runtime::spawn(async move {
         while let Some(event) = rx.recv().await {
             match event {
-                CommandEvent::Stdout(b) => log::info!(
-                    "[next] {}",
-                    String::from_utf8_lossy(&b).trim_end()
-                ),
+                CommandEvent::Stdout(b) => {
+                    let line = String::from_utf8_lossy(&b);
+                    let trimmed = line.trim_end();
+                    if let Some(payload) = trimmed.strip_prefix("[NOTIFY]") {
+                        handle_notify_payload(&app_handle, payload.trim());
+                    } else {
+                        log::info!("[next] {trimmed}");
+                    }
+                }
                 CommandEvent::Stderr(b) => log::warn!(
                     "[next] {}",
                     String::from_utf8_lossy(&b).trim_end()
@@ -275,4 +292,54 @@ pub fn launch(app: &AppHandle, window: WebviewWindow) -> Result<String, String> 
     window.navigate(url).map_err(|e| format!("navigate: {e}"))?;
 
     Ok(sidecar_token)
+}
+
+/// Parse a `[NOTIFY]{...}` payload from sidecar stdout and fire a native
+/// macOS notification via tauri-plugin-notification.
+///
+/// Payload shape (JSON): `{ "title": string, "body": string, "subtitle"?: string }`.
+///
+/// On parse failure we log a warning and drop the payload — notifications
+/// are nice-to-have and must never break the log drain.
+fn handle_notify_payload(app: &AppHandle, payload: &str) {
+    #[derive(serde::Deserialize)]
+    struct Notify {
+        title: String,
+        body: String,
+        #[serde(default)]
+        subtitle: Option<String>,
+    }
+
+    let parsed: Notify = match serde_json::from_str(payload) {
+        Ok(v) => v,
+        Err(e) => {
+            log::warn!("[notify] bad payload (err={e}): {payload}");
+            return;
+        }
+    };
+
+    // tauri-plugin-notification's builder doesn't expose .subtitle() —
+    // macOS supports it via NSUserNotification but the Tauri wrapper omits
+    // it. Fold subtitle into the body as a leading line so it still shows
+    // up in the notification banner. (Future: switch to notify-rust direct
+    // if subtitle becomes load-bearing.)
+    let body_with_sub = match parsed.subtitle.as_deref() {
+        Some(sub) if !sub.is_empty() => format!("{sub}\n{}", parsed.body),
+        _ => parsed.body.clone(),
+    };
+
+    let builder = app
+        .notification()
+        .builder()
+        .title(&parsed.title)
+        .body(&body_with_sub);
+
+    match builder.show() {
+        Ok(_) => log::info!(
+            "[notify] fired: title={:?} body_len={}",
+            parsed.title,
+            body_with_sub.len()
+        ),
+        Err(e) => log::warn!("[notify] show failed: {e}"),
+    }
 }

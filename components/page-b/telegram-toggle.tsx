@@ -138,7 +138,7 @@ export function TelegramToggle() {
       <div className="flex items-center justify-between gap-4 mb-2">
         <div className="flex-1 min-w-0">
           <div className="text-[12px] text-[var(--fg-0)]">Telegram</div>
-          <div className="text-[10px] font-mono tracking-[0.18em] uppercase text-[var(--fg-3)] mt-1 leading-relaxed">
+          <div className="text-[11px] text-[var(--fg-2)] mt-1 leading-relaxed">
             雙向 · Duffy reminder/醒提推到手機、你也能直接打字跟他對話。
           </div>
         </div>

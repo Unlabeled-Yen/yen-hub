@@ -34,12 +34,17 @@ type SilhouetteMap = Record<string, Silhouette>;
 
 let mem: SilhouetteMap | null = null;
 
+// Always re-read from disk — no forever-cache. Real bug (2026-06-10, see
+// schedules.ts): in Next standalone, API routes and instrumentation.ts
+// bundle SEPARATE instances of this module. Silhouettes are written from
+// the cron side (intent-materialize, vault-sync) and read from routes
+// (/api/silhouette). A boot-time cache lets each side silently miss the
+// other's writes until restart.
 async function load(): Promise<SilhouetteMap> {
-  if (mem) return mem;
   try {
     mem = JSON.parse(await fs.readFile(FILE, "utf8")) as SilhouetteMap;
   } catch {
-    mem = {};
+    mem = mem ?? {};
   }
   return mem;
 }

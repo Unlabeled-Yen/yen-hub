@@ -27,12 +27,17 @@ type ObservationMap = Record<string, Observation>;
 
 let mem: ObservationMap | null = null;
 
+// Always re-read from disk — no forever-cache. Real bug (2026-06-10, see
+// schedules.ts): in Next standalone, API routes and instrumentation.ts
+// bundle SEPARATE instances of this module. Observations are written from
+// the cron side (intent-materialize via schedule-actions / summary-cron)
+// and read+mutated from routes (undo, mark-high-read). A boot-time cache
+// lets each side silently miss the other's writes until restart.
 async function load(): Promise<ObservationMap> {
-  if (mem) return mem;
   try {
     mem = JSON.parse(await fs.readFile(FILE, "utf8")) as ObservationMap;
   } catch {
-    mem = {};
+    mem = mem ?? {};
   }
   return mem;
 }

@@ -166,7 +166,7 @@ export function IntentQueue() {
             <div className="text-[11px] text-[var(--fg-2)] mb-1">
               沒有待批准的卡
             </div>
-            <div className="text-[9px] font-mono tracking-[0.24em] uppercase text-[var(--fg-3)]">
+            <div className="text-[11px] text-[var(--fg-2)]">
               Duffy 正在觀察
             </div>
           </>

@@ -44,7 +44,13 @@ type Quote = {
   stale?: boolean;
 };
 
-const FRESH_MS = 60_000;
+// FRESH_MS deliberately matches the slowest candle update — 5 min covers
+// 1d/2h/15m perfectly (1d candle updates daily, 2h every 2h, 15m every
+// 15m). With 60s client polling this means 5 of every 6 polls hit cache
+// and don't burn the TD quota. Real arithmetic on free tier (800/day):
+// pre-fix 60_000 → 1 call/min × ~8h usage = 480/day, plus dev restarts
+// blew past 800 daily limit. Post-fix → ~12 calls/hour, well under cap.
+const FRESH_MS = 5 * 60_000;
 const STALE_OK_MS = 30 * 60_000;
 const DJI_SCALE = 100; // DIA × 100 ≈ DJI
 
@@ -421,20 +427,10 @@ async function fetchStooq(tf: Timeframe): Promise<Quote> {
 }
 
 async function fetchAny(tf: Timeframe): Promise<Quote> {
-  try {
-    return await fetchYahoo(tf);
-  } catch (e) {
-    console.log(`[us30] tf=${tf} yahoo failed: ${e instanceof Error ? e.message : e}`);
-  }
+  // Twelve Data only — see GET handler comment for rationale.
   const key = process.env.TWELVE_DATA_KEY ?? "";
-  if (key) {
-    try {
-      return await fetchTwelveData(tf, key);
-    } catch (e) {
-      console.log(`[us30] tf=${tf} td failed: ${e instanceof Error ? e.message : e}`);
-    }
-  }
-  return await fetchStooq(tf);
+  if (!key) throw new Error("TWELVE_DATA_KEY not configured");
+  return await fetchTwelveData(tf, key);
 }
 
 // ---------- Handler ----------
@@ -472,12 +468,21 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(cached.quote);
   }
 
-  // Source preference: Yahoo (YM=F futures, no key, no rate limit) →
-  // Twelve Data (DIA ×100 proxy) → cached stale rich-OHLC source →
-  // Stooq (single-bar last resort). Stale rich-OHLC always wins over
-  // fresh Stooq because Stooq's 1 candle trashes the chart.
+  // Source policy (2026-06-10): Twelve Data only.
+  // - Yahoo dropped — was hitting 429 constantly, and we want one source
+  //   of truth instead of rotating fallbacks the user has to debug.
+  // - Stooq dropped — CSV endpoint dead (404) since at least 2026-06.
+  // fetchYahoo / fetchStooq stay defined for cheap reinstatement.
+  const key = process.env.TWELVE_DATA_KEY ?? "";
+  if (!key) {
+    return NextResponse.json(
+      { error: "TWELVE_DATA_KEY not configured" },
+      { status: 503 },
+    );
+  }
+
   try {
-    const q = await fetchYahoo(tf);
+    const q = await fetchTwelveData(tf, key);
     cache.set(tf, { quote: q, at: Date.now() });
     console.log(
       `[us30] tf=${tf} source=${q.source} candles=${q.candles.length} price=${q.price.toFixed(2)}`,
@@ -485,51 +490,12 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(q);
   } catch (e) {
     console.log(
-      `[us30] tf=${tf} yahoo failed: ${e instanceof Error ? e.message : e}`,
+      `[us30] tf=${tf} td failed: ${e instanceof Error ? e.message : e}`,
     );
-  }
-
-  const key = process.env.TWELVE_DATA_KEY ?? "";
-  if (key) {
-    try {
-      const q = await fetchTwelveData(tf, key);
-      cache.set(tf, { quote: q, at: Date.now() });
-      console.log(
-        `[us30] tf=${tf} source=${q.source} candles=${q.candles.length} price=${q.price.toFixed(2)}`,
-      );
-      return NextResponse.json(q);
-    } catch (e) {
-      console.log(
-        `[us30] tf=${tf} td failed: ${e instanceof Error ? e.message : e}`,
-      );
-    }
-  }
-
-  // Yahoo + TD failed. Prefer last good rich-OHLC cache (yahoo or td)
-  // over Stooq's single-bar payload.
-  if (
-    cached &&
-    (cached.quote.source === "yahoo" || cached.quote.source === "twelvedata") &&
-    Date.now() - cached.at < STALE_OK_MS
-  ) {
-    console.log(
-      `[us30] tf=${tf} serving stale ${cached.quote.source} (${cached.quote.candles.length} candles)`,
-    );
-    return NextResponse.json({ ...cached.quote, stale: true });
-  }
-
-  // Last resort: Stooq. Single candle but at least a price.
-  try {
-    const q = await fetchStooq(tf);
-    cache.set(tf, { quote: q, at: Date.now() });
-    console.log(`[us30] tf=${tf} source=stooq candles=1 price=${q.price.toFixed(2)}`);
-    return NextResponse.json(q);
-  } catch (e) {
     if (cached && Date.now() - cached.at < STALE_OK_MS) {
       console.log(`[us30] tf=${tf} serving stale ${cached.quote.source}`);
       return NextResponse.json({ ...cached.quote, stale: true });
     }
-    console.log(`[us30] tf=${tf} FAIL ${e instanceof Error ? e.message : e}`);
     return NextResponse.json(
       { error: e instanceof Error ? e.message : String(e) },
       { status: 502 },

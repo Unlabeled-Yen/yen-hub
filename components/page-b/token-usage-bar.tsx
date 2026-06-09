@@ -139,7 +139,7 @@ export function TokenUsageBar() {
               />
             </div>
           ) : (
-            <div className="text-[10px] font-mono tracking-[0.18em] uppercase text-[var(--fg-3)]">
+            <div className="text-[11px] text-[var(--fg-2)]">
               未設預算 · 純監看
             </div>
           )}

@@ -146,7 +146,7 @@ All require \`cwd\` to be under Develop/, Learning_AI/, or vault. Output capped 
   - "今晚 X 點" and X PM is still ahead → \`one_shot=true\`, no not_before needed.
   - "今天 X 點" where X has passed → refuse, tell Yen the moment is past.
 - **Recurring** ("每天/每週/每月"): omit \`one_shot\` (or set false).
-- Minimum interval 60 minutes. Sub-hour cron is refused.
+- Minimum interval 15 minutes. Anything tighter is refused.
 
 You cannot write state directly. Every change is gated by Yen's approval — but on approve, vault writes actually land. So compose proposals carefully: bad old_text in propose_edit_file returns 422; non-existent path in propose_new_file fails on approve.
 

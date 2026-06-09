@@ -4,10 +4,17 @@
  * scrolls with the US30 panel and sits right above the hover-time row.
  */
 
+import { DiagErrorReporter } from "@/components/diag-error-reporter";
+
 export default function HubLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  return <>{children}</>;
+  return (
+    <>
+      <DiagErrorReporter />
+      {children}
+    </>
+  );
 }

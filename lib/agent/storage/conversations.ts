@@ -34,15 +34,21 @@ type StoreShape = {
 
 let mem: StoreShape | null = null;
 
+// Always re-read from disk — no forever-cache. Real bug (2026-06-10, see
+// schedules.ts): in Next standalone, API routes and instrumentation.ts
+// bundle SEPARATE instances of this module. Conversations are written by
+// the chat route; Duffy's read_conversation_history tool reads them from
+// both the chat route AND from headless.ts (Telegram poller path on the
+// cron side). A boot-time cache hides newly-saved conversations from the
+// poller until restart.
 async function load(): Promise<StoreShape> {
-  if (mem) return mem;
   try {
     mem = JSON.parse(await fs.readFile(FILE, "utf8")) as StoreShape;
     // Backwards-compat for older shapes
     if (!mem.conversations) mem.conversations = {};
     if (mem.active_id === undefined) mem.active_id = null;
   } catch {
-    mem = { conversations: {}, active_id: null };
+    mem = mem ?? { conversations: {}, active_id: null };
   }
   return mem;
 }

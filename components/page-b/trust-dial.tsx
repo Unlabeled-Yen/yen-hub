@@ -120,7 +120,7 @@ export function TrustDial() {
       </div>
 
       {/* Behavior hint — what flipping the dial actually does */}
-      <div className="mt-3 text-[9px] font-mono tracking-[0.22em] uppercase text-[var(--fg-3)] leading-relaxed">
+      <div className="mt-3 text-[11px] text-[var(--fg-2)] leading-relaxed">
         旋到「平衡」以上：observation 自動寫入、不彈卡。24h 內可在 02 待辦下方撤銷。
       </div>
     </div>

@@ -122,7 +122,7 @@ export function AutoPilotToggle() {
           <div className="text-[12px] text-[var(--fg-0)]">
             Auto-pilot Trust
           </div>
-          <div className="text-[10px] font-mono tracking-[0.18em] uppercase text-[var(--fg-3)] mt-1 leading-relaxed">
+          <div className="text-[11px] text-[var(--fg-2)] mt-1 leading-relaxed">
             打開後 Duffy 自己升降 tier、不再透過 banner 提案。
             {enabled && lastRun
               ? ` · 上次評估 ${formatWhen(lastRun, now)}`
@@ -188,7 +188,7 @@ export function AutoPilotToggle() {
 
       {/* No-history state when enabled */}
       {enabled && actions.length === 0 && (
-        <div className="mt-4 text-[10px] font-mono tracking-[0.22em] uppercase text-[var(--fg-3)]">
+        <div className="mt-4 text-[11px] text-[var(--fg-2)]">
           尚未動作 · 訊號累積夠才會出手
         </div>
       )}

@@ -75,8 +75,15 @@ const DEFAULT: TrustConfig = {
 
 let mem: TrustConfig | null = null;
 
+// Always re-read from disk — no forever-cache. Real bug (2026-06-10, see
+// schedules.ts for the original case): in Next standalone, API routes and
+// instrumentation.ts bundle SEPARATE instances of this module. The
+// scheduler/notifications/auto-pilot/telegram-poller instance cached this
+// file at boot and never saw user toggles done through a route's instance
+// (e.g. flipping notifications on/off in the UI), so cron-side behavior
+// silently diverged from what Yen had configured. File is tiny and reads
+// are cheap.
 async function load(): Promise<TrustConfig> {
-  if (mem) return mem;
   try {
     const raw = await fs.readFile(FILE, "utf8");
     const parsed = JSON.parse(raw) as Partial<TrustConfig>;
@@ -117,7 +124,7 @@ async function load(): Promise<TrustConfig> {
           : undefined,
     };
   } catch {
-    mem = { ...DEFAULT };
+    mem = mem ?? { ...DEFAULT };
   }
   return mem;
 }

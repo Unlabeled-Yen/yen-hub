@@ -33,12 +33,18 @@ type IntentMap = Record<string, Intent>;
 
 let mem: IntentMap | null = null;
 
+// Always re-read from disk — no forever-cache. Real bug (2026-06-10, see
+// schedules.ts): in Next standalone, API routes and instrumentation.ts
+// bundle SEPARATE instances of this module. summary-cron / stale-intentions
+// / schedule-actions create intents on the cron side; routes display them
+// (and vice versa for decide). A boot-time cache lets each side silently
+// miss the other's writes until restart. The file is small, mutations are
+// rare, and the disk read is free.
 async function load(): Promise<IntentMap> {
-  if (mem) return mem;
   try {
     mem = JSON.parse(await fs.readFile(FILE, "utf8")) as IntentMap;
   } catch {
-    mem = {};
+    mem = mem ?? {};
   }
   return mem;
 }
