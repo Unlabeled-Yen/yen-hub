@@ -29,7 +29,7 @@ import { TelegramToggle } from "@/components/page-b/telegram-toggle";
 import { TierSuggestion } from "@/components/page-b/tier-suggestion";
 import { TokenUsageBar } from "@/components/page-b/token-usage-bar";
 import { TrustDial } from "@/components/page-b/trust-dial";
-import { generateCoachCard } from "@/lib/agent/duffy/coach";
+import { readCoachCardFromDisk } from "@/lib/agent/duffy/coach";
 
 // Force per-request rendering. Without this, Next bakes the page (and
 // `generateCoachCard()`'s result) at build time — when no LLM env exists —
@@ -60,26 +60,16 @@ function SectionMark({
 }
 
 export default async function PageB() {
-  // Slice 8.12 — server-side fetch the coach card so the page HTML
-  // already contains today's message. Zero "loading…" flash even on
-  // first visit after .app restart (disk cache lives in
-  // ~/Library/Application Support/com.yen.hub/coach.json).
-  //
-  // 2026-06-09 fix: cap the await at 3s. Without a timeout, an LLM
-  // hang (slow Kimi response, network issue, API outage) blocks the
-  // RSC render forever — Next never replaces loading.tsx with the
-  // page, the user sees a permanent skeleton until they reopen the
-  // .app. With the timeout, we degrade gracefully: pass null and let
-  // CoachCard's client-side useEffect fetch /api/coach itself.
-  let initialCoach = null;
-  try {
-    initialCoach = await Promise.race([
-      generateCoachCard(),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000)),
-    ]);
-  } catch {
-    /* silent — client will retry */
-  }
+  // Fast path (2026-06-11): read the coach card straight from disk —
+  // do NOT regenerate server-side. The previous design awaited
+  // generateCoachCard() with a 3s timeout, but a busted cache (which
+  // happens after every observation / silhouette / summary write)
+  // meant every cold reload ran buildAttention + a Kimi call and
+  // hung the "正在喚醒" skeleton for the full 3 seconds. The disk
+  // read is sub-millisecond; if the file is missing or stale,
+  // CoachCard's client-side useEffect already revalidates via
+  // /api/coach. SWR pattern.
+  const initialCoach = await readCoachCardFromDisk();
   return (
     <div className="min-h-screen px-8 sm:px-12 py-14">
       {/* ── Header — same width discipline as home (full-bleed, just inset) ── */}

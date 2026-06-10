@@ -96,6 +96,37 @@ export function bustCoachCache(): void {
   void fs.unlink(CACHE_FILE).catch(() => {});
 }
 
+/**
+ * Fast path for the RSC render — returns whatever is on disk (even if
+ * stale or busted in memory), and NEVER triggers regeneration.
+ *
+ * Why this exists: the original page-b RSC awaited generateCoachCard()
+ * with a 3s timeout. When the cache was busted (every observation /
+ * silhouette / summary landing busts it), the next page load paid the
+ * full cost — buildAttention scans the entire vault, then Kimi takes
+ * 5-15s — and almost always hit the 3s timeout, hanging the "正在喚醒"
+ * skeleton for 3 full seconds on every cold reload. Clients revalidate
+ * via /api/coach anyway, so RSC has no business doing the heavy work.
+ *
+ * Returns null if the disk file is missing or unreadable.
+ */
+export async function readCoachCardFromDisk(): Promise<CoachCard | null> {
+  try {
+    const raw = await fs.readFile(CACHE_FILE, "utf8");
+    const parsed = JSON.parse(raw) as CoachCard;
+    if (
+      parsed &&
+      typeof parsed.generated_at === "number" &&
+      typeof parsed.message === "string"
+    ) {
+      return parsed;
+    }
+  } catch {
+    /* no cache file or unparseable */
+  }
+  return null;
+}
+
 const COACH_SYSTEM = `You are Duffy, writing a short morning-style coach message to Yen for the top of his Yen Hub dashboard.
 
 Constraints:
