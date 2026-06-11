@@ -2,7 +2,7 @@
 
 > 一個給知識工作者的桌面儀表板。把市場、閱讀、寫作、待辦、AI 對話收進同一個視窗，每天打開就掌握當下狀態。
 
-![Yen Hub welcome screen](docs/screenshots/01-welcome.png)
+![Yen Hub welcome screen](docs/screenshots/01-welcome.webp)
 
 ---
 
@@ -20,7 +20,7 @@ Yen Hub 把這些都收進**一個視窗**。打開就是當天的全景：US30 
 
 ## 主畫面總覽
 
-![Yen Hub overview — market chart, reading progress, todos](docs/screenshots/02-overview.png)
+![Yen Hub overview — market chart, reading progress, todos](docs/screenshots/02-overview.webp)
 
 一個畫面四個區塊，對應一天裡最常回頭看的訊號：
 

@@ -55,6 +55,23 @@ if [ -d "$DST/src-tauri" ]; then
   echo "[prep-sidecar] pruning stray src-tauri/ ($(du -sh "$DST/src-tauri" | cut -f1))"
   rm -rf "$DST/src-tauri"
 fi
+# 2026-06-11 — docs/ is README-only (screenshots + architecture map). NFT
+# stages it because README.md references docs/screenshots, but nothing in
+# the running server reads it — pruning saves ~14MB from the .app.
+if [ -d "$DST/docs" ]; then
+  echo "[prep-sidecar] pruning docs/ ($(du -sh "$DST/docs" | cut -f1)) — README-only, unused at runtime"
+  rm -rf "$DST/docs"
+fi
+# 2026-06-11 — sharp + @img/libvips (~16MB) is Next's image-optimization
+# runtime. We set images.unoptimized and never use next/image, so it's never
+# loaded. next.config excludes it from NFT; this is belt-and-suspenders in
+# case a future build re-traces it.
+for img in node_modules/sharp node_modules/@img; do
+  if [ -d "$DST/$img" ]; then
+    echo "[prep-sidecar] pruning $img ($(du -sh "$DST/$img" | cut -f1)) — image-opt runtime, unused"
+    rm -rf "$DST/$img"
+  fi
+done
 for stray in target node_modules/.cache .git; do
   if [ -d "$DST/$stray" ]; then
     echo "[prep-sidecar] pruning stray $stray ($(du -sh "$DST/$stray" | cut -f1))"
