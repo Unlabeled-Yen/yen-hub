@@ -51,6 +51,10 @@ export function SchedulesPanel() {
   const [rows, setRows] = useState<ScheduleRow[] | null>(null);
   const [now, setNow] = useState<number>(0);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
+  // Two-step delete: first click arms (confirmDeleteId), second click within
+  // 3s actually deletes. Prevents fat-finger removal of an active schedule.
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -91,6 +95,30 @@ export function SchedulesPanel() {
       });
     } finally {
       setCancellingId(null);
+    }
+  };
+
+  const onDelete = async (s: ScheduleRow) => {
+    if (deletingId) return;
+    // First click just arms the confirm; it auto-disarms after 3s.
+    if (confirmDeleteId !== s.id) {
+      setConfirmDeleteId(s.id);
+      setTimeout(() => {
+        setConfirmDeleteId((cur) => (cur === s.id ? null : cur));
+      }, 3000);
+      return;
+    }
+    setDeletingId(s.id);
+    try {
+      const res = await tokenFetch(`/api/schedules/${s.id}`, {
+        method: "DELETE",
+      });
+      if (res.ok) {
+        setConfirmDeleteId(null);
+        await load();
+      }
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -189,19 +217,44 @@ export function SchedulesPanel() {
                 </div>
               </div>
 
-              {/* Cancel */}
+              {/* Cancel — soft path: proposes a schedule_cancel into 02 待辦 */}
               {s.enabled && (
                 <button
                   type="button"
                   onClick={() => onCancel(s)}
                   disabled={cancellingId === s.id}
-                  title="提議取消這條排程（會出現在 02 待辦）"
+                  title="提議取消這條排程（會出現在 02 待辦，可追溯）"
                   className="shrink-0 px-2 py-1 text-[9px] font-mono tracking-[0.18em] uppercase rounded border text-[var(--fg-3)] hover:text-[var(--warn)] hover:border-[var(--warn)] transition-colors disabled:opacity-40"
                   style={{ borderColor: "rgba(255,255,255,0.10)" }}
                 >
                   {cancellingId === s.id ? "..." : "取消"}
                 </button>
               )}
+
+              {/* Delete — hard path: removes the row outright (two-step confirm).
+                  For clearing out spent one-shots / already-disabled rows. */}
+              <button
+                type="button"
+                onClick={() => onDelete(s)}
+                disabled={deletingId === s.id}
+                title="永久刪除這條排程（不可復原，不留紀錄）"
+                className="shrink-0 px-2 py-1 text-[9px] font-mono tracking-[0.18em] uppercase rounded border transition-colors disabled:opacity-40"
+                style={
+                  confirmDeleteId === s.id
+                    ? {
+                        borderColor: "var(--warn)",
+                        color: "var(--warn)",
+                        background: "rgba(240,90,90,0.08)",
+                      }
+                    : { borderColor: "rgba(255,255,255,0.10)", color: "var(--fg-3)" }
+                }
+              >
+                {deletingId === s.id
+                  ? "..."
+                  : confirmDeleteId === s.id
+                    ? "確認刪除?"
+                    : "刪除"}
+              </button>
             </div>
           );
         })}

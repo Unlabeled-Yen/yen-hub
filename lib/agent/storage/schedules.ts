@@ -103,6 +103,18 @@ export async function setEnabled(id: string, enabled: boolean): Promise<Schedule
   return s;
 }
 
+/** Hard-delete a schedule from the store. Used by the panel's manual
+ *  delete (cleanup of spent one-shots / disabled rows). Irreversible —
+ *  unlike setEnabled(false), the row is gone, not just dimmed. Returns
+ *  true if a row was removed. */
+export async function deleteSchedule(id: string): Promise<boolean> {
+  const map = await load();
+  if (!map[id]) return false;
+  delete map[id];
+  await persist();
+  return true;
+}
+
 export async function markFired(id: string, when: number): Promise<void> {
   const map = await load();
   const s = map[id];
