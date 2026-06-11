@@ -189,7 +189,7 @@ function SyncFromVaultButton({ onSynced }: { onSynced: () => void }) {
       });
       const j = (await res.json()) as {
         ok?: boolean;
-        status?: "no-file" | "no-change" | "updated";
+        status?: "no-file" | "no-change" | "updated" | "refused";
         version?: number;
         reason?: string;
         error?: string;
@@ -200,6 +200,8 @@ function SyncFromVaultButton({ onSynced }: { onSynced: () => void }) {
         setMessage("vault 內沒有 yen.md");
       } else if (j.status === "no-change") {
         setMessage(`沒有變化（${j.reason ?? "identical"}）`);
+      } else if (j.status === "refused") {
+        setMessage(`已拒絕：${j.reason ?? "防止內容被空白覆蓋"}`);
       } else if (j.status === "updated") {
         setMessage(`已同步,現在是 v${j.version}`);
         onSynced();

@@ -29,7 +29,8 @@ const YEN_MD_REL = "06 - AI Data/Silhouettes/yen.md";
 export type SyncResult =
   | { status: "no-file" }
   | { status: "no-change"; reason: string }
-  | { status: "updated"; version: number };
+  | { status: "updated"; version: number }
+  | { status: "refused"; reason: string };
 
 /* -------------------------------------------------------------------------- */
 /*  Markdown parser                                                            */
@@ -140,6 +141,42 @@ export async function syncSilhouetteFromVault(): Promise<SyncResult> {
     current.priorities === parsed.fields.priorities
   ) {
     return { status: "no-change", reason: "content identical to current" };
+  }
+
+  // Step 4.5: REFUSE to overwrite meaningful content with all-empty.
+  //
+  // 2026-06-11 — root cause of the v1 → v4 silhouette wipeout. A bad edit to
+  // yen.md (likely Obsidian round-trip leaving only duplicate `# Heading`
+  // lines) parsed into 5 empty fields. The sync dutifully replaced Duffy's
+  // rich v1 with empties, then re-rendered the empties back to yen.md, then
+  // re-parsed its own output two more times (v3, v4) compounding the damage
+  // because the renderer's duplicate `# Heading` output then re-matched as
+  // section content. The strict ratchet here breaks the wipeout loop: if
+  // the parse yields all-empty AND we *have* meaningful current content,
+  // refuse the sync and tell the user why. Recovery (when you intentionally
+  // want to clear sections) goes through Duffy proposing a silhouette_update
+  // intent instead — that path is gated by approval, so it's safe.
+  if (current) {
+    const allEmptyParsed =
+      !parsed.fields.identity.trim() &&
+      !parsed.fields.style.trim() &&
+      !parsed.fields.values.trim() &&
+      !parsed.fields.boundaries.trim() &&
+      !parsed.fields.priorities.trim();
+    const currentHasContent =
+      Boolean(current.identity.trim()) ||
+      Boolean(current.style.trim()) ||
+      Boolean(current.values.trim()) ||
+      Boolean(current.boundaries.trim()) ||
+      Boolean(current.priorities.trim());
+    if (allEmptyParsed && currentHasContent) {
+      return {
+        status: "refused",
+        reason:
+          "yen.md 解析後 5 個欄位都空白，但目前剪影有內容；拒絕用空白覆蓋。" +
+          "若真的想清空，請改用 Duffy 提案（silhouette_update intent）",
+      };
+    }
   }
 
   // Step 5: record the new version + mirror back to vault to refresh
