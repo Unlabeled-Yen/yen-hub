@@ -21,6 +21,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { tokenFetch } from "@/lib/security/sidecar-token";
+import { kindLabel, kindMeta, intentOneLiner } from "@/lib/agent/intent-labels";
+import type { Intent } from "@/lib/agent/storage/types";
 
 type GroupStat = {
   key: string;
@@ -39,20 +41,21 @@ type ConfigResp = {
   kind_overrides?: Record<string, "L0" | "L1" | "L2">;
 };
 
-const KIND_LABEL: Record<string, string> = {
-  observation: "觀察",
-  silhouette_update: "剪影更新",
-  summary: "週摘要",
-  file_create: "新檔建立",
-  file_edit: "檔案編輯",
-  todo_plan: "待辦規劃",
-  schedule_create: "排程建立",
-  schedule_cancel: "排程取消",
-};
-
 const MIN_N = 5;
 const MIN_RATE = 0.9;
 const MUTE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+function formatRelative(ts: number): string {
+  const diff = Date.now() - ts;
+  const min = Math.floor(diff / 60_000);
+  if (min < 1) return "剛剛";
+  if (min < 60) return `${min} 分鐘前`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr} 小時前`;
+  const day = Math.floor(hr / 24);
+  if (day < 30) return `${day} 天前`;
+  return new Date(ts).toLocaleDateString("zh-TW");
+}
 
 function muteKey(kind: string): string {
   return `yen-hub:tier-suggest-mute:${kind}`;
@@ -132,6 +135,12 @@ export function TierSuggestion() {
   const [busy, setBusy] = useState(false);
   // Re-eval whenever mute state changes (e.g. user clicked dismiss)
   const [refreshTick, setRefreshTick] = useState(0);
+  // Lazy-loaded concrete examples — only fetched when the user clicks
+  // "看 N 條最近通過的". Kept null until first reveal to avoid an upfront
+  // API call when the banner is showing but the user isn't curious.
+  const [examplesOpen, setExamplesOpen] = useState(false);
+  const [examples, setExamples] = useState<Intent[] | null>(null);
+  const [examplesLoading, setExamplesLoading] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -165,7 +174,8 @@ export function TierSuggestion() {
 
   if (!candidate) return null;
 
-  const label = KIND_LABEL[candidate.kind] ?? candidate.kind;
+  const label = kindLabel(candidate.kind);
+  const meta = kindMeta(candidate.kind);
   const pct = Math.round(candidate.approve_rate * 100);
 
   const onPromote = async () => {
@@ -188,27 +198,118 @@ export function TierSuggestion() {
     setRefreshTick((n) => n + 1);
   };
 
+  const onToggleExamples = async () => {
+    const opening = !examplesOpen;
+    setExamplesOpen(opening);
+    if (opening && examples === null) {
+      setExamplesLoading(true);
+      try {
+        const res = await tokenFetch(
+          `/api/intents?status=approved&kind=${candidate.kind}`,
+        );
+        if (res.ok) {
+          const data = (await res.json()) as { intents: Intent[] };
+          setExamples(data.intents.slice(0, 3));
+        } else {
+          setExamples([]);
+        }
+      } catch {
+        setExamples([]);
+      } finally {
+        setExamplesLoading(false);
+      }
+    }
+  };
+
   return (
     <div
-      className="mb-4 rounded-lg border px-4 py-3 flex items-center gap-3"
+      className="mb-4 rounded-lg border px-4 py-3.5 flex items-start gap-3"
       style={{
         background: "rgba(0, 229, 180, 0.04)",
         borderColor: "rgba(0, 229, 180, 0.30)",
       }}
     >
       <span
-        className="text-[14px] leading-none"
+        className="text-[14px] leading-none mt-0.5"
         style={{ color: "var(--accent)" }}
       >
         💡
       </span>
-      <div className="flex-1 min-w-0">
-        <div className="text-[12px] leading-snug text-[var(--fg-0)]">
-          過去 30 天「{label}」你通過 {candidate.total_approved} / {candidate.total_decided} 條（{pct}%）
+      <div className="flex-1 min-w-0 flex flex-col gap-2">
+        {/* Title — what's being proposed, in plain Chinese */}
+        <div className="text-[13px] leading-snug text-[var(--fg-0)]">
+          想把「<span style={{ color: "var(--accent)" }}>{label}</span>
+          」這類動作自動化嗎？
         </div>
-        <div className="text-[10px] font-mono tracking-[0.18em] uppercase text-[var(--fg-3)] mt-0.5">
-          要不要把這類升為自動執行？
+
+        {/* 3 concrete rows: what / record / what changes */}
+        <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[11px] leading-relaxed">
+          <span className="text-[9px] font-mono tracking-[0.24em] uppercase text-[var(--fg-3)] pt-0.5">
+            這類是
+          </span>
+          <span className="text-[var(--fg-1)]">{meta.whatIsIt}</span>
+
+          <span className="text-[9px] font-mono tracking-[0.24em] uppercase text-[var(--fg-3)] pt-0.5">
+            你紀錄
+          </span>
+          <span className="text-[var(--fg-1)]">
+            過去 30 天通過{" "}
+            <span className="tabular-nums text-[var(--fg-0)]">
+              {candidate.total_approved} / {candidate.total_decided}
+            </span>{" "}
+            條
+            <span className="text-[var(--fg-3)]">（{pct}%）</span>
+          </span>
+
+          <span className="text-[9px] font-mono tracking-[0.24em] uppercase text-[var(--fg-3)] pt-0.5">
+            升級後
+          </span>
+          <span className="text-[var(--fg-1)]">
+            {meta.autoMeans}
+            <span className="text-[var(--fg-3)]">
+              ；24h 內可撤；隨時可在「信任分層」改回
+            </span>
+          </span>
         </div>
+
+        {/* Examples toggle — lets the user see what they actually approved.
+            Most concrete way to answer "what observations? observed what?" */}
+        <button
+          type="button"
+          onClick={onToggleExamples}
+          className="self-start text-[10px] font-mono tracking-[0.18em] uppercase text-[var(--fg-3)] hover:text-[var(--accent)] transition-colors"
+        >
+          {examplesOpen ? "▾" : "▸"} 看你最近通過的「{label}」
+        </button>
+
+        {examplesOpen && (
+          <div className="pl-3 border-l border-[var(--accent)]/30 flex flex-col gap-1.5">
+            {examplesLoading && (
+              <div className="text-[10px] font-mono tracking-[0.24em] uppercase text-[var(--fg-3)]">
+                loading…
+              </div>
+            )}
+            {!examplesLoading && examples !== null && examples.length === 0 && (
+              <div className="text-[11px] text-[var(--fg-2)]">
+                找不到範例（可能還沒通過任何一條）
+              </div>
+            )}
+            {!examplesLoading &&
+              examples !== null &&
+              examples.map((ex) => (
+                <div key={ex.id} className="text-[11px] leading-snug">
+                  <span className="text-[var(--fg-0)]">
+                    · {intentOneLiner(ex)}
+                  </span>
+                  {ex.decided_at && (
+                    <span className="text-[var(--fg-3)] ml-2 text-[10px]">
+                      {formatRelative(ex.decided_at)}
+                    </span>
+                  )}
+                </div>
+              ))}
+          </div>
+        )}
       </div>
       <button
         type="button"

@@ -18,6 +18,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { motion } from "motion/react";
 import { tokenFetch } from "@/lib/security/sidecar-token";
+import { kindLabel } from "@/lib/agent/intent-labels";
 import type {
   Intent,
   ObservationPayload,
@@ -246,9 +247,18 @@ export function IntentCard({ intentId }: Props) {
       {/* Header: agent + kind (+ nudge tag) + status */}
       <div className="flex items-center justify-between mb-2">
         <div className="text-[10px] font-mono tracking-[0.32em] uppercase text-[var(--fg-2)] flex items-center gap-2">
-          <span>
-            {intent.proposed_by} · {intent.kind}
+          <span
+            className="px-1.5 py-0.5 rounded normal-case tracking-[0.18em]"
+            style={{
+              background: "rgba(0,229,180,0.08)",
+              border: "1px solid var(--accent)",
+              color: "var(--accent)",
+            }}
+            title={`「${kindLabel(intent.kind)}」卡 · 審核會累積此類別的信任分數`}
+          >
+            {kindLabel(intent.kind)}
           </span>
+          <span>{intent.proposed_by}</span>
           {nudge && (
             <span
               className="px-1.5 py-0.5 rounded text-[9px] tracking-[0.18em]"

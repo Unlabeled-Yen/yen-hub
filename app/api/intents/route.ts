@@ -21,10 +21,17 @@ async function ensureAuth() {
 }
 
 const STATUSES = ["pending", "approved", "rejected"] as const;
+// 2026-06-11 — expanded to all 8 kinds so the Trust-tier upgrade banner can
+// fetch concrete examples per kind (was only the 3 read-only kinds).
 const KINDS: ReadonlyArray<IntentKind> = [
   "observation",
   "silhouette_update",
   "summary",
+  "file_create",
+  "file_edit",
+  "todo_plan",
+  "schedule_create",
+  "schedule_cancel",
 ] as const;
 
 function asStatus(v: string | null): IntentStatus | undefined {

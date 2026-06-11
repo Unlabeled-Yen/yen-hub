@@ -22,6 +22,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { tokenFetch } from "@/lib/security/sidecar-token";
 import { IntentExplanation } from "@/components/page-b/intent-explanation";
+import { kindLabel } from "@/lib/agent/intent-labels";
 import type {
   FileCreatePayload,
   FileEditPayload,
@@ -273,8 +274,21 @@ export function IntentDeck({ intents, onClose, onDecided }: Props) {
             >
               {/* Card header */}
               <div className="px-6 pt-5 pb-3 border-b border-[var(--border-subtle)]">
-                <div className="text-[9px] font-mono tracking-[0.32em] uppercase text-[var(--fg-3)] mb-2">
-                  {top.proposed_by} · {top.kind}
+                <div className="flex items-center gap-2 mb-2">
+                  <span
+                    className="px-1.5 py-0.5 rounded text-[10px] font-mono tracking-[0.18em]"
+                    style={{
+                      background: "rgba(0,229,180,0.08)",
+                      border: "1px solid var(--accent)",
+                      color: "var(--accent)",
+                    }}
+                    title={`這是一張「${kindLabel(top.kind)}」卡 · 你的通過/拒絕會累積這個類別的信任分數，夠高就會被建議「升級」成自動執行`}
+                  >
+                    {kindLabel(top.kind)}
+                  </span>
+                  <span className="text-[9px] font-mono tracking-[0.32em] uppercase text-[var(--fg-3)]">
+                    {top.proposed_by}
+                  </span>
                 </div>
                 <div className="text-[16px] leading-snug text-[var(--fg-0)]">
                   {describePayload(top).title}

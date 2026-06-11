@@ -21,6 +21,7 @@ import type {
   ObservationPayload,
   ScheduleCreatePayload,
 } from "@/lib/agent/storage/types";
+import { kindLabel } from "@/lib/agent/intent-labels";
 
 const PROPOSER_LABEL: Record<string, { emoji: string; label: string }> = {
   duffy: { emoji: "🤖", label: "Duffy 對話" },
@@ -33,17 +34,6 @@ const TIER_LABEL: Record<string, string> = {
   L0: "L0 · 低風險（自動執行 / 24h 可撤）",
   L1: "L1 · 中風險（一鍵批准）",
   L2: "L2 · 不可逆（強制確認）",
-};
-
-const KIND_LABEL: Record<string, string> = {
-  observation: "新觀察",
-  silhouette_update: "更新剪影",
-  summary: "週摘要",
-  file_create: "建新檔",
-  file_edit: "改既有檔",
-  todo_plan: "待辦清單",
-  schedule_create: "新排程",
-  schedule_cancel: "取消排程",
 };
 
 function formatWhen(ts: number): string {
@@ -137,7 +127,7 @@ export function IntentExplanation({ intent, compact }: Props) {
         </Field>
         <Field label="類型">
           <span className="text-[var(--fg-1)]">
-            {KIND_LABEL[intent.kind] ?? intent.kind}
+            {kindLabel(intent.kind)}
           </span>
         </Field>
       </div>
