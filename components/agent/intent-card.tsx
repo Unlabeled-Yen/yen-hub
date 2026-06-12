@@ -19,6 +19,7 @@ import { useCallback, useEffect, useState } from "react";
 import { motion } from "motion/react";
 import { tokenFetch } from "@/lib/security/sidecar-token";
 import { kindLabel } from "@/lib/agent/intent-labels";
+import { emitIntentEvent } from "@/lib/agent/intent-events";
 import type {
   Intent,
   ObservationPayload,
@@ -191,6 +192,13 @@ export function IntentCard({ intentId }: Props) {
           return;
         }
         setState({ kind: "loaded", intent: data.intent });
+        // 廣播給可能正在顯示衍生資料的面板（剪影面板等）— 它們才知道要重抓
+        emitIntentEvent({
+          kind: data.intent.kind,
+          event: "decided",
+          intentId: data.intent.id,
+          decision: data.intent.status === "approved" ? "approved" : "rejected",
+        });
       } catch (e) {
         setDecideError(e instanceof Error ? e.message : "network error");
       } finally {

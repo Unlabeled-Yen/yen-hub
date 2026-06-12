@@ -23,6 +23,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { tokenFetch } from "@/lib/security/sidecar-token";
 import { IntentExplanation } from "@/components/page-b/intent-explanation";
 import { kindLabel } from "@/lib/agent/intent-labels";
+import { emitIntentEvent } from "@/lib/agent/intent-events";
 import type {
   FileCreatePayload,
   FileEditPayload,
@@ -157,6 +158,14 @@ export function IntentDeck({ intents, onClose, onDecided }: Props) {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: JSON.stringify({ decision: verdict }),
+          });
+          // Bug fix（2026-06-12）：02 待辦 deck 的批准走這條，不是 intent-card。
+          // 廣播給可能正在顯示衍生資料的面板（剪影、摘要等）— 它們才知道要重抓。
+          emitIntentEvent({
+            kind: top.kind,
+            event: "decided",
+            intentId: top.id,
+            decision: verdict === "approve" ? "approved" : "rejected",
           });
           onDecided();
         }

@@ -99,7 +99,14 @@ export async function createSilhouetteFromIntent(args: {
   payload: SilhouetteUpdatePayload;
 }): Promise<Silhouette> {
   const m = await load();
-  const current = await getCurrentSilhouette();
+  // Bug fix（2026-06-12）：不能呼叫 getCurrentSilhouette() — 它內部 await load()
+  // 會把 module-level mem 換成新物件，但 m 還指著舊物件。後面對 m 的寫入跑進
+  // 孤兒物件、save() 寫的是新 mem（沒有新 record）→ 新版剪影靜默遺失。
+  // 直接從 m 算 current 避免 stale-reference。
+  const allCurrent = Object.values(m);
+  const current = allCurrent.length === 0
+    ? null
+    : allCurrent.reduce((max, s) => (s.version > max.version ? s : max));
   const nextVersion = (current?.version ?? 0) + 1;
 
   let identity = current?.identity ?? "";
@@ -168,7 +175,11 @@ export async function recordSilhouetteFromVault(args: {
   reason: string;
 }): Promise<Silhouette> {
   const m = await load();
-  const current = await getCurrentSilhouette();
+  // Same fix as createSilhouetteFromIntent — avoid stale-reference.
+  const allCurrent = Object.values(m);
+  const current = allCurrent.length === 0
+    ? null
+    : allCurrent.reduce((max, s) => (s.version > max.version ? s : max));
   const sil: Silhouette = {
     id: newSilhouetteId(),
     version: (current?.version ?? 0) + 1,

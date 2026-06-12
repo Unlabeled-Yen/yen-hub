@@ -12,6 +12,7 @@ import { useCallback, useEffect, useState } from "react";
 import { motion } from "motion/react";
 import { tokenFetch } from "@/lib/security/sidecar-token";
 import type { Silhouette } from "@/lib/agent/storage/types";
+import { onIntentEvent } from "@/lib/agent/intent-events";
 
 type State =
   | { kind: "loading" }
@@ -59,6 +60,26 @@ export function SilhouetteView() {
 
   useEffect(() => {
     void load();
+  }, [load]);
+
+  // Bug fix（2026-06-12）：剪影面板原本只在 mount 時抓一次，使用者批准 intent 後
+  // 面板顯示的還是舊資料。三條保險絲確保新鮮度：
+  //   B-1. window focus — 切回 app 重抓
+  //   B-2. visibilitychange — tab 從背景變前景重抓
+  //   D.   intent-event bus — 同 tab 內任何 silhouette_update 被批准 / 物化即重抓
+  useEffect(() => {
+    const onFocus = () => void load();
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") void load();
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
+    const offIntent = onIntentEvent(() => void load(), ["silhouette_update"]);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+      offIntent();
+    };
   }, [load]);
 
   const triggerBootstrap = async () => {
