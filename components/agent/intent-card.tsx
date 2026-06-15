@@ -217,9 +217,22 @@ export function IntentCard({ intentId }: Props) {
   }
 
   if (state.kind === "missing") {
+    // Structural guardrail (2026-06-15): a sentinel whose id isn't in the
+    // store means Duffy emitted `<<INTENT:…>>` with no real intent behind it.
+    // Confirmed failure mode (flight recorder, turn_mqf55thu): Duffy narrated
+    // "兩個新任務 pending 已建立" and hand-typed two fake UUIDs WITHOUT calling
+    // propose_new_file. Don't render a dead approval affordance — say plainly
+    // that nothing was created, so Yen re-states the request instead of
+    // hunting for a button that can never work.
     return (
-      <div className="my-3 rounded-lg px-3 py-2 text-[11px] font-mono tracking-widest uppercase text-[var(--fg-3)] border border-[rgba(255,255,255,0.06)]">
-        intent gone ({intentId.slice(0, 12)}…)
+      <div className="my-3 rounded-lg px-3 py-2 text-[12px] leading-relaxed border border-amber-400/25 bg-amber-400/[0.04] text-amber-300/90">
+        <div className="mb-1 font-mono text-[10px] tracking-widest uppercase text-amber-400/70">
+          ⚠ 無效提案 · invalid intent
+        </div>
+        Duffy 宣稱建立了提案，但 store 裡查無此 intent（
+        <span className="font-mono">{intentId.slice(0, 12)}…</span>）。多半是它
+        發了 sentinel 卻沒實際呼叫 propose 工具——沒有東西被建立、也沒有東西可
+        批准。請重述一次需求讓它重做。
       </div>
     );
   }
