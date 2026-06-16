@@ -3,9 +3,9 @@
 /**
  * Turn — renders a single conversation message (role label + body).
  *
- * Extracted from command-palette.tsx (Slice: sidebar nav) so both the
- * floating palette AND the full conversation page (app/hub/conversations/[id])
- * render messages identically — including inline Duffy intent cards.
+ * Extracted from command-palette.tsx (Slice: sidebar nav) so the message
+ * renderer can be reused outside the palette — including inline Duffy intent
+ * cards — without duplicating the sentinel-splitting logic.
  *
  * The `parts` signature is intentionally loose so both the AI SDK's
  * `UIMessage["parts"]` (palette, live stream) and the parts loaded from the

@@ -22,6 +22,10 @@ export type Conversation = {
   messages: UIMessage[];
   createdAt: number;
   updatedAt: number;
+  /** Pinned conversations sort to the top. */
+  pinned?: boolean;
+  /** Group/folder name; null = ungrouped. */
+  group?: string | null;
 };
 
 // In-memory cache, hydrated lazily.
@@ -64,7 +68,38 @@ export async function loadFromServer(): Promise<void> {
 /* -------------------------------------------------------------------------- */
 
 export function listConversations(): Conversation[] {
-  return Array.from(cache.values()).sort((a, b) => b.updatedAt - a.updatedAt);
+  return Array.from(cache.values()).sort((a, b) => {
+    // Pinned first, then most-recently-updated.
+    if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1;
+    return b.updatedAt - a.updatedAt;
+  });
+}
+
+/** Distinct group names currently in use (sorted). */
+export function listGroups(): string[] {
+  const set = new Set<string>();
+  for (const c of cache.values()) if (c.group) set.add(c.group);
+  return Array.from(set).sort((a, b) => a.localeCompare(b));
+}
+
+/** Mutate one conversation's metadata + persist (without bumping updatedAt, so
+ *  pinning/renaming/grouping doesn't reorder by recency). */
+function patchConversation(id: string, patch: Partial<Conversation>): void {
+  const c = cache.get(id);
+  if (!c) return;
+  saveConversation({ ...c, ...patch });
+}
+
+export function renameConversation(id: string, title: string): void {
+  patchConversation(id, { title: title.trim() || null });
+}
+
+export function setPinned(id: string, pinned: boolean): void {
+  patchConversation(id, { pinned });
+}
+
+export function setGroup(id: string, group: string | null): void {
+  patchConversation(id, { group: group?.trim() || null });
 }
 
 export function getConversation(id: string): Conversation | undefined {

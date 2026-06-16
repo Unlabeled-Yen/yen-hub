@@ -25,6 +25,10 @@ export type Conversation = {
   messages: UIMessage[];
   createdAt: number;
   updatedAt: number;
+  /** Pinned conversations sort to the top of the list. */
+  pinned?: boolean;
+  /** Optional group/folder name; null/undefined = ungrouped. */
+  group?: string | null;
 };
 
 type StoreShape = {

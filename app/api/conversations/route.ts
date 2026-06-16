@@ -54,6 +54,8 @@ export async function POST(req: NextRequest) {
     messages: c.messages,
     createdAt: c.createdAt ?? Date.now(),
     updatedAt: c.updatedAt ?? Date.now(),
+    pinned: c.pinned ?? false,
+    group: c.group ?? null,
   };
   await saveConversation(normalised);
   return NextResponse.json({ ok: true, conversation: normalised });

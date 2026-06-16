@@ -4,8 +4,8 @@
  * Sidebar — persistent left nav for /hub (Claude-app style).
  *
  * Top-level: Dashboard (/hub) · Duffy (/hub/page-b) · AI 辦公室 (placeholder).
- * When the Duffy section is active, reveals sub-items:
- *   Duffy 個人首頁 (/hub/page-b) · 對話紀錄管理 (/hub/conversations + list).
+ * When the Duffy section is active, the conversation list (ConversationListNav)
+ * appears beneath it — click a row to continue, right-click for the menu.
  *
  * Collapsible: the whole column hides (state persisted in localStorage); a
  * floating reopen pill sits top-left (clear of the macOS traffic lights). The
@@ -21,27 +21,9 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { ConversationRowMenu } from "@/components/chat/conversation-row-menu";
-import {
-  listConversations,
-  loadFromServer,
-  type Conversation,
-} from "@/lib/conversations/store";
+import { ConversationListNav } from "@/components/hub/conversation-list-nav";
 
 const COLLAPSE_KEY = "yen-hub:sidebar-collapsed";
-
-/** Short relative time — "剛剛 / 5 分 / 3 時 / 2 天 / 日期". */
-function relTime(ts: number): string {
-  const diff = Date.now() - ts;
-  const m = Math.floor(diff / 60_000);
-  if (m < 1) return "剛剛";
-  if (m < 60) return `${m} 分`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h} 時`;
-  const d = Math.floor(h / 24);
-  if (d < 7) return `${d} 天`;
-  return new Date(ts).toLocaleDateString("zh-TW", { month: "numeric", day: "numeric" });
-}
 
 /** Shared link row styling for top-level + sub-items. */
 function navRowCls(active: boolean): string {
@@ -51,86 +33,6 @@ function navRowCls(active: boolean): string {
       ? "bg-white/[0.06] text-[var(--fg-0)]"
       : "text-[var(--fg-2)] hover:text-[var(--fg-1)] hover:bg-white/[0.03]",
   ].join(" ");
-}
-
-/** Conversation history list — lives under 對話紀錄管理 when Duffy is active. */
-function ConversationNav({ pathname }: { pathname: string }) {
-  const [convos, setConvos] = useState<Conversation[]>([]);
-  const [loaded, setLoaded] = useState(false);
-
-  // Re-read on every navigation: loadFromServer() is idempotent (no-op once
-  // hydrated) and the module-level cache is shared with the palette, so newly
-  // created conversations show up after the next route change.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      await loadFromServer();
-      if (cancelled) return;
-      setConvos(listConversations());
-      setLoaded(true);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [pathname]);
-
-  const refresh = () => setConvos(listConversations());
-
-  if (!loaded) {
-    return (
-      <div className="px-3 py-2 text-[11px] font-mono text-[var(--fg-3)]">
-        載入中…
-      </div>
-    );
-  }
-  if (convos.length === 0) {
-    return (
-      <div className="px-3 py-2 text-[11px] font-mono text-[var(--fg-3)]">
-        尚無對話 · 按空白鍵開始
-      </div>
-    );
-  }
-  return (
-    <div className="flex flex-col gap-px overflow-y-auto hub-scrollbar pr-1">
-      {convos.map((c) => (
-        <div
-          key={c.id}
-          role="button"
-          tabIndex={0}
-          title={c.title ?? "未命名對話"}
-          onClick={() =>
-            window.dispatchEvent(
-              new CustomEvent("yen:open-palette", {
-                detail: { conversationId: c.id },
-              }),
-            )
-          }
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              window.dispatchEvent(
-                new CustomEvent("yen:open-palette", {
-                  detail: { conversationId: c.id },
-                }),
-              );
-            }
-          }}
-          className="group flex cursor-pointer items-center gap-1 rounded px-3 py-1.5 text-[12px] text-[var(--fg-2)] transition-colors hover:bg-white/[0.03] hover:text-[var(--fg-1)]"
-        >
-          <span className="min-w-0 flex-1 truncate">
-            {c.title ?? "未命名對話"}
-          </span>
-          <span className="shrink-0 text-[10px] font-mono text-[var(--fg-3)] group-hover:hidden">
-            {relTime(c.updatedAt)}
-          </span>
-          <ConversationRowMenu
-            id={c.id}
-            onDeleted={refresh}
-            className="hidden shrink-0 group-hover:block"
-          />
-        </div>
-      ))}
-    </div>
-  );
 }
 
 export function Sidebar() {
@@ -179,9 +81,7 @@ export function Sidebar() {
     };
   }, []);
 
-  const inDuffy =
-    pathname.startsWith("/hub/page-b") ||
-    pathname.startsWith("/hub/conversations");
+  const inDuffy = pathname.startsWith("/hub/page-b");
 
   // Collapsed → render only a floating reopen pill, clear of the traffic
   // Collapsed → render nothing. The single toggle beside the Duffy badge
@@ -205,24 +105,11 @@ export function Sidebar() {
           Duffy
         </Link>
 
-        {/* Duffy sub-items — only when in the Duffy section. */}
+        {/* Duffy sub-items — only when in the Duffy section: just the
+            conversation list (Duffy's home is the "Duffy" link itself). */}
         {inDuffy && (
-          <div className="mb-1 ml-3 flex flex-1 flex-col gap-px overflow-hidden border-l border-[var(--border-subtle)] pl-2">
-            <Link
-              href="/hub/page-b"
-              className={navRowCls(pathname.startsWith("/hub/page-b"))}
-            >
-              Duffy 個人首頁
-            </Link>
-            <Link
-              href="/hub/conversations"
-              className={navRowCls(pathname === "/hub/conversations")}
-            >
-              對話紀錄管理
-            </Link>
-            <div className="mt-1 flex flex-1 flex-col overflow-hidden">
-              <ConversationNav pathname={pathname} />
-            </div>
+          <div className="mb-1 ml-3 flex flex-1 flex-col overflow-hidden border-l border-[var(--border-subtle)] pl-2">
+            <ConversationListNav pathname={pathname} />
           </div>
         )}
 
