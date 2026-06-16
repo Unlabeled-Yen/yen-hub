@@ -20,7 +20,39 @@ import type {
   EvidenceRef,
   Importance,
   TodoPlanItem,
+  TrustTier,
 } from "@/lib/agent/storage/types";
+
+/**
+ * Slice α (2026-06-15) — Duffy Workspace path-based L0.
+ *
+ * Any file_create / file_edit whose path is under `06 - AI Data/Duffy Workspace/`
+ * is Duffy's sandbox: it auto-executes instead of going through approve queue.
+ * Path-based, not kind-based — the same tools handle vault main area (gated)
+ * and sandbox (auto), the path decides.
+ *
+ * Why path-based not new tools: introducing a separate `duffy_write_sandbox`
+ * tool would require Duffy to choose which tool to call. Reusing the existing
+ * propose_* tools and gating by path keeps the LLM-facing surface unchanged —
+ * Duffy just learns "write to your workspace = auto-executes" from the prompt.
+ *
+ * Sentinel still emitted but UI knows to skip rendering an approval card for
+ * auto-approved intents (createIntent flips status to "approved" before the
+ * client ever sees it). See prompt.ts autonomy section.
+ */
+const DUFFY_WORKSPACE_PREFIX = "06 - AI Data/Duffy Workspace/";
+
+function isInDuffyWorkspace(path: string): boolean {
+  // Normalise: strip leading slash, no '..' escapes (defense-in-depth; the
+  // materialiser also has a path-traversal guard).
+  const p = path.replace(/^\/+/, "");
+  if (p.includes("..")) return false;
+  return p.startsWith(DUFFY_WORKSPACE_PREFIX);
+}
+
+function tierForPath(path: string): TrustTier | undefined {
+  return isInDuffyWorkspace(path) ? "L0" : undefined;
+}
 
 const ImportanceSchema = z
   .enum(["high", "medium", "low"])
@@ -51,7 +83,10 @@ const SENTINEL_REMINDER = (id: string) =>
 
 export const proposeNewFile = tool({
   description:
-    "Propose creating a NEW Markdown file in Yen's vault. The file MUST NOT already exist. Use when Yen says he wants to start writing/journalling/templating something concrete that doesn't have a file yet. Yen approves in the chat; nothing lands until then. After calling this, end your text response with <<INTENT:${intent_id}>>.",
+    "Create a NEW Markdown file in Yen's vault. The file MUST NOT already exist. Behavior depends on path:\n" +
+    "  • Path under `06 - AI Data/Duffy Workspace/` — your sandbox. AUTO-EXECUTES, no approval. Sentinel optional (UI skips card). Use freely for your notes, findings, scratch work.\n" +
+    "  • Any other path — Yen's main vault. Goes through propose/approve queue; nothing lands until he taps approve. End your text response with <<INTENT:${intent_id}>>.\n" +
+    "Use when something concrete needs a new .md — your own workspace notes (just do it) or a starter file in Yen's vault (gated).",
   inputSchema: z.object({
     path: z
       .string()
@@ -76,6 +111,7 @@ export const proposeNewFile = tool({
     evidence: z.array(EvidenceSchema).default([]),
   }),
   execute: async ({ path, content, rationale, importance, evidence }) => {
+    const trust_tier = tierForPath(path);
     const intent = await createIntent({
       kind: "file_create",
       proposed_by: "duffy",
@@ -83,11 +119,16 @@ export const proposeNewFile = tool({
       evidence: (evidence ?? []) as EvidenceRef[],
       importance: importance as Importance,
       payload: { path, content, rationale },
+      trust_tier,
     });
     return {
       intent_id: intent.id,
       status: intent.status,
-      reminder: SENTINEL_REMINDER(intent.id),
+      // Slice α: sandbox writes auto-execute → no sentinel needed.
+      reminder:
+        intent.status === "approved"
+          ? "sandbox write executed — no sentinel needed, keep going if more steps planned"
+          : SENTINEL_REMINDER(intent.id),
     };
   },
 });
@@ -98,7 +139,10 @@ export const proposeNewFile = tool({
 
 export const proposeEditFile = tool({
   description:
-    "Propose an edit to an EXISTING vault file. You must supply `old_text` as a verbatim substring that appears EXACTLY ONCE in the file (otherwise approve will fail). `new_text` replaces it. Use for surgical edits — rewriting a paragraph, fixing a heading, swapping a phrase. For wholesale rewrites or new sections, prefer proposing a sequence of small edits instead of one big one. End your text response with <<INTENT:${intent_id}>>.",
+    "Edit an EXISTING vault file. Supply `old_text` as a verbatim substring that appears EXACTLY ONCE in the file (otherwise the write fails). `new_text` replaces it. Behavior depends on path:\n" +
+    "  • Path under `06 - AI Data/Duffy Workspace/` — your sandbox. AUTO-EXECUTES, no approval. Sentinel optional.\n" +
+    "  • Any other path — Yen's main vault. Goes through propose/approve queue. End text response with <<INTENT:${intent_id}>>.\n" +
+    "Use for surgical edits — rewriting a paragraph, fixing a heading, swapping a phrase. For wholesale rewrites prefer a sequence of small edits.",
   inputSchema: z.object({
     path: z.string().min(3).max(400),
     old_text: z
@@ -124,6 +168,7 @@ export const proposeEditFile = tool({
     importance,
     evidence,
   }) => {
+    const trust_tier = tierForPath(path);
     const intent = await createIntent({
       kind: "file_edit",
       proposed_by: "duffy",
@@ -131,11 +176,15 @@ export const proposeEditFile = tool({
       evidence: (evidence ?? []) as EvidenceRef[],
       importance: importance as Importance,
       payload: { path, old_text, new_text, rationale },
+      trust_tier,
     });
     return {
       intent_id: intent.id,
       status: intent.status,
-      reminder: SENTINEL_REMINDER(intent.id),
+      reminder:
+        intent.status === "approved"
+          ? "sandbox edit executed — no sentinel needed, keep going if more steps planned"
+          : SENTINEL_REMINDER(intent.id),
     };
   },
 });

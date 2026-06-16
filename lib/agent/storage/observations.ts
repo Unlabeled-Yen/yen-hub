@@ -56,10 +56,25 @@ async function save(): Promise<void> {
 /*  Public API                                                                */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * v2 Gap A (2026-06-16) — is this observation still "active" memory?
+ * Inactive = explicitly superseded/archived, or past its valid_until.
+ * Pure + cheap; used as the default read filter so stale memory stops
+ * polluting Duffy's context and searches without anyone having to prune.
+ */
+export function isActive(o: Observation, now: number = Date.now()): boolean {
+  if (o.superseded_by || o.archived_at) return false;
+  if (o.valid_until != null && now >= o.valid_until) return false;
+  return true;
+}
+
 export async function listObservations(filter?: {
   agent?: string;
   zone?: string;
   since?: number; // epoch ms
+  /** v2 Gap A: include superseded/expired. Default false — reads see only
+   *  active memory. Pass true for audit/admin views. */
+  includeArchived?: boolean;
 }): Promise<Observation[]> {
   const m = await load();
   let items = Object.values(m);
@@ -67,7 +82,31 @@ export async function listObservations(filter?: {
     items = items.filter((o) => o.source_agent_id === filter.agent);
   if (filter?.zone) items = items.filter((o) => o.zone === filter.zone);
   if (filter?.since) items = items.filter((o) => o.created_at >= filter.since!);
+  if (!filter?.includeArchived) {
+    const now = Date.now();
+    items = items.filter((o) => isActive(o, now));
+  }
   return items.sort((a, b) => b.created_at - a.created_at);
+}
+
+/**
+ * v2 Gap A — mark `oldId` as superseded by `newId` (sets superseded_by +
+ * archived_at). Idempotent; no-op if already superseded or absent. The vault
+ * Markdown mirror of the old observation is intentionally NOT touched — Yen's
+ * vault is sacred ground; the JSON overlay is the queryable memory.
+ */
+export async function supersedeObservation(
+  oldId: string,
+  newId: string,
+): Promise<Observation | undefined> {
+  const m = await load();
+  const o = m[oldId];
+  if (!o) return undefined;
+  if (o.superseded_by) return o; // idempotent
+  o.superseded_by = newId;
+  o.archived_at = Date.now();
+  await save();
+  return o;
 }
 
 export async function getObservation(
@@ -93,6 +132,7 @@ export async function createObservationFromIntent(args: {
   importance: Importance;
   intention?: IntentionMeta;  // Slice 8
   nudge_for?: string;         // Slice 8
+  valid_until?: number;       // v2 Gap A
 }): Promise<Observation> {
   const m = await load();
   const obs: Observation = {
@@ -110,6 +150,7 @@ export async function createObservationFromIntent(args: {
     importance: args.importance,
     intention: args.intention,
     nudge_for: args.nudge_for,
+    valid_until: args.valid_until,
   };
   m[obs.id] = obs;
   await save();
@@ -166,12 +207,34 @@ export async function markObservationRead(id: string): Promise<Observation | und
   return obs;
 }
 
-/** Count of un-read HIGH-importance observations. Used by Page A badge. */
+/**
+ * Time window after which an unread HIGH observation stops counting toward
+ * the Page A badge. Per Yen 2026-06-14: he doesn't backtrack past a day, so
+ * accumulated unreads turn into "壁紙" — the badge becomes noise instead of
+ * a signal. Decay makes the count an honest "今天/昨天該注意的事" signal.
+ *
+ * Observation itself is NOT mutated (read_at stays empty); only the badge
+ * filter ignores it. If Yen ever opens Page B he still sees everything.
+ */
+export const FRESH_HIGH_MS = 24 * 60 * 60 * 1000;
+
+export function isFreshUnreadHigh(o: Observation, now: number = Date.now()): boolean {
+  // Patch D+ (2026-06-14) — 排除未來時間戳（w-2026-06-14-003）。
+  // 某條路徑把 schedule fire_at 誤寫進 created_at、造成 now - created_at 為負、
+  // 衰減邏輯把它們當「永遠新鮮」、變成 badge 上抹不掉的噪音。
+  // 在根治那條 wound 之前，這裡先 defensive 排除。
+  const age = now - o.created_at;
+  return (
+    o.importance === "high" && !o.read_at && age >= 0 && age < FRESH_HIGH_MS
+  );
+}
+
+/** Count of un-read HIGH-importance observations within the freshness window.
+ *  Used by Page A badge. */
 export async function countUnreadHighImportance(): Promise<number> {
   const m = await load();
-  return Object.values(m).filter(
-    (o) => o.importance === "high" && !o.read_at,
-  ).length;
+  const now = Date.now();
+  return Object.values(m).filter((o) => isFreshUnreadHigh(o, now)).length;
 }
 
 /** Test helper — wipe everything. Not exposed in API routes. */

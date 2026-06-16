@@ -6,9 +6,9 @@
  * separate from the .app chat-palette history so Telegram's short, async
  * quips don't pollute the main thread context.
  *
- * Cap kept low (last 20 messages) so context stays cheap. If the user
- * wants persistent long-term Telegram chats, that's a future migration
- * to a richer store.
+ * Cap (last 40 messages) leaves headroom for a full 5-question journal
+ * interview (~12 turns) plus same-day chatter without truncating Q1's
+ * answer before the propose_new_file step reads it back.
  */
 
 import { promises as fs } from "node:fs";
@@ -17,7 +17,7 @@ import { join } from "node:path";
 
 const DIR = join(homedir(), "Library", "Application Support", "com.yen.hub");
 const FILE = join(DIR, "telegram-chats.json");
-const MAX_MESSAGES_PER_CHAT = 20;
+const MAX_MESSAGES_PER_CHAT = 40;
 
 export type TgChatMessage = {
   role: "user" | "assistant";

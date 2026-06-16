@@ -52,3 +52,7 @@ next-env.d.ts
 # Local env
 .env.local
 .env*.local
+
+# editor/tool backup files
+*.bak
+*.bak.*

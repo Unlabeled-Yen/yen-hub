@@ -174,6 +174,297 @@ async function reminderAction(s: Schedule): Promise<Finding | null> {
 }
 
 /* -------------------------------------------------------------------------- */
+/*  journal_interview                                                          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Phase 2a — nightly journal interview prompt.
+ *
+ * Fires 21:00 daily. Idempotent per-day: if today's journal file already
+ * has interview_complete: true, the action surfaces a softer "今天已完成"
+ * note instead of nagging twice. Otherwise it surfaces a high-importance
+ * obs telling Yen to open the Duffy chat and say "開始日記訪談" — which
+ * Duffy's prompt knows to expand into the interview flow (read 5 questions
+ * from [[個人日記-題目設計]], walk through them, write today's file via
+ * propose_new_file).
+ *
+ * Notification + UI-hint integration ship in Phase 2b. For now the obs
+ * itself is the signal — it appears in the Page B observations strip with
+ * high importance so it's visible.
+ */
+async function journalInterviewAction(s: Schedule): Promise<Finding | null> {
+  const today = formatLocalDate(new Date());
+  const journalRel = `07 - 個人日記/${today}.md`;
+
+  // Idempotency: peek the file. If it exists with interview_complete: true,
+  // a softer note. If it doesn't exist or isn't complete, the interview
+  // hasn't happened yet today — surface the call-to-action.
+  const fs = await import("node:fs/promises");
+  const path = await import("node:path");
+  const abs = path.join(vaultPath(), journalRel);
+  let alreadyComplete = false;
+  try {
+    const content = await fs.readFile(abs, "utf8");
+    // Cheap detection — frontmatter line, no YAML parser needed
+    alreadyComplete = /interview_complete:\s*true/.test(content);
+  } catch {
+    /* file missing → not complete */
+  }
+
+  if (alreadyComplete) {
+    return {
+      title: "今天的日記已完成 ✓",
+      body: `${today} 的訪談已寫入 ${journalRel}。明天 21:00 再見。`,
+      importance: "low",
+    };
+  }
+
+  // ask_first semantics (skill-anchored reminder, 2026-06-13).
+  // OLD behavior auto-pushed Q1 — no consent buffer; if Yen was busy at
+  // 21:00 the questions arrived anyway, and one-shot reminders fell back
+  // to generic `reminder` (free-form text into conversation, context bleed).
+  //
+  // NEW behavior: ask "ready to start?", set a pending-skill marker, and
+  // wait for an affirmative reply. The telegram-poller's pre-Duffy intercept
+  // catches the reply, clears the marker, and only THEN pushes Q1. The
+  // user's «好» / «開始» can no longer be hijacked by prior conversation.
+  //
+  // Opt out via action_payload.ask_first === false (preserves the
+  // legacy fire-and-forget behavior for callers that want it).
+  type Payload = { ask_first?: boolean };
+  const askFirst = (s.action_payload as Payload)?.ask_first !== false;
+
+  try {
+    if (askFirst) {
+      await maybeAskJournalInterviewOnTelegram(today, s.id);
+    } else {
+      await maybePushJournalInterviewToTelegram(today);
+    }
+  } catch (e) {
+    console.warn("[journal_interview] telegram push failed:", e);
+  }
+
+  // macOS notification — let Yen know to look at Telegram (or Page B).
+  try {
+    const { maybeNotify } = await import("@/lib/agent/notifications");
+    void maybeNotify({
+      title: "🌙 日記訪談時間到了",
+      body: askFirst
+        ? `${today} · 回 Telegram「好」就開始`
+        : `${today} · 已在 Telegram 開場（或開 Page B 看卡）`,
+      subtitle: "Duffy",
+    });
+  } catch {
+    /* notifications are nice-to-have */
+  }
+
+  const body = askFirst
+    ? [
+        "今天的日記訪談時間到了（5 題 / 約 5 分鐘）。",
+        "",
+        "Telegram 已經問你「現在可以嗎？」—— 回「好」就開始、「等等」我延後 30 分鐘。",
+        "",
+        "30 分鐘內沒回覆，提案會自動消失（不會在背後一直推題）。",
+        `題目設計：[[個人日記-題目設計]] · 萃取規格：[[個人日記-萃取規格]]）`,
+      ].join("\n")
+    : [
+        "今天的日記訪談時間到了（5 題 / 約 5 分鐘）。",
+        "",
+        "如果 Telegram 開著，Duffy 已在那邊問 Q1，直接回就好。",
+        "否則：打開 Duffy 對話 → 對它說「開始日記訪談」。",
+        "",
+        `Duffy 會逐題問你、答完用 propose_new_file 寫進 ${journalRel}。`,
+        "（題目設計：[[個人日記-題目設計]] · 萃取規格：[[個人日記-萃取規格]]）",
+      ].join("\n");
+
+  return {
+    title: `日記訪談 · ${today}`,
+    body,
+    importance: "high",
+  };
+}
+
+/** Send the consent prompt to Telegram and set a pending-skill marker.
+ *  When Yen replies affirmatively, telegram-poller's intercept clears the
+ *  marker and fires the actual Q1 push. */
+async function maybeAskJournalInterviewOnTelegram(
+  today: string,
+  scheduleId: string,
+): Promise<void> {
+  const { getTrustConfig } = await import("@/lib/agent/storage/trust-config");
+  const cfg = await getTrustConfig();
+  if (
+    !cfg.telegram_enabled ||
+    !cfg.telegram_bot_token ||
+    !cfg.telegram_chat_id
+  ) {
+    return;
+  }
+  const chat_id = cfg.telegram_chat_id;
+  const { sendTelegram } = await import("@/lib/agent/telegram");
+  const { appendTelegramMessage } = await import(
+    "@/lib/agent/storage/telegram-chats"
+  );
+  const { setPendingSkillSession } = await import(
+    "@/lib/agent/duffy/pending-skill-session"
+  );
+
+  const prompt = [
+    "🌙 日記訪談時間到了。",
+    "",
+    `${today} 還沒寫。要現在開始嗎？（5 題 / 約 5 分鐘）`,
+    "",
+    "好 → 我現在開場 Q1",
+    "等等 → 我把它延後（接下來告訴我延幾分鐘）",
+  ].join("\n");
+
+  await sendTelegram({
+    token: cfg.telegram_bot_token!,
+    chat_id,
+    text: prompt,
+  });
+  await appendTelegramMessage(chat_id, {
+    role: "assistant",
+    text: prompt,
+    ts: Date.now(),
+  });
+  await setPendingSkillSession({
+    chatId: chat_id,
+    skill: "journal_interview",
+    source: "scheduler",
+    scheduleId,
+    context: { today },
+  });
+}
+
+/** Called by the telegram-poller after Yen confirms a pending skill session.
+ *  The poller is ALREADY inside withTelegramTurn(chat_id), so we MUST NOT
+ *  re-enter the mutex here — it would deadlock (mutex is non-reentrant,
+ *  see telegram-mutex.ts:26-32). Call the inner unlocked function. */
+export async function runJournalInterviewNow(today: string): Promise<void> {
+  const { getTrustConfig } = await import("@/lib/agent/storage/trust-config");
+  const cfg = await getTrustConfig();
+  if (
+    !cfg.telegram_enabled ||
+    !cfg.telegram_bot_token ||
+    !cfg.telegram_chat_id
+  ) {
+    return;
+  }
+  await pushJournalInterviewToTelegramInner(cfg.telegram_chat_id, today, cfg);
+}
+
+/** Push the opening Q1 to Telegram by synthesising a user message
+ *  「開始日記訪談」, running Duffy headless, and forwarding the reply.
+ *  Behaves as a no-op when Telegram isn't fully configured. */
+async function maybePushJournalInterviewToTelegram(today: string): Promise<void> {
+  const { getTrustConfig } = await import("@/lib/agent/storage/trust-config");
+  const cfg = await getTrustConfig();
+  if (
+    !cfg.telegram_enabled ||
+    !cfg.telegram_bot_token ||
+    !cfg.telegram_chat_id
+  ) {
+    return;
+  }
+
+  const chat_id = cfg.telegram_chat_id;
+  const { withTelegramTurn } = await import("@/lib/agent/duffy/telegram-mutex");
+
+  await withTelegramTurn(chat_id, () =>
+    pushJournalInterviewToTelegramInner(chat_id, today, cfg),
+  );
+}
+
+/** Inner unlocked function — must be called from within withTelegramTurn
+ *  (or from a path that's already inside it, like the poller intercept). */
+async function pushJournalInterviewToTelegramInner(
+  chat_id: number,
+  today: string,
+  cfg: { telegram_bot_token?: string | null },
+): Promise<void> {
+  const {
+    appendTelegramMessage,
+    readTelegramHistory,
+  } = await import("@/lib/agent/storage/telegram-chats");
+    const { runDuffyHeadless } = await import("@/lib/agent/duffy/headless");
+    const { sendTelegram } = await import("@/lib/agent/telegram");
+
+    const opener = "開始日記訪談";
+
+    // Read history BEFORE appending the synthetic user turn so we don't
+    // duplicate it into the UI message list.
+    const history = await readTelegramHistory(chat_id);
+    await appendTelegramMessage(chat_id, {
+      role: "user",
+      text: opener,
+      ts: Date.now(),
+    });
+
+    type UiMsg = {
+      id: string;
+      role: "user" | "assistant";
+      parts: Array<{ type: "text"; text: string }>;
+    };
+    const uiMessages: UiMsg[] = history.map((m, i) => ({
+      id: `tg-hist-${i}`,
+      role: m.role,
+      parts: [{ type: "text", text: m.text }],
+    }));
+    uiMessages.push({
+      id: "tg-now",
+      role: "user",
+      parts: [{ type: "text", text: opener }],
+    });
+
+    const result = await runDuffyHeadless({
+      // Cast is safe — UIMessage's narrowed `parts` union accepts text parts.
+      messages: uiMessages as unknown as Parameters<typeof runDuffyHeadless>[0]["messages"],
+      surface: "telegram",
+    });
+
+    if (!result.ok) {
+      await sendTelegram({
+        token: cfg.telegram_bot_token!,
+        chat_id,
+        text: `⚠️ 日記訪談開場失敗：${result.error}（可手動說「開始日記訪談」）`,
+      });
+      return;
+    }
+
+    // Persist full reply (mode tag included) for context continuity.
+    await appendTelegramMessage(chat_id, {
+      role: "assistant",
+      text: result.text,
+      ts: Date.now(),
+    });
+
+  const reply = stripModeTagForTelegram(result.text);
+  await sendTelegram({
+    token: cfg.telegram_bot_token!,
+    chat_id,
+    text: `🌙 日記訪談 · ${today}\n\n${reply}`,
+  });
+}
+
+/** Mirrors telegram-poller's stripModeTag — extracted here to avoid a
+ *  cross-import that would force a heavier dep cycle. Keep behavior in
+ *  sync with telegram-poller.ts:38-47. */
+function stripModeTagForTelegram(text: string): string {
+  return text.replace(
+    /^\s*\[(coach|do|watch|pair)(\s*\(locked\))?\]\s*\n+/i,
+    "",
+  );
+}
+
+function formatLocalDate(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+/* -------------------------------------------------------------------------- */
 /*  Dispatcher                                                                 */
 /* -------------------------------------------------------------------------- */
 
@@ -184,6 +475,7 @@ const HANDLERS: Record<
   git_unpushed_check: gitUnpushedCheck,
   vault_zone_check: vaultZoneCheck,
   reminder: reminderAction,
+  journal_interview: journalInterviewAction,
 };
 
 /** Run the action, materialise findings as observations.

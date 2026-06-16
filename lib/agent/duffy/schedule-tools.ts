@@ -26,6 +26,11 @@ import {
   minIntervalMinutes,
   describeCron,
 } from "@/lib/agent/duffy/cron-utils";
+import {
+  parseRelativeTime,
+  parseRecurrence,
+  validateNotBefore,
+} from "@/lib/agent/duffy/schedule-resolver";
 
 const SENTINEL_REMINDER = (id: string) =>
   "End your text response with the sentinel: <<INTENT:" + id + ">>";
@@ -38,6 +43,17 @@ export const proposeSchedule = tool({
   description:
     `Propose a schedule. THIS IS THE ENTRY POINT FOR ALL TIME-BASED REQUESTS — there is no manual form in the UI.
 
+⏰ TIME PROTOCOL — there are TWO ways to specify time. PREFER the structured form, fall back to legacy only when impossible.
+
+PREFERRED (server resolves, you can't get the math wrong):
+  - not_before_relative: "5min" / "1h30min" / "today 21:00" / "tomorrow 09:00" / "next-mon 09:00"
+  - recurrence: "once" / "daily 21:00" / "weekly mon,wed 09:00" / "monthly 1 09:00"
+
+LEGACY (you compute epoch + cron yourself — error-prone, AVOID unless structured can't express):
+  - not_before: absolute epoch ms — you MUST FIRST call get_current_time then add the offset
+  - cron_expr: 5-field cron — easy to confuse field order
+  - one_shot: boolean — auto-derived from "recurrence: once" if you use structured form
+
 WHEN TO USE:
   - Yen mentions a time or cadence: "明天下午 1 點", "每天早上 8 點", "每週三", "每月初", "週日晚上 9 點" — anything that implies "do something at time X".
   - Yen asks you to remind him about something at a specific moment.
@@ -46,31 +62,33 @@ WHEN TO USE:
 HOW TO BUILD THE PROPOSAL:
 
 1. action_kind:
-   - "reminder"           — for "提醒我 X" / "X 點記得 X" — the action_payload is { message: string } describing what to remind about.
+   - "journal_interview"  — Use for ANY mention of '日記訪談' / '日記' — recurring ('每天/每晚 X 點做日記訪談') OR one-shot ('15 分鐘後做日記訪談', '今晚 10 點日記', '明天早上 8 點訪談我'). It fires a 'ready to start?' prompt on Telegram, sets a pending-skill marker, and waits for Yen's '好' before pushing Q1. action_payload = {} (or { ask_first: false } if you want legacy auto-push-Q1 — rarely wanted). FAR superior to 'reminder' for anything that maps to a known skill because Yen's '好' triggers the skill flow directly, bypassing free-form chat (no context bleed from prior dev/build conversations).
    - "git_unpushed_check" — only if Yen literally wants git status checks. action_payload = { repos: string[] }.
    - "vault_zone_check"   — only if Yen wants vault-zone-idle nudges. action_payload = { zone: string, days_idle: number }.
+   - "reminder"           — LAST RESORT — only for '提醒我 X' where X doesn't map to any known skill (e.g. '明天下午 1 點看診', '週五帶傘'). action_payload = { message: string }. DO NOT use for diary/journal interviews — use 'journal_interview' instead, even for one-shot timing.
 
-2. cron_expr — standard 5-field cron (minute hour day-of-month month day-of-week):
-   - 每天 13:00          → "0 13 * * *"
-   - 每天早 8:00         → "0 8 * * *"
-   - 每週三 9:00         → "0 9 * * 3"
-   - 每週日 21:00        → "0 21 * * 0"
-   - 每月 1 號 9:00      → "0 9 1 * *"
-   - Single event "明天下午 1 點" → use "0 13 * * *" + one_shot=true + not_before=tomorrow 00:00 epoch ms
-   - Single event "今晚 9 點"     → use "0 21 * * *" + one_shot=true + not_before=now (no not_before needed if 9 PM is in the future)
-   - Minimum interval 15 minutes — anything tighter is refused.
+2. WHEN (use STRUCTURED form — server resolves, no epoch math):
 
-3. one_shot — SET TO TRUE for any single-event request ("明天...", "今晚...", "12/31 前...", "下週四"). Default false for recurring.
+   For ONE-SHOT (single event):
+     "5 分鐘後做 X"        → not_before_relative: "5min" + recurrence: "once"
+     "1 小時後 X"          → not_before_relative: "1h" + recurrence: "once"
+     "今晚 9 點 X"         → not_before_relative: "today 21:00" + recurrence: "once"
+     "明天下午 1 點 X"     → not_before_relative: "tomorrow 13:00" + recurrence: "once"
+     "下週一早上 9 點 X"   → not_before_relative: "next-mon 09:00" + recurrence: "once"
 
-4. not_before — epoch ms timestamp BELOW which the schedule must not fire. Use this for "明天" / "下週" / future dates to prevent today's cron match from firing immediately.
-   - "明天下午 1 點" → not_before = start of tomorrow local time (ms epoch).
-   - "下週三 9 點"   → not_before = start of next Monday (or whatever boundary makes sense).
-   - "今晚 9 點" and 1 PM hasn't passed today → no not_before needed.
-   - "今天下午 3 點" and 3 PM has passed already → REFUSE, tell Yen the moment is past.
+   For RECURRING:
+     "每天 13:00"          → recurrence: "daily 13:00" (no not_before_relative)
+     "每天早 8:00"         → recurrence: "daily 08:00"
+     "每週三 9:00"         → recurrence: "weekly wed 09:00"
+     "每週一三五 9:00"     → recurrence: "weekly mon,wed,fri 09:00"
+     "每月 1 號 9:00"      → recurrence: "monthly 1 09:00"
+     "每晚 9 點日記訪談"   → recurrence: "daily 21:00" + action_kind: "journal_interview"
 
-5. name — short label Yen will see in 03 排程 panel (e.g. "看診題型提醒", "晨間 git 巡檢").
+3. name — short label Yen will see in 03 排程 panel (e.g. "看診題型提醒", "晨間 git 巡檢").
 
-6. rationale — why this cadence is worth running, written for future-Yen.
+4. rationale — why this cadence is worth running, written for future-Yen.
+
+5. cron_expr / not_before / one_shot — LEGACY ONLY. Use only when structured form can't express your intent. If you use legacy, read the [epoch_ms] from the top of system prompt and add your offset there — DO NOT guess (2026-06-13 incident: scheduled 5 hours late by guessing). Minimum interval 15 minutes for recurring.
 
 After calling, END your text response with <<INTENT:{intent_id}>>.`,
   inputSchema: z.object({
@@ -79,17 +97,35 @@ After calling, END your text response with <<INTENT:{intent_id}>>.`,
       .min(2)
       .max(60)
       .describe("Short human-friendly name shown in Yen's dashboard."),
+    not_before_relative: z
+      .string()
+      .optional()
+      .describe(
+        "PREFERRED — server-resolved relative time. Use INSTEAD of computing epoch ms yourself. Forms: '5min' / '15min' / '1h' / '1h30min' / '2d' / 'today HH:MM' / 'tomorrow HH:MM' / 'next-mon HH:MM' (mon/tue/wed/thu/fri/sat/sun, with this- or next- prefix).",
+      ),
+    recurrence: z
+      .string()
+      .optional()
+      .describe(
+        "PREFERRED — server-resolved cron. Use INSTEAD of writing cron_expr yourself. Forms: 'once' / 'daily HH:MM' / 'weekly mon,wed HH:MM' (comma-sep weekdays) / 'monthly N HH:MM' (N=1..28).",
+      ),
     cron_expr: z
       .string()
       .min(5)
       .max(80)
+      .optional()
       .describe(
-        "Standard 5-field cron expression. Min interval 15 minutes.",
+        "LEGACY — 5-field cron. Use only when 'recurrence' can't express your intent. Min interval 15 minutes.",
       ),
     action_kind: z
-      .enum(["reminder", "git_unpushed_check", "vault_zone_check"])
+      .enum([
+        "reminder",
+        "git_unpushed_check",
+        "vault_zone_check",
+        "journal_interview",
+      ])
       .describe(
-        "Default to 'reminder' unless Yen literally asks for git or vault-zone checks.",
+        "Default to 'reminder' unless Yen literally asks for git / vault-zone checks / journal interview.",
       ),
     // NOTE: must be an explicit z.object — NOT z.record. Some providers
     // (Moonshot/Kimi) run constrained decoding from the JSON schema, and
@@ -128,14 +164,14 @@ After calling, END your text response with <<INTENT:{intent_id}>>.`,
       .boolean()
       .optional()
       .describe(
-        "TRUE for single events (明天, 今晚 X 點, 下週). FALSE / omit for recurring.",
+        "LEGACY — auto-derived from 'recurrence: once' if using structured form. Manually set only when using legacy cron_expr.",
       ),
     not_before: z
       .number()
       .int()
       .optional()
       .describe(
-        "Epoch ms; the schedule MUST NOT fire before this timestamp. Use for '明天 X' / future dates to prevent today's cron from firing immediately.",
+        "LEGACY — epoch ms. PREFER not_before_relative. Use only when relative form can't express your intent (and you've FIRST called get_current_time).",
       ),
   }),
   execute: async ({
@@ -146,21 +182,74 @@ After calling, END your text response with <<INTENT:{intent_id}>>.`,
     rationale,
     one_shot,
     not_before,
+    not_before_relative,
+    recurrence,
   }) => {
+    const now = new Date();
+
+    // === Step 1: Resolve not_before from structured form (preferred) ===
+    let resolvedNotBefore: number | undefined = not_before;
+    if (not_before_relative) {
+      try {
+        resolvedNotBefore = parseRelativeTime(not_before_relative, now);
+      } catch (e) {
+        return {
+          ok: false as const,
+          error: `not_before_relative 解析失敗：${e instanceof Error ? e.message : String(e)}`,
+        };
+      }
+    }
+    if (resolvedNotBefore !== undefined) {
+      const sanity = validateNotBefore(resolvedNotBefore, now);
+      if (sanity) return { ok: false as const, error: sanity };
+    }
+
+    // === Step 2: Resolve cron_expr + one_shot from structured form ===
+    let resolvedCronExpr = cron_expr;
+    let resolvedOneShot = one_shot;
+    if (recurrence) {
+      try {
+        const refTime = resolvedNotBefore ? new Date(resolvedNotBefore) : now;
+        resolvedCronExpr = parseRecurrence(recurrence, refTime);
+        resolvedOneShot = recurrence.trim().toLowerCase() === "once";
+        // 2026-06-14 fix: when "once" + relative time, the cron fires at
+        // HH:MM:00 (cron has no seconds) but resolvedNotBefore retained the
+        // sub-minute precision of Date.now() + offset. Scheduler then sees
+        // prev_fire (07:10:00) < not_before (07:10:48) and skips forever.
+        // Align not_before DOWN to the cron's minute boundary.
+        if (resolvedOneShot && resolvedNotBefore !== undefined) {
+          const aligned = new Date(resolvedNotBefore);
+          aligned.setSeconds(0, 0);
+          resolvedNotBefore = aligned.getTime();
+        }
+      } catch (e) {
+        return {
+          ok: false as const,
+          error: `recurrence 解析失敗：${e instanceof Error ? e.message : String(e)}`,
+        };
+      }
+    }
+    if (!resolvedCronExpr) {
+      return {
+        ok: false as const,
+        error: `必須提供 recurrence（建議）或 cron_expr 其中一個`,
+      };
+    }
+
     let parsed;
     try {
-      parsed = parseCron(cron_expr);
+      parsed = parseCron(resolvedCronExpr);
     } catch (e) {
       return {
         ok: false as const,
-        error: `cron_expr 解析失敗：${e instanceof Error ? e.message : String(e)}`,
+        error: `cron 解析失敗：${e instanceof Error ? e.message : String(e)}`,
       };
     }
     const interval = minIntervalMinutes(parsed);
-    if (interval < 15) {
+    if (interval < 15 && !resolvedOneShot) {
       return {
         ok: false as const,
-        error: `最小間隔限制 15 分鐘、此表達式約 ${interval} 分鐘一次`,
+        error: `recurring 最小間隔 15 分鐘、此表達式約 ${interval} 分鐘一次（one-shot 不受限）`,
       };
     }
 
@@ -196,12 +285,12 @@ After calling, END your text response with <<INTENT:{intent_id}>>.`,
       kind: "schedule_create",
       payload: {
         name,
-        cron_expr,
+        cron_expr: resolvedCronExpr,
         action_kind,
         action_payload,
         rationale,
-        one_shot,
-        not_before,
+        one_shot: resolvedOneShot,
+        not_before: resolvedNotBefore,
       },
       proposed_by: "duffy",
       rationale,
@@ -209,14 +298,15 @@ After calling, END your text response with <<INTENT:{intent_id}>>.`,
       importance: "medium",
     });
 
-    const next = nextFire(parsed, new Date());
+    const next = nextFire(parsed, now);
     return {
       ok: true as const,
       intent_id: intent.id,
-      cron_description: describeCron(cron_expr),
+      cron_description: describeCron(resolvedCronExpr),
+      cron_expr: resolvedCronExpr,
       next_fire: next.toISOString(),
-      one_shot: one_shot ?? false,
-      not_before_iso: not_before ? new Date(not_before).toISOString() : null,
+      one_shot: resolvedOneShot ?? false,
+      not_before_iso: resolvedNotBefore ? new Date(resolvedNotBefore).toISOString() : null,
       reminder: SENTINEL_REMINDER(intent.id),
     };
   },

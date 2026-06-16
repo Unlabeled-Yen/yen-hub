@@ -36,6 +36,9 @@ import {
   listSchedulesTool,
 } from "@/lib/agent/duffy/schedule-tools";
 import { listPendingIntents } from "@/lib/agent/duffy/intent-tools";
+import { proposeActionTask } from "@/lib/agent/duffy/action-tools";
+import { readActionStatus } from "@/lib/agent/duffy/action-readback-tools";
+import { logErrorPattern } from "@/lib/agent/duffy/error-pattern-tools";
 import {
   gitStatus,
   gitLog,
@@ -49,6 +52,47 @@ import type {
   Importance,
   SummaryKeyNumber,
 } from "@/lib/agent/storage/types";
+
+/* -------------------------------------------------------------------------- */
+/*  Time — Yen Hub clock                                                      */
+/* -------------------------------------------------------------------------- */
+
+/** ISO 8601 week-of-year. Thursday-belongs-to-week algorithm. */
+function isoWeekOfYear(d: Date): number {
+  const target = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const dayNr = (target.getDay() + 6) % 7; // Mon=0..Sun=6
+  target.setDate(target.getDate() - dayNr + 3);
+  const firstThursday = new Date(target.getFullYear(), 0, 4);
+  const firstDayNr = (firstThursday.getDay() + 6) % 7;
+  firstThursday.setDate(firstThursday.getDate() - firstDayNr + 3);
+  const diff = target.getTime() - firstThursday.getTime();
+  return 1 + Math.round(diff / (7 * 24 * 3600 * 1000));
+}
+
+export const getCurrentTime = tool({
+  description:
+    "Advanced time query. The current time IS ALREADY embedded at the top of the system prompt ([現在時間] / [今天日期] / [ISO UTC] / [epoch_ms]) — use that for the common case (relative scheduling, today's date, basic timestamps). Call THIS tool only when you need extra fields not in the top block: ISO week-of-year (for cron expressions like every-second-Tuesday), weekday_num (0=Sunday, matches cron day-of-week field), sub-second precision, or English/Chinese weekday string. Read-equivalent — no approval. Cheap to call but normally unnecessary.",
+  inputSchema: z.object({}),
+  execute: async () => {
+    const now = new Date();
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const dowEn = now.toLocaleDateString("en-US", { weekday: "long" });
+    const dowZh = now.toLocaleDateString("zh-TW", { weekday: "long" });
+    // "sv-SE" locale gives YYYY-MM-DD HH:MM:SS — easiest to convert to ISO-ish local form.
+    const isoLocal = now
+      .toLocaleString("sv-SE", { timeZone: tz })
+      .replace(" ", "T");
+    return {
+      iso: now.toISOString(),
+      iso_local: isoLocal,
+      epoch_ms: now.getTime(),
+      weekday: `${dowEn} / ${dowZh}`,
+      weekday_num: now.getDay(),
+      week_of_year: isoWeekOfYear(now),
+      tz,
+    };
+  },
+});
 
 /* -------------------------------------------------------------------------- */
 /*  Read tools                                                                */
@@ -141,6 +185,7 @@ export const readObservationsHistory = tool({
         created_at: o.created_at,
         importance: o.importance,
         reason: o.reason,
+        valid_until: o.valid_until,
       })),
     };
   },
@@ -172,6 +217,7 @@ export const searchObservations = tool({
         zone: o.zone,
         importance: o.importance,
         created_at: o.created_at,
+        valid_until: o.valid_until,
         body: o.body.length > 200 ? o.body.slice(0, 200) + "…" : o.body,
       })),
     };
@@ -296,6 +342,18 @@ export const proposeObservation = tool({
       .describe(
         "Verbatim phrase from Yen that triggered the intention mark. Helps the future nudge feel like his words, not yours.",
       ),
+    validUntil: z
+      .string()
+      .optional()
+      .describe(
+        "v2 Gap A — optional ISO date (YYYY-MM-DD) after which this observation auto-expires from your active memory. Use for time-bound facts ('未來兩週優先寫作線'); skip for durable traits. Don't invent one.",
+      ),
+    supersedesObservationId: z
+      .string()
+      .optional()
+      .describe(
+        "v2 Gap A — if this observation REPLACES an older one (the old belief is now wrong/outdated), pass the old observation's id. On approve, the old one is archived so it stops surfacing. Find the id via search_observations / read_observations_history first.",
+      ),
   }),
   execute: async ({
     title,
@@ -308,6 +366,8 @@ export const proposeObservation = tool({
     isIntention,
     intentionTargetDate,
     intentionSourceText,
+    validUntil,
+    supersedesObservationId,
   }) => {
     const intentionMeta = isIntention
       ? {
@@ -331,6 +391,8 @@ export const proposeObservation = tool({
         zone,
         window: windowDays ? { days: windowDays } : undefined,
         intention: intentionMeta,
+        valid_until: validUntil ? Date.parse(validUntil) : undefined,
+        supersedes: supersedesObservationId,
       },
     });
     return {
@@ -452,6 +514,8 @@ export const proposeSummary = tool({
 /* -------------------------------------------------------------------------- */
 
 export const duffyTools = {
+  // Time — system clock (always fresh, never cached)
+  get_current_time: getCurrentTime,
   // Read — Yen Hub state
   read_attention_state: readAttentionState,
   read_todos: readTodos,
@@ -485,6 +549,12 @@ export const duffyTools = {
   list_schedules: listSchedulesTool,
   // Intent queue (Slice 11.2) — Duffy can see the pending deck
   list_pending_intents: listPendingIntents,
+  // Action layer (2026-06-16) — file a task for the local watcher to run
+  propose_action_task: proposeActionTask,
+  // Action read-back (PRD v2 Gap C) — close the loop on a filed task
+  read_action_status: readActionStatus,
+  // Self-correction (PRD v2 Gap B) — durable error-pattern log
+  log_error_pattern: logErrorPattern,
   // Shell (方向 2 收尾) — whitelist preset commands, read-only spirit
   git_status: gitStatus,
   git_log: gitLog,

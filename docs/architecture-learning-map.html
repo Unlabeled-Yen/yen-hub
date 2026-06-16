@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Yen Hub 架構學習地圖</title>
+<style>
+:root{
+  --bg:#161412; --panel:#1f1c18; --panel2:#262219; --border:#383228;
+  --text:#ece5d3; --muted:#a89f8c; --faint:#766e5e;
+  --purple:#a59ae6; --teal:#5fc4a0; --amber:#e0a458; --coral:#e08a6a; --pink:#d98ca6;
+  --mono:ui-monospace,'SF Mono',Menlo,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.75 -apple-system,'PingFang TC','Noto Sans TC',sans-serif;}
+main{max-width:980px;margin:0 auto;padding:24px 28px 120px;}
+h1{font-size:30px;font-weight:600;margin:24px 0 4px}
+h2{font-size:22px;font-weight:600;margin:72px 0 8px;padding-top:16px;border-top:1px solid var(--border)}
+h3{font-size:17px;font-weight:600;margin:28px 0 8px}
+p{margin:8px 0}
+.sub{color:var(--muted);font-size:14px}
+nav{position:sticky;top:0;z-index:9;background:rgba(22,20,18,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--border);margin:0 -28px;padding:10px 28px;display:flex;gap:18px;flex-wrap:wrap}
+nav a{color:var(--muted);text-decoration:none;font-size:14px}
+nav a:hover{color:var(--text)}
+code{font-family:var(--mono);font-size:13px;background:var(--panel2);border:1px solid var(--border);border-radius:5px;padding:1px 6px;color:#d8cfae}
+table{width:100%;border-collapse:collapse;font-size:14px;margin:10px 0}
+th{text-align:left;color:var(--faint);font-weight:500;font-size:12px;padding:4px 10px;border-bottom:1px solid var(--border)}
+td{padding:6px 10px;border-bottom:1px solid #2a2620;vertical-align:top}
+td:first-child{white-space:nowrap}
+details{background:var(--panel);border:1px solid var(--border);border-radius:12px;margin:10px 0;padding:0 16px}
+summary{cursor:pointer;padding:12px 0;font-weight:500;list-style:none;display:flex;align-items:center;gap:10px}
+summary::before{content:'▸';color:var(--faint);transition:transform .15s}
+details[open]>summary::before{transform:rotate(90deg)}
+details>div{padding:0 0 14px}
+.tag{font-size:12px;border:1px solid var(--border);border-radius:999px;padding:1px 9px;color:var(--muted);white-space:nowrap}
+.callout{background:var(--panel);border:1px solid var(--border);border-left:3px solid var(--amber);border-radius:0 12px 12px 0;padding:12px 18px;margin:18px 0}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:760px){.cols{grid-template-columns:1fr}}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px 18px}
+.card h4{margin:0 0 8px;font-size:15px}
+.card ul{margin:6px 0;padding-left:18px;font-size:14px;color:var(--muted)}
+.card li b{color:var(--text);font-weight:500}
+.steps{list-style:none;margin:16px 0;padding:0;position:relative}
+.steps::before{content:'';position:absolute;left:15px;top:8px;bottom:8px;width:2px;background:var(--border)}
+.steps li{position:relative;padding:0 0 22px 46px}
+.steps li::before{content:'';position:absolute;left:9px;top:7px;width:14px;height:14px;border-radius:50%;background:var(--bg);border:3px solid var(--step,#5fc4a0)}
+.steps b{font-weight:600}
+.steps .f{font-family:var(--mono);font-size:12px;color:var(--faint);margin-left:8px}
+.steps p{margin:2px 0 0;font-size:14px;color:var(--muted)}
+svg{max-width:720px;display:block;margin:18px auto}
+svg .nd{cursor:pointer}
+svg .nd:hover rect{stroke-width:2}
+svg text{font-family:-apple-system,'PingFang TC',sans-serif}
+.t1{font-size:15px;font-weight:600}.t2{font-size:12px;opacity:.75}
+.arrowline{stroke:#766e5e;stroke-width:1.5;fill:none}
+.lesson{display:flex;gap:12px;align-items:flex-start;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:12px 16px;margin:8px 0}
+.lesson input{margin-top:6px;accent-color:var(--teal);width:16px;height:16px;flex:none}
+.lesson .id{font-family:var(--mono);font-size:13px;min-width:30px;margin-top:2px}
+.lesson .ttl{font-weight:600}
+.lesson .d{font-size:13px;color:var(--muted)}
+.lesson .fl{font-family:var(--mono);font-size:12px;color:var(--faint);margin-top:2px;word-break:break-all}
+.lesson .say{font-size:12px;color:var(--faint);margin-top:6px}
+.lesson .say code{font-size:12px}
+.lesson.done{opacity:.45}
+.lesson.done .ttl{text-decoration:line-through}
+.stagehead{display:flex;align-items:baseline;gap:12px;margin:30px 0 6px}
+.pbar{height:8px;background:var(--panel2);border-radius:999px;overflow:hidden;margin:10px 0 4px}
+.pbar div{height:100%;background:var(--teal);width:0;transition:width .3s}
+.legend{font-size:13px;color:var(--faint)}
+footer{margin-top:80px;color:var(--faint);font-size:13px;border-top:1px solid var(--border);padding-top:16px}
+a{color:var(--teal)}
+</style>
+</head>
+<body>
+<main>
+<nav>
+<a href="#sec-bird">鳥瞰</a><a href="#sec-boot">啟動旅程</a><a href="#sec-duffy">Duffy 迴圈</a><a href="#sec-data">資料地圖</a><a href="#sec-modules">模組百科</a><a href="#sec-course">課程表</a>
+</nav>
+
+<h1>Yen Hub 架構學習地圖</h1>
+<p class="sub">2026-06-10 · 從四張地圖到檔案級展開 · 程式碼位置 <code>~/Desktop/Yen/Develop/yen-hub/</code> · 進度勾選會自動存在瀏覽器</p>
+
+<div class="callout"><b>一條貫穿所有設計的主軸：不信任預設。</b><br>
+token 防外殼被冒充、propose-approve 防 AI 亂寫、JSON 正本防 vault 被改壞、信任分層讓授權是賺來的而不是給定的。讀任何一段 code 覺得「為什麼要這麼麻煩」時，先想起這句話。</div>
+
+<h2 id="sec-bird">① 系統鳥瞰：三層 + 兩個外部朋友</h2>
+<p>整個 app 是三層疊起來的：<b>Tauri 外殼</b>（Rust，負責桌面 app 該有的東西）、<b>Next.js 引擎</b>（app 真正的大腦與畫面）、<b>本機資料</b>（你的 vault + app 私有 JSON）。外殼幾乎不做事，它只是把引擎包成可以雙擊的 .app。圖上每塊可點，會跳到對應的深度展開。</p>
+
+<svg viewBox="0 0 640 460" role="img" aria-label="系統鳥瞰圖">
+<defs><marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#766e5e" stroke-width="1.5" stroke-linecap="round"/></marker></defs>
+<rect x="20" y="16" width="600" height="290" rx="18" fill="#1f1c18" stroke="#383228"/>
+<text x="42" y="48" fill="#a89f8c" class="t1">你的 Mac — Yen.app 桌面應用</text>
+<g class="nd" onclick="go('m-tauri')"><rect x="48" y="80" width="160" height="150" rx="12" fill="#262035" stroke="#a59ae6"/>
+<text x="128" y="140" text-anchor="middle" fill="#cfc6f5" class="t1">Tauri 外殼</text>
+<text x="128" y="165" text-anchor="middle" fill="#a59ae6" class="t2">Rust · 視窗與通知</text>
+<text x="128" y="184" text-anchor="middle" fill="#a59ae6" class="t2">Touch ID 守門</text></g>
+<g class="nd" onclick="go('m-app')"><rect x="240" y="80" width="160" height="150" rx="12" fill="#1b2a24" stroke="#5fc4a0"/>
+<text x="320" y="140" text-anchor="middle" fill="#bfe8d6" class="t1">Next.js 引擎</text>
+<text x="320" y="165" text-anchor="middle" fill="#5fc4a0" class="t2">畫面 · API · Duffy</text>
+<text x="320" y="184" text-anchor="middle" fill="#5fc4a0" class="t2">app/ components/ lib/</text></g>
+<g class="nd" onclick="go('sec-data')"><rect x="432" y="80" width="160" height="150" rx="12" fill="#2c2417" stroke="#e0a458"/>
+<text x="512" y="140" text-anchor="middle" fill="#f0d6ab" class="t1">本機資料</text>
+<text x="512" y="165" text-anchor="middle" fill="#e0a458" class="t2">Vault 筆記 · JSON</text>
+<text x="512" y="184" text-anchor="middle" fill="#e0a458" class="t2">正本與鏡像</text></g>
+<line x1="212" y1="155" x2="234" y2="155" class="arrowline" marker-end="url(#ah)"/>
+<line x1="404" y1="155" x2="426" y2="155" class="arrowline" marker-end="url(#ah)" marker-start="url(#ah)"/>
+<path d="M300 230 L300 330 L230 330 L230 366" class="arrowline" marker-end="url(#ah)"/>
+<path d="M340 230 L340 330 L450 330 L450 366" class="arrowline" marker-end="url(#ah)"/>
+<g class="nd" onclick="go('sec-duffy')"><rect x="140" y="374" width="180" height="60" rx="10" fill="#2c2017" stroke="#e08a6a"/>
+<text x="230" y="398" text-anchor="middle" fill="#f2c8b4" class="t1">Claude API</text>
+<text x="230" y="420" text-anchor="middle" fill="#e08a6a" class="t2">Duffy 的大腦（LLM）</text></g>
+<g class="nd" onclick="go('m-root')"><rect x="360" y="374" width="180" height="60" rx="10" fill="#2a1d22" stroke="#d98ca6"/>
+<text x="450" y="398" text-anchor="middle" fill="#efc3d2" class="t1">外部服務</text>
+<text x="450" y="420" text-anchor="middle" fill="#d98ca6" class="t2">Telegram · 市場報價</text></g>
+</svg>
+
+<table>
+<tr><th>圖上的方塊</th><th>程式碼位置</th><th>白話職責</th></tr>
+<tr><td>Tauri 外殼</td><td><code>src-tauri/src/</code></td><td>開視窗、Touch ID、發 macOS 通知、把引擎「抱」起來啟動</td></tr>
+<tr><td>Next.js 引擎</td><td><code>app/</code> <code>components/</code> <code>lib/</code></td><td>你看到的所有畫面、所有 API、Duffy 的全部邏輯</td></tr>
+<tr><td>本機資料</td><td>vault + <code>~/Library/Application Support/com.yen.hub/</code></td><td>筆記是你的，JSON 是 app 的記憶</td></tr>
+<tr><td>Claude API</td><td><code>lib/ai/model.ts</code></td><td>對話、教練卡、週摘要時呼叫；key 從 <code>~/.config/yen-hub/env</code> 讀</td></tr>
+<tr><td>外部服務</td><td><code>telegram-poller.ts</code> · <code>api/market/us30</code></td><td>Telegram 雙向對話、TwelveData 市場報價</td></tr>
+</table>
+
+<h2 id="sec-boot">② 啟動旅程：從雙擊到儀表板</h2>
+<p>關鍵設計：外殼和引擎是<b>兩個獨立程式</b>，用一張每次啟動都重新鑄造的「一次性通行證（token）」互相認親 —— 所以你電腦上其他程式無法假裝成 Yen Hub。</p>
+<ol class="steps">
+<li style="--step:#a59ae6"><b>你雙擊 Yen.app</b><span class="f">src-tauri/src/lib.rs</span><p>Tauri 醒來：開視窗、掛 plugins（通知/日誌/shell）、先顯示白色呼吸動畫（splash）。</p></li>
+<li style="--step:#a59ae6"><b>開門前準備</b><span class="f">src-tauri/src/sidecar.rs</span><p>選一個沒人用的 port、鑄造 32 byte 隨機 token、從 <code>~/.config/yen-hub/env</code> 讀 API key、確保 session 密鑰存在（<code>session.key</code>，權限 0600）。</p></li>
+<li style="--step:#5fc4a0"><b>啟動 Node.js 引擎</b><span class="f">sidecar.rs → server.js</span><p>spawn 子進程跑 Next.js 伺服器，把 PORT、token、API key、vault 路徑用環境變數塞進去；同時監聽引擎的 stdout（<code>[NOTIFY]</code> 行會轉成原生通知）。</p></li>
+<li style="--step:#5fc4a0"><b>等引擎開門</b><span class="f">wait_until_ready()</span><p>每隔一下戳 <code>localhost:port</code>，最多等 20 秒，活了才繼續。</p></li>
+<li style="--step:#5fc4a0"><b>視窗帶 token 進門</b><span class="f">app/page.tsx · lib/security/sidecar-token.ts</span><p>webview 載入 <code>http://127.0.0.1:port/?_yt=token</code>；頁面把 token 收進 sessionStorage、立刻清掉網址，之後每個 API 請求自動帶 <code>X-Yen-Token</code> header。</p></li>
+<li style="--step:#5fc4a0"><b>門口檢查哨</b><span class="f">middleware.ts</span><p>所有 <code>/api/*</code> 請求都被攔下來驗 token，不對就 403。auth 和 diag 路由免檢。</p></li>
+<li style="--step:#e0a458"><b>Touch ID 點頭放行</b><span class="f">app/page.tsx · lib/auth/</span><p>Tauri 裡走原生 Touch ID，瀏覽器裡走 WebAuthn passkey，通過後跳轉 <code>/hub</code> 儀表板。</p></li>
+<li style="--step:#e0a458"><b>隱藏動作：掛四個鬧鐘</b><span class="f">instrumentation.ts</span><p>引擎啟動同時掛起：週日晚提案週摘要、檢查放太久的承諾、執行你排的提醒、輪詢 Telegram。這是 app 開著時 Duffy 會「自己動」的原因。</p></li>
+</ol>
+
+<h2 id="sec-duffy">③ Duffy 迴圈：讀的直接做，寫的先開卡</h2>
+<p>整個系統最核心的設計。Duffy 的工具分兩類：<b style="color:var(--teal)">read_*</b>（讀，無副作用，隨便用）和 <b style="color:var(--coral)">propose_*</b>（寫，只能開一張 intent 提案卡，等你批准才生效）。</p>
+
+<svg viewBox="0 0 680 560" role="img" aria-label="Duffy 迴圈">
+<defs><marker id="ah2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#766e5e" stroke-width="1.5" stroke-linecap="round"/></marker></defs>
+<rect x="190" y="30" width="300" height="58" rx="10" fill="#1f1c18" stroke="#383228"/>
+<text x="340" y="54" text-anchor="middle" fill="#ece5d3" class="t1">你對 Duffy 說話</text>
+<text x="340" y="76" text-anchor="middle" fill="#a89f8c" class="t2">Cmd+K 面板或 Telegram</text>
+<line x1="340" y1="88" x2="340" y2="118" class="arrowline" marker-end="url(#ah2)"/>
+<g class="nd" onclick="go('m-duffy')"><rect x="190" y="126" width="300" height="58" rx="10" fill="#262035" stroke="#a59ae6"/>
+<text x="340" y="150" text-anchor="middle" fill="#cfc6f5" class="t1">Duffy 載入人格與記憶</text>
+<text x="340" y="172" text-anchor="middle" fill="#a59ae6" class="t2">SOUL · 剪影 · 週摘要</text></g>
+<path d="M340 184 L340 212 L190 212 L190 240" class="arrowline" marker-end="url(#ah2)"/>
+<path d="M340 184 L340 212 L490 212 L490 240" class="arrowline" marker-end="url(#ah2)"/>
+<g class="nd" onclick="go('d-read')"><rect x="60" y="248" width="260" height="58" rx="10" fill="#1b2a24" stroke="#5fc4a0"/>
+<text x="190" y="272" text-anchor="middle" fill="#bfe8d6" class="t1">讀取工具 read_*</text>
+<text x="190" y="294" text-anchor="middle" fill="#5fc4a0" class="t2">查筆記 · 搜網路 · 看狀態</text></g>
+<g class="nd" onclick="go('d-write')"><rect x="360" y="248" width="260" height="58" rx="10" fill="#2c2017" stroke="#e08a6a"/>
+<text x="490" y="272" text-anchor="middle" fill="#f2c8b4" class="t1">提案工具 propose_*</text>
+<text x="490" y="294" text-anchor="middle" fill="#e08a6a" class="t2">想動你的資料時</text></g>
+<line x1="190" y1="306" x2="190" y2="336" class="arrowline" marker-end="url(#ah2)"/>
+<rect x="60" y="344" width="260" height="44" rx="10" fill="#1f1c18" stroke="#383228"/>
+<text x="190" y="370" text-anchor="middle" fill="#a89f8c" class="t2" style="font-size:13px">直接回答，不改任何東西</text>
+<line x1="490" y1="306" x2="490" y2="336" class="arrowline" marker-end="url(#ah2)"/>
+<g class="nd" onclick="go('d-trust')"><rect x="360" y="344" width="260" height="58" rx="10" fill="#2c2417" stroke="#e0a458"/>
+<text x="490" y="368" text-anchor="middle" fill="#f0d6ab" class="t1">Intent 審批卡片</text>
+<text x="490" y="390" text-anchor="middle" fill="#e0a458" class="t2">信任分層決定誰自動過</text></g>
+<line x1="490" y1="402" x2="490" y2="432" class="arrowline" marker-end="url(#ah2)"/>
+<g class="nd" onclick="go('sec-data')"><rect x="360" y="440" width="260" height="58" rx="10" fill="#2c2417" stroke="#e0a458"/>
+<text x="490" y="464" text-anchor="middle" fill="#f0d6ab" class="t1">批准 → 正式生效</text>
+<text x="490" y="486" text-anchor="middle" fill="#e0a458" class="t2">寫入 JSON 並鏡像到 vault</text></g>
+<text x="340" y="540" text-anchor="middle" fill="#766e5e" class="t2">每次對話的路徑：command-palette → /api/chat → agent.ts → 工具 → 回應串流回畫面</text>
+</svg>
+
+<details id="d-read"><summary>read_* 讀取工具全清單（無副作用）<span class="tag">lib/agent/duffy/tools.ts 等</span></summary><div>
+<table>
+<tr><th>工具</th><th>白話</th></tr>
+<tr><td><code>read_attention_state</code></td><td>看你最近 7 天注意力花在 vault 哪些區</td></tr>
+<tr><td><code>read_todos</code></td><td>看 Queue 裡的待辦清單</td></tr>
+<tr><td><code>read_observations_history</code> / <code>search_observations</code></td><td>翻、搜過去記下的觀察</td></tr>
+<tr><td><code>search_old_summaries</code></td><td>搜舊的週摘要</td></tr>
+<tr><td><code>search_vault</code> / <code>read_vault_file</code></td><td>全庫搜尋、讀單篇筆記</td></tr>
+<tr><td><code>read_conversation_history</code></td><td>翻你們的舊對話</td></tr>
+<tr><td><code>web_search</code> / <code>web_extract</code></td><td>搜網路、抓網頁內容</td></tr>
+<tr><td><code>list_external_dir</code> / <code>read_external_file</code></td><td>看 Develop 與 Learning_AI 資料夾（唯讀）</td></tr>
+<tr><td><code>list_skills</code> / <code>use_skill</code></td><td>瀏覽並載入你的 skill 庫</td></tr>
+<tr><td><code>git_status</code> 等白名單命令</td><td>沙箱裡跑幾個安全的開發指令</td></tr>
+<tr><td><code>list_pending_intents</code></td><td>看自己還有哪些提案在等你批</td></tr>
+</table></div></details>
+
+<details id="d-write"><summary>propose_* 提案工具全清單（產生 intent 卡）<span class="tag">vault-write-tools.ts 等</span></summary><div>
+<table>
+<tr><th>工具</th><th>提案內容</th></tr>
+<tr><td><code>propose_observation</code></td><td>記一條對你的觀察（含證據與理由）</td></tr>
+<tr><td><code>propose_silhouette_update</code></td><td>更新剪影的某個欄位（身份/風格/價值/邊界/優先）</td></tr>
+<tr><td><code>propose_todo</code></td><td>建議加一條待辦進 Queue</td></tr>
+<tr><td><code>propose_new_file</code> / <code>propose_edit_file</code></td><td>建議建新筆記、改舊筆記</td></tr>
+<tr><td><code>propose_schedule</code> / <code>cancel_schedule</code></td><td>排一條提醒（cron）、取消排程</td></tr>
+</table></div></details>
+
+<details id="d-trust"><summary>信任分層與自動駕駛<span class="tag">trust-config.ts · auto-pilot.ts</span></summary><div>
+<table>
+<tr><th>層</th><th>例子</th><th>「平衡」模式下</th></tr>
+<tr><td>L0 低風險</td><td>寫一條觀察</td><td>自動執行，24h 內可撤銷</td></tr>
+<tr><td>L1 中</td><td>建新檔、新排程、週摘要</td><td>跳一張審批卡</td></tr>
+<tr><td>L2 不可逆</td><td>改既有檔、更新剪影</td><td>永遠要你批</td></tr>
+</table>
+<p class="sub">三檔模式：謹慎（全要批）／平衡（L0 自動）／奔放（L0+L1 自動），預設謹慎。每次 approve/reject 都被記成訊號，通過率 ≥90% 時 Duffy 會主動提議升級；Auto-pilot 開啟後它自己升降 tier，每次調整寫 audit log。批准後由 <code>intent-materialize.ts</code> 執行副作用、<code>vault-bridge.ts</code> 鏡像到 vault。</p>
+<p class="sub">Duffy 還有四種工作模式前綴：<code>[coach]</code> 反思（只讀）、<code>[do]</code> 執行（可提案）、<code>[watch]</code> 觀察（只列狀態）、<code>[pair]</code> 協作（一步一報）。定義在 <code>prompt.ts</code>。</p>
+</div></details>
+
+<h2 id="sec-data">④ 資料地圖：JSON 是正本，vault 是鏡像</h2>
+<p>Duffy 的記憶存在兩個地方，而且方向不對稱：app 私有 JSON 是<b>正本</b>，vault 的 <code>06 - AI Data/</code> 是批准後才鏡像過去的<b>副本</b> —— 這就是那三個資料夾「人類不該手動編輯」的原因。</p>
+<p class="legend">→ 讀取：app 掃描 vault（待辦、注意力、SOUL）　｜　← 鏡像：批准的觀察/剪影/週摘要寫回 vault</p>
+<div class="cols">
+<div class="card"><h4 style="color:var(--teal)">Obsidian Vault（你每天看的）</h4>
+<ul>
+<li><b>05 - Queue/</b> — 待辦與草稿；<code>todos.ts</code> 掃描、勾掉用 overlay 不直接改檔</li>
+<li><b>06 - AI Data/Observations/</b> — 批准的觀察，按月份資料夾存 md</li>
+<li><b>06 - AI Data/Silhouettes/</b> — 剪影現版 + 歷史版本</li>
+<li><b>06 - AI Data/Summaries/</b> — 週摘要，ISO 週編號</li>
+<li><b>06 - AI Data/agents/duffy.md</b> — SOUL 人格定義；你可以編輯，app 會同步回來</li>
+<li><b>其他筆記區</b> — <code>reader.ts</code> 分成八個 zone 算注意力；<code>.obsidian/workspace.json</code> 提供「最近開過哪些檔」</li>
+</ul></div>
+<div class="card"><h4 style="color:var(--purple)">App 私有資料 ~/Library/…/com.yen.hub/</h4>
+<ul>
+<li><b>intents.json</b> — 所有提案卡與審批紀錄（pending/approved/rejected）</li>
+<li><b>observations.json / silhouettes.json / summaries.json</b> — Duffy 記憶的正本</li>
+<li><b>conversations</b> — 聊天歷史</li>
+<li><b>coach.json</b> — 教練卡快取（1 小時）；批准任何記憶類 intent 時清掉重算</li>
+<li><b>done.json / priority</b> — 待辦完成與優先標記（覆蓋層）</li>
+<li><b>session.key</b> — 登入 cookie 的簽章鑰匙</li>
+<li><b>trust-config · auto-pilot log · schedules · telegram-chats</b> — 信任、審計、排程、白名單</li>
+</ul></div>
+</div>
+
+<h2 id="sec-modules">⑤ 模組百科：檔案級展開</h2>
+<p>每個資料夾一個抽屜，點開是裡面每個檔案的白話職責。這是你之後讀 code 的查表。</p>
+<div id="modules"></div>
+
+<h2 id="sec-course">⑥ 課程表：四階段 20 課</h2>
+<p>勾選會存在這個瀏覽器裡。想上某一課時，到 Claude Code 把該課的灰色句子講給它聽即可（進度也記在 vault 筆記《Yen Hub 架構通曉計畫》）。</p>
+<div class="pbar"><div id="pfill"></div></div>
+<p class="legend" id="pcount"></p>
+<div id="lessons"></div>
+
+<footer>本檔由 Claude Code 生成於 2026-06-10 · 與 vault 筆記《Yen Hub 架構通曉計畫》搭配使用 · 架構若有大改，請 AI 重新生成本檔</footer>
+</main>
+
+<script>
+function go(id){var el=document.getElementById(id);if(!el)return;if(el.tagName==='DETAILS')el.open=true;el.scrollIntoView({behavior:'smooth',block:'start'});}
+
+var MODULES=[
+{id:'m-app',name:'app/ — 路由層：網址就是資料夾',color:'var(--teal)',note:'Next.js 規則：app/ 下的資料夾結構直接決定網址。hub/page-b/page.tsx 就是 /hub/page-b 這個頁面。',files:[
+['page.tsx','大門：收 token、走 Touch ID / passkey 驗證'],
+['layout.tsx','全域外框：視窗拖曳區、Cmd+R 熱鍵、全域字體樣式'],
+['hub/page.tsx','檢查登入狀態，沒登入踢回門口'],
+['hub/overview.tsx','Page A 儀表板本體：六格 bento 網格'],
+['hub/layout.tsx','hub 區外框：指令面板、世界時鐘掛在這'],
+['hub/page-b/page.tsx','Page B：Duffy 專屬頁（教練卡/審批/記憶）'],
+['setup/page.tsx','首次註冊 passkey 的隱藏頁（沒有連結指過來）'],
+['signout/route.ts','登出']]},
+{id:'m-api',name:'app/api/ — 後端 API：引擎的服務窗口',color:'var(--teal)',note:'每個資料夾一個窗口。前端元件用 fetch 來這裡拿資料，全部要過 middleware 的 token 檢查。',files:[
+['chat/','Duffy 對話入口；inflight/ 存沒講完的話（重連可續）'],
+['coach/','生成教練卡，1 小時快取'],
+['vault/attention · vault/todos','注意力分布、待辦清單（含 complete / priority 子路由）'],
+['intents/ + [id]/decide + undo','列提案卡、批准/拒絕、撤銷'],
+['silhouette/ (+bootstrap/history/sync-from-vault)','剪影的讀取、初始化、歷史、從 vault 反向同步'],
+['observations/ · summaries/','未讀高重要觀察、週摘要'],
+['agents/duffy/soul','讀 SOUL 人格定義'],
+['auth/*','WebAuthn 註冊/登入/登出/原生確認'],
+['market/us30','美股期貨報價（TwelveData）'],
+['schedules/ · auto-pilot/ · trust-config','排程、自動駕駛、信任設定'],
+['telegram/toggle · conversations/ · token-usage · diag/','Telegram 開關、對話歷史、token 用量、除錯遙測（免 token）']]},
+{id:'m-comp',name:'components/ — 元件層：畫面的積木',color:'var(--teal)',note:'一個元件 = 一塊可重用的畫面。overview.tsx 把下面這些積木拼成 Page A。',files:[
+['overview.tsx','Page A 的拼裝者：六格 bento'],
+['attention-grid.tsx','七日注意力熱圖（zone × day，色深 = 時間）'],
+['todo-list.tsx','待辦清單：首要/分類/審查三種視圖'],
+['reading-progress.tsx','閱讀進度 3D 立方體，點書跳 Obsidian'],
+['market-monitor.tsx + candle-chart.tsx + atr-stats.tsx','市場監看：蠟燭圖與波動統計'],
+['command-palette.tsx','Cmd+K 指令面板：跟 Duffy 對話的入口'],
+['world-clock.tsx · top-nav.tsx · window-controls.tsx · reload-hotkey.tsx','時鐘、導航、視窗按鈕、熱鍵'],
+['page-b/coach-card.tsx','「今天 Duffy 想跟你說」卡片'],
+['page-b/intent-queue.tsx + intent-deck + intent-explanation','審批卡片組：同意/拒絕按鈕與理由展示'],
+['page-b/memory-tabs.tsx + silhouette-view + summary-view + soul-view','記憶頁籤：剪影/週摘要/SOUL'],
+['page-b/sensor-strip.tsx · duffy-badge.tsx','Duffy 正在看什麼、狀態徽章'],
+['page-b/trust-dial + auto-pilot-toggle + token-usage-bar + telegram-toggle','信任旋鈕與各種開關']]},
+{id:'m-duffy',name:'lib/agent/duffy/ — Duffy 的大腦',color:'var(--coral)',note:'Duffy 不是一個檔案，是一整個資料夾。agent.ts 是心臟，其他檔案是它的手腳。',files:[
+['agent.ts','主迴圈 runDuffy()：組 system prompt、串流 LLM 回應、掛工具'],
+['prompt.ts','行為守則：[coach]/[do]/[watch]/[pair] 四模式與工具使用規則'],
+['tools.ts','30+ 工具的總註冊處'],
+['coach.ts','教練卡生成（蒐集剪影+摘要+觀察 → LLM → 快取）'],
+['vault-tools / vault-write-tools / web-tools / skill-tools / shell-tools / external-tools','各類工具的實作：讀庫、提案寫入、搜網、用 skill、跑白名單命令、看外部資料夾'],
+['summary-cron.ts','週日 20:00 後自動提案週摘要'],
+['stale-intentions.ts','發現放太久的承諾，提案 nudge'],
+['scheduler.ts + schedule-tools.ts + cron-utils.ts','「明天下午提醒我」的整套排程機制'],
+['telegram-poller.ts','長輪詢 Telegram，訊息回到 Duffy 迴圈'],
+['auto-pilot.ts','按信任層自動批准低風險提案 + 學習升降層'],
+['bootstrap.ts','首次啟動：建立初版剪影與觀察框架'],
+['inflight-store.ts','回應講到一半斷線，重連能接著看']]},
+{id:'m-storage',name:'lib/agent/storage/ — Duffy 的記憶櫃',color:'var(--coral)',note:'每個檔案管一種 JSON 正本的存取（都在 ~/Library/.../com.yen.hub/）。',files:[
+['types.ts','所有資料的形狀定義：Intent、Observation、Silhouette、Summary…（C1 課教材）'],
+['intents.ts','提案卡的增刪查改與狀態流轉'],
+['observations.ts / silhouettes.ts / summaries.ts','觀察、剪影（含版本）、週摘要'],
+['conversations.ts / token-usage.ts','聊天紀錄、LLM 花費記帳'],
+['trust-config.ts / auto-pilot-log.ts / schedules.ts / telegram-chats.ts','信任設定、自動駕駛審計、排程、白名單']]},
+{id:'m-agent',name:'lib/agent/（根層）— 橋樑與路由',color:'var(--coral)',note:'JSON 正本與 vault 鏡像之間的橋，以及訊息分發。',files:[
+['vault-bridge.ts','批准後把觀察/剪影/週摘要寫成 vault 的 markdown（鏡像方向 →vault）'],
+['vault-sync.ts','你改了 vault 裡的 duffy.md，同步回 app（方向 ←vault）'],
+['router.ts','訊息前綴路由（哪句話該給哪個 agent）'],
+['notifications.ts','發 macOS 原生通知（經 stdout marker 給 Tauri）']]},
+{id:'m-vault',name:'lib/vault/ — 讀你筆記庫的眼睛',color:'var(--amber)',note:'所有「app 怎麼理解你的 Obsidian 庫」都在這裡。',files:[
+['reader.ts','掃全庫 + classifyZone() 八區分類 + 快取'],
+['attention-data.ts','用檔案 mtime 與最近開檔紀錄算注意力分布（J3 課核心）'],
+['todos.ts','掃 05 - Queue 的未完成 TODO（C2 課教材）'],
+['classify.ts','規則式 TODO 分類（寫作/AI/研究/學習…）'],
+['done-store.ts / priority-store.ts','完成與優先狀態的 overlay（不動你原始筆記）'],
+['reading-log.ts / book-translations.ts','閱讀進度追蹤、書名中英對照']]},
+{id:'m-lib',name:'lib/ 其他 — 門禁、模型、環境',color:'var(--amber)',note:'小而關鍵的支援模組。',files:[
+['auth/session.ts + config.ts + passkeys.ts','登入 session（iron-session 簽章 cookie）與 WebAuthn passkey'],
+['security/sidecar-token.ts','client 端 token 管家：收 ?_yt=、存 sessionStorage、自動加 header（C4 課教材）'],
+['ai/model.ts','選大腦：Anthropic（預設）或 Kimi；回傳給 AI SDK 用的 model'],
+['env/runtime.ts','偵測現在跑在 Tauri 還是純瀏覽器'],
+['conversations/store.ts','對話歷史儲存格式'],
+['animation/constants.ts','動畫節奏常數（motion 用）']]},
+{id:'m-tauri',name:'src-tauri/ — Rust 外殼',color:'var(--purple)',note:'唯一的 Rust 地盤。不求會寫，看懂流程即可（C5 課）。',files:[
+['src/main.rs','進入點，一行：跑 app_lib::run()'],
+['src/lib.rs','視窗行為（Cmd+W 隱藏不關閉）、plugins、Touch ID command'],
+['src/sidecar.rs','鑄 token、選 port、讀 env、spawn Node、等 ready、轉發通知（J1 課核心）'],
+['tauri.conf.json','app 名稱、視窗大小、圖示、打包設定'],
+['capabilities/','webview 被允許做什麼的權限清單'],
+['sidecar/','打包進 .app 的 Next.js 成品與 Node 執行檔']]},
+{id:'m-root',name:'根目錄特殊檔 + scripts/',color:'var(--pink)',note:'兩個位置特殊的檔案，加上日常維護腳本。',files:[
+['middleware.ts','API 檢查哨：每個 /api/* 請求驗 X-Yen-Token（位置必須在根目錄，Next.js 規定）'],
+['instrumentation.ts','引擎啟動時跑一次：掛四個 cron（摘要/nudge/排程/Telegram）'],
+['scripts/yen-dev-start','開發模式啟動（曾叫 open，撞了系統指令出過大事故）'],
+['scripts/yen-app-launch / yen-debug-tail','啟動打包版 .app、尾隨日誌'],
+['scripts/prep-sidecar.sh / fetch-node-sidecar.sh','打包前準備 sidecar 與 Node 執行檔'],
+['scripts/backup-yen-hub-data.sh / diag-freeze.sh','備份 app 資料、凍結診斷'],
+['package.json / Cargo.toml','兩邊的依賴清單：ai SDK、next、react、motion、iron-session ／ tauri、objc2（Touch ID）']]}
+];
+
+var mhtml='';
+MODULES.forEach(function(m){
+mhtml+='<details id="'+m.id+'"><summary><span style="color:'+m.color+'">'+m.name+'</span><span class="tag">'+m.files.length+' 項</span></summary><div><p class="sub">'+m.note+'</p><table><tr><th>檔案</th><th>白話職責</th></tr>';
+m.files.forEach(function(f){mhtml+='<tr><td><code>'+f[0]+'</code></td><td>'+f[1]+'</td></tr>';});
+mhtml+='</table></div></details>';
+});
+document.getElementById('modules').innerHTML=mhtml;
+
+var STAGES={1:['階段 1 · 地圖層','把每個抽屜摸熟','var(--purple)'],2:['階段 2 · 旅程層','跟著真實資料走完全程','var(--teal)'],3:['階段 3 · 語法層','用自己的 code 學概念','var(--amber)'],4:['階段 4 · 動手層','親手改、親眼驗證','var(--coral)']};
+var LESSONS=[
+['U1',1,'app/ 路由層 — 網址就是資料夾','門口、Page A/B、api 巡禮','app/page.tsx · hub/overview.tsx · hub/page-b/ · api/*'],
+['U2',1,'components/ 元件層 — 畫面怎麼拼出來','Page A 與 page-b 的積木','attention-grid · todo-list · reading-progress · coach-card · intent-queue'],
+['U3',1,'lib/ 邏輯層 — app 的內臟','大腦、記憶、讀庫、門禁','lib/agent/duffy · lib/agent/storage · lib/vault · lib/auth · lib/security'],
+['U4',1,'src-tauri/ 外殼層 — Rust 那一側','視窗、token、app 設定','lib.rs · sidecar.rs · tauri.conf.json'],
+['J1',2,'開機旅程','token 一路護送進儀表板','sidecar.rs → server.js → middleware.ts → page.tsx'],
+['J2',2,'一張 intent 的一生 ★ 最重要','從你說一句話到 vault 多一篇 md','command-palette → api/chat → agent.ts → tools.ts → intents.json → intent-queue.tsx → decide → materialize → vault-bridge'],
+['J3',2,'注意力熱圖','vault 掃描 → 八區分類 → 七日熱圖','reader.ts → attention-data.ts → api/vault/attention → attention-grid.tsx'],
+['J4',2,'一條待辦的旅程','掃 Queue → 分類 → 顯示 → 勾掉','todos.ts → classify.ts → todo-list.tsx → done-store.ts'],
+['J5',2,'教練卡','「今天 Duffy 想說」怎麼煮出來','coach.ts → coach.json 快取 → coach-card.tsx'],
+['J6',2,'cron 自動化','app 開著時 Duffy 為何自己動','instrumentation.ts → summary-cron · stale-intentions · scheduler'],
+['J7',2,'Telegram 旅程','不在 Mac 前也能對話的那條線','telegram-poller.ts → router.ts → agent.ts'],
+['J8',2,'市場監看','US30 蠟燭圖的資料線','api/market/us30 → market-monitor.tsx → candle-chart.tsx'],
+['C1',3,'型別與資料形狀','type/interface，Intent 為何長那樣','lib/agent/storage/types.ts'],
+['C2',3,'函式與 async/await','參數、回傳值、「等一下再給你」','lib/vault/todos.ts'],
+['C3',3,'React 元件與狀態','畫面=函式(資料)，點了為何會變','components/todo-list.tsx'],
+['C4',3,'API route 與 fetch','前後端怎麼說話、token 怎麼帶','app/api/vault/todos/route.ts · lib/security/sidecar-token.ts'],
+['C5',3,'Rust 淺嚐','看得懂結構與流程即可','src-tauri/src/sidecar.rs'],
+['H1',4,'文案／樣式微調','改一個字 → rebuild → 親眼看到','任一元件 + verifier-yen-hub 驗證'],
+['H2',4,'加一個小資訊','走完資料 → API → 元件三層','例：todo 區塊加總數'],
+['H3',4,'給 Duffy 加一個 read_* 工具','畢業專題：設計 → 實作 → 實測','tools.ts + 新工具檔 + Cmd+K 實測']
+];
+
+var lc=document.getElementById('lessons'),lhtml='',cur=0;
+LESSONS.forEach(function(L){
+if(L[1]!==cur){cur=L[1];var s=STAGES[cur];
+lhtml+='<div class="stagehead"><span class="tag" style="color:'+s[2]+';border-color:'+s[2]+'">'+s[0]+'</span><span class="sub">'+s[1]+'</span></div>';}
+lhtml+='<label class="lesson" id="ls-'+L[0]+'"><input type="checkbox" data-id="'+L[0]+'"><span class="id" style="color:'+STAGES[L[1]][2]+'">'+L[0]+'</span><span><span class="ttl">'+L[2]+'</span><div class="d">'+L[3]+'</div><div class="fl">'+L[4]+'</div><div class="say">跟 Claude 說：<code>上課：'+L[0]+' · '+L[2].split(' ★')[0]+'（先讀 vault 筆記《Yen Hub 架構通曉計畫》）</code></div></span></label>';
+});
+lc.innerHTML=lhtml;
+
+function refresh(){var n=0;LESSONS.forEach(function(L){var done=localStorage.getItem('yenhub-'+L[0])==='1';var box=document.querySelector('input[data-id="'+L[0]+'"]');box.checked=done;document.getElementById('ls-'+L[0]).classList.toggle('done',done);if(done)n++;});
+document.getElementById('pfill').style.width=(n/LESSONS.length*100)+'%';
+document.getElementById('pcount').textContent='已完成 '+n+' / '+LESSONS.length+' 課';}
+lc.addEventListener('change',function(e){if(e.target.dataset.id){localStorage.setItem('yenhub-'+e.target.dataset.id,e.target.checked?'1':'0');refresh();}});
+refresh();
+</script>
+</body>
+</html>

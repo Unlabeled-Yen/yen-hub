@@ -80,6 +80,10 @@ export type ObservationPayload = {
   /** Slice 8: id of the observation this nudge is reminding Yen of.
    *  Renders as an orange-tinted card; coach card may surface it too. */
   nudge_for?: string;
+  /** v2 Gap A: optional 保鮮期（ms epoch；proposeObservation 收 ISO date 後轉換）。 */
+  valid_until?: number;
+  /** v2 Gap A: 提案時若要推翻舊觀察，填其 observation id；materialize 時把舊的標 superseded。 */
+  supersedes?: string;
 };
 
 export type Importance = "high" | "medium" | "low";
@@ -100,6 +104,13 @@ export type Observation = {
   read_at?: number;           // ← Slice 7A (user 看過後標記;徽章用此算 unread)
   intention?: IntentionMeta;  // ← Slice 8 (mirrors payload.intention; mutable)
   nudge_for?: string;         // ← Slice 8 (set when this observation is a nudge)
+  // ↓ v2 Gap A (2026-06-16) — 記憶保鮮 / 失效。三欄皆 optional，舊資料無此欄＝永遠有效。
+  /** ms epoch；超過此刻此觀察視為過期，預設讀取路徑排除。未設＝永不過期。 */
+  valid_until?: number;
+  /** 被哪條新觀察推翻的 id；一旦設值即視為封存，預設讀取排除。 */
+  superseded_by?: string;
+  /** ms epoch；被 supersede 或人工封存的時刻。供稽核，不參與過濾判斷。 */
+  archived_at?: number;
 };
 
 /* -------------------------------------------------------------------------- */
@@ -220,7 +231,10 @@ export type TodoPlanPayload = {
 export type ScheduleActionKind =
   | "git_unpushed_check"      // run `git status` against named repos
   | "vault_zone_check"        // surface zones that haven't moved in N days
-  | "reminder";               // plain message — fires as a high-importance obs
+  | "reminder"                // plain message — fires as a high-importance obs
+  | "journal_interview";      // Slice journal — 21:00 nightly: surface a
+                              // high-importance obs prompting Yen to start
+                              // the 5-question interview in Duffy chat
 
 export type ScheduleCreatePayload = {
   cron_expr: string;

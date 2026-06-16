@@ -88,10 +88,14 @@ export function classifyZone(relPath: string): Zone {
   if (p.startsWith("LLM Wiki 知識庫/derived/")) return "derived";
   // Agent-generated content — segregate so Duffy doesn't read his own writes.
   // AttentionGrid filters this zone out.
+  // Duffy Workspace (Slice α 2026-06-15): Duffy's free-write sandbox under
+  // path-based L0. Same zone so attention grid skips it and there's no
+  // feedback loop where Duffy reads his own sandbox as evidence.
   if (
     p.startsWith("06 - AI Data/Observations/") ||
     p.startsWith("06 - AI Data/Summaries/") ||
-    p.startsWith("06 - AI Data/Silhouettes/")
+    p.startsWith("06 - AI Data/Silhouettes/") ||
+    p.startsWith("06 - AI Data/Duffy Workspace/")
   )
     return "agentdata";
   // Yen Hub lives inside 06 - AI Data but it's the desktop-app project,

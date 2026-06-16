@@ -9,6 +9,7 @@ import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
 import {
   countUnreadHighImportance,
+  isFreshUnreadHigh,
   listObservations,
 } from "@/lib/agent/storage/observations";
 
@@ -28,9 +29,12 @@ export async function GET() {
   if (auth) return auth;
   const count = await countUnreadHighImportance();
   // Surface a few headlines too for the badge tooltip / hover.
+  // Patch D (2026-06-14) — top list 跟 count 共用同一個 freshness 視窗 (24h)，
+  // 避免「count = 6 但點開只看到今天 1 條」這種不一致。
   const all = await listObservations({ agent: "duffy" });
+  const now = Date.now();
   const top = all
-    .filter((o) => o.importance === "high" && !o.read_at)
+    .filter((o) => isFreshUnreadHigh(o, now))
     .slice(0, 5)
     .map((o) => ({ id: o.id, title: o.title, created_at: o.created_at }));
   return NextResponse.json({ count, top });

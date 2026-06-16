@@ -27,6 +27,13 @@ import {
   readTelegramHistory,
 } from "@/lib/agent/storage/telegram-chats";
 import { runDuffyHeadless } from "@/lib/agent/duffy/headless";
+import { withTelegramTurn } from "@/lib/agent/duffy/telegram-mutex";
+import { getIntent, decideIntent } from "@/lib/agent/storage/intents";
+import { materializeIntent } from "@/lib/agent/intent-materialize";
+import {
+  getPendingSkillSession,
+  clearPendingSkillSession,
+} from "@/lib/agent/duffy/pending-skill-session";
 import type { UIMessage } from "ai";
 
 type State = { started: boolean; loopActive: boolean };
@@ -45,6 +52,143 @@ function stripModeTag(text: string): string {
     /^\s*\[(coach|do|watch|pair)(\s*\(locked\))?\]\s*\n+/i,
     "",
   );
+}
+
+/** Affirmative tokens that, in the narrow context of a freshly-proposed
+ *  journal-interview file_create intent, mean "approve and persist".
+ *  Kept tight on purpose — see §3.5 design rationale. */
+const APPROVE_TOKENS = new Set([
+  "存",
+  "存檔",
+  "好",
+  "ok",
+  "OK",
+  "Ok",
+  "yes",
+  "Yes",
+  "YES",
+  "是",
+  "同意",
+]);
+
+const SENTINEL_RE = /<<INTENT:(int_[a-z0-9-]+)>>/i;
+const JOURNAL_PATH_RE = /^07 - 個人日記\/\d{4}-\d{2}-\d{2}\.md$/;
+
+/** Affirmative replies to a pending-skill prompt — "yes, start now". */
+const SKILL_START_TOKENS = new Set([
+  "好",
+  "好啊",
+  "好的",
+  "開始",
+  "ok",
+  "OK",
+  "Ok",
+  "yes",
+  "Yes",
+  "YES",
+  "嗯",
+  "可以",
+  "來",
+]);
+
+/** Defer tokens — "not now, ask later". */
+const SKILL_DEFER_TOKENS = new Set([
+  "等等",
+  "等一下",
+  "晚點",
+  "之後",
+  "稍後",
+  "no",
+  "No",
+  "NO",
+  "不要",
+  "先不",
+  "現在不行",
+]);
+
+/** §3.6 pre-Duffy intercept — skill-anchored reminders (2026-06-13).
+ *  When a scheduler fired with ask_first semantics, a marker sits in the
+ *  pending-skill store. Yen's first reply to the prompt either starts the
+ *  skill flow or defers it — Duffy never sees this message. */
+async function tryStartPendingSkill(
+  chatId: number,
+  userText: string,
+): Promise<string | null> {
+  const session = await getPendingSkillSession(chatId);
+  if (!session) return null;
+
+  const trimmed = userText.trim();
+
+  if (SKILL_START_TOKENS.has(trimmed)) {
+    await clearPendingSkillSession(chatId);
+    if (session.skill === "journal_interview") {
+      // Re-import to avoid circular deps.
+      const { runJournalInterviewNow } = await import(
+        "@/lib/agent/duffy/schedule-actions"
+      );
+      const today =
+        (session.context?.today as string | undefined) ??
+        new Date().toISOString().slice(0, 10);
+      await runJournalInterviewNow(today);
+      // Q1 was sent by runJournalInterviewNow — no extra reply needed.
+      // Return empty string to indicate "intercept handled it silently".
+      return "";
+    }
+    return null;
+  }
+
+  if (SKILL_DEFER_TOKENS.has(trimmed)) {
+    await clearPendingSkillSession(chatId);
+    return `好，先放著。需要時跟我說「開始日記訪談」、或告訴我延幾分鐘我重排（例：「30 分鐘後」）。`;
+  }
+
+  // Neither yes nor no — leave the marker, fall through to Duffy. Duffy can
+  // still respond freely; if Yen later says "好" the marker is still live.
+  return null;
+}
+
+/** Inspect the most-recent assistant turn in this chat. If it carries an
+ *  <<INTENT:xxx>> sentinel AND the intent is a journal-day file_create
+ *  AND it's still pending AND `userText` is an approve token → approve it
+ *  in-process and return a confirmation message. Otherwise return null,
+ *  meaning "no interception, fall through to Duffy". */
+async function tryApproveJournalIntent(
+  history: Array<{ role: "user" | "assistant"; text: string }>,
+  userText: string,
+): Promise<string | null> {
+  const trimmed = userText.trim();
+  if (!APPROVE_TOKENS.has(trimmed)) return null;
+
+  // Walk backward to find the latest assistant message (skip recent user
+  // turns just in case the history has been re-ordered).
+  let lastAssistant: string | null = null;
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i].role === "assistant") {
+      lastAssistant = history[i].text;
+      break;
+    }
+  }
+  if (!lastAssistant) return null;
+
+  const match = lastAssistant.match(SENTINEL_RE);
+  if (!match) return null;
+  const intentId = match[1];
+
+  const intent = await getIntent(intentId);
+  if (!intent) return null;
+  if (intent.status !== "pending") return null;
+  if (intent.kind !== "file_create") return null;
+
+  const path = (intent.payload as { path?: unknown }).path;
+  if (typeof path !== "string" || !JOURNAL_PATH_RE.test(path)) return null;
+
+  // Window confirmed — approve in-process, mirroring app/api/intents/[id]/decide.
+  const r = await materializeIntent(intent);
+  if (!r.ok) {
+    return `⚠️ 存檔失敗：${r.error.message}（請開 Yen.app 手動處理）`;
+  }
+  await decideIntent(intent.id, "approved", r.resulted_in, "user");
+  return `✅ 已存到 ${path}`;
 }
 
 function tgHistoryToUiMessages(
@@ -132,38 +276,126 @@ async function processMessage(m: TgMessage): Promise<void> {
     return;
   }
 
-  const history = await readTelegramHistory(m.chat_id);
-  await appendTelegramMessage(m.chat_id, {
-    role: "user",
-    text: userText,
-    ts: Date.now(),
-  });
+  await withTelegramTurn(m.chat_id, async () => {
+    const history = await readTelegramHistory(m.chat_id);
 
-  const uiMessages = tgHistoryToUiMessages(history, userText);
-  const result = await runDuffyHeadless({
-    messages: uiMessages,
-    surface: "telegram",
-  });
+    // §3.6 pre-Duffy intercept — skill-anchored reminder. Check FIRST so
+    // it wins over §3.5 intent-approve (a pending skill session is more
+    // load-bearing than a save-confirmation).
+    //
+    // IMPORTANT: append the user's "好" to history BEFORE invoking the
+    // skill flow. Otherwise the skill flow's runDuffyHeadless reads a
+    // pre-confirmation history and ends up with storage out of sync
+    // with the Telegram timeline (Q1 lands before "好" in storage).
+    {
+      const session = await getPendingSkillSession(m.chat_id);
+      if (session) {
+        await appendTelegramMessage(m.chat_id, {
+          role: "user",
+          text: userText,
+          ts: Date.now(),
+        });
+        const skillIntercept = await tryStartPendingSkill(m.chat_id, userText);
+        if (skillIntercept !== null) {
+          // Empty string = handled silently (Q1 already sent by skill flow).
+          if (skillIntercept.length > 0) {
+            await appendTelegramMessage(m.chat_id, {
+              role: "assistant",
+              text: skillIntercept,
+              ts: Date.now(),
+            });
+            await sendTelegram({
+              token: cfg.telegram_bot_token!,
+              chat_id: m.chat_id,
+              text: skillIntercept,
+            });
+          }
+          return;
+        }
+        // No-match path (neither yes nor defer): we already appended the
+        // user message above, so skip the lower append and fall through.
+        const uiMessages = tgHistoryToUiMessages(
+          await readTelegramHistory(m.chat_id),
+          "",
+        );
+        const result = await runDuffyHeadless({
+          messages: uiMessages,
+          surface: "telegram",
+        });
+        let reply: string;
+        if (result.ok) {
+          await appendTelegramMessage(m.chat_id, {
+            role: "assistant",
+            text: result.text,
+            ts: Date.now(),
+          });
+          reply = stripModeTag(result.text);
+        } else {
+          reply = `⚠️ Duffy 跑出問題：${result.error}`;
+        }
+        await sendTelegram({
+          token: cfg.telegram_bot_token!,
+          chat_id: m.chat_id,
+          text: reply,
+        });
+        return;
+      }
+    }
 
-  let reply: string;
-  if (result.ok) {
-    // Keep the full text (with mode tag) in history so context continuity
-    // is preserved — Duffy may notice his own past stance.
+    // §3.5 pre-Duffy intercept — narrow window: pending journal file_create
+    // intent + affirmative token → approve in-process, skip Duffy.
+    const intercept = await tryApproveJournalIntent(history, userText);
+    if (intercept !== null) {
+      await appendTelegramMessage(m.chat_id, {
+        role: "user",
+        text: userText,
+        ts: Date.now(),
+      });
+      await appendTelegramMessage(m.chat_id, {
+        role: "assistant",
+        text: intercept,
+        ts: Date.now(),
+      });
+      await sendTelegram({
+        token: cfg.telegram_bot_token!,
+        chat_id: m.chat_id,
+        text: intercept,
+      });
+      return;
+    }
+
     await appendTelegramMessage(m.chat_id, {
-      role: "assistant",
-      text: result.text,
+      role: "user",
+      text: userText,
       ts: Date.now(),
     });
-    // Strip the [mode] tag only for the user-facing send.
-    reply = stripModeTag(result.text);
-  } else {
-    reply = `⚠️ Duffy 卡住了：${result.error}`;
-  }
 
-  await sendTelegram({
-    token: cfg.telegram_bot_token,
-    chat_id: m.chat_id,
-    text: reply,
+    const uiMessages = tgHistoryToUiMessages(history, userText);
+    const result = await runDuffyHeadless({
+      messages: uiMessages,
+      surface: "telegram",
+    });
+
+    let reply: string;
+    if (result.ok) {
+      // Keep the full text (with mode tag) in history so context continuity
+      // is preserved — Duffy may notice his own past stance.
+      await appendTelegramMessage(m.chat_id, {
+        role: "assistant",
+        text: result.text,
+        ts: Date.now(),
+      });
+      // Strip the [mode] tag only for the user-facing send.
+      reply = stripModeTag(result.text);
+    } else {
+      reply = `⚠️ Duffy 卡住了：${result.error}`;
+    }
+
+    await sendTelegram({
+      token: cfg.telegram_bot_token!,
+      chat_id: m.chat_id,
+      text: reply,
+    });
   });
 }
 

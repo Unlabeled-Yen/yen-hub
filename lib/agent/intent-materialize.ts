@@ -28,6 +28,7 @@ import {
 import {
   createObservationFromIntent,
   touchIntention,
+  supersedeObservation,
 } from "@/lib/agent/storage/observations";
 import { createSilhouetteFromIntent } from "@/lib/agent/storage/silhouettes";
 import { createSummaryFromIntent } from "@/lib/agent/storage/summaries";
@@ -75,9 +76,14 @@ export async function materializeIntent(
       importance: intent.importance,
       intention: intent.payload.intention,
       nudge_for: intent.payload.nudge_for,
+      valid_until: intent.payload.valid_until, // v2 Gap A
     });
     if (intent.payload.nudge_for) {
       await touchIntention(intent.payload.nudge_for);
+    }
+    // v2 Gap A — if this observation replaces an older one, archive the old.
+    if (intent.payload.supersedes) {
+      await supersedeObservation(intent.payload.supersedes, obs.id);
     }
     await writeObservationToVault(obs);
     return {

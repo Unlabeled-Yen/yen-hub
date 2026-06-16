@@ -23,7 +23,7 @@
 
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, type UIMessage } from "ai";
-import { motion, useMotionValue } from "motion/react";
+import { motion, useDragControls, useMotionValue } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { IntentCard } from "@/components/agent/intent-card";
@@ -43,6 +43,27 @@ import {
 /** Sentinel format Duffy embeds in chat to surface an approval card inline.
  *  See `lib/agent/duffy/prompt.ts` and `lib/agent/duffy/agent.ts`. */
 const INTENT_SENTINEL = /<<INTENT:(int_[A-Za-z0-9-]+)>>/g;
+
+/** Root fix (2026-06-15): approval cards are driven by intents Duffy ACTUALLY
+ *  created this turn — the `status: "pending"` outputs of propose_* tool calls
+ *  carried in the assistant message's parts — not by trusting the model's
+ *  <<INTENT:id>> text. Flight recorder turn_mqf55thu proved the model can
+ *  narrate "兩個任務已建立" with hand-typed fake UUIDs and zero tool calls; a
+ *  text sentinel alone must never be able to conjure (or, via omission, hide) a
+ *  card. Tool results are server-side truth. */
+function collectPendingIntentIds(
+  parts: Array<{ type: string; output?: unknown }>,
+): string[] {
+  const ids: string[] = [];
+  for (const p of parts) {
+    if (!p.type.startsWith("tool-")) continue;
+    const out = p.output as { intent_id?: unknown; status?: unknown } | undefined;
+    if (out && out.status === "pending" && typeof out.intent_id === "string") {
+      ids.push(out.intent_id);
+    }
+  }
+  return ids;
+}
 
 /** Sentinel Duffy embeds when Yen asks to start a fresh conversation. The
  *  client rolls a new conversation after the current turn finishes
@@ -93,7 +114,20 @@ async function reconcileInflight(
       } | null;
     };
     const inflight = data.inflight;
-    if (!inflight || !inflight.text) return;
+    if (!inflight) return;
+    // Patch C (2026-06-14) — orphan cleanup。空文字 + done/error 表示 server
+    // 那邊（Patch A 的 stream-close watchdog）強制收尾、但 Kimi 從未產出文字。
+    // 舊版直接 return、連 DELETE 都不發、orphan entry 永遠留在 inflight.json，
+    // 每次 reopen 都重跑這條無意義路徑。先 DELETE 再 return。
+    if (!inflight.text) {
+      if (inflight.status !== "streaming") {
+        void fetch(
+          `/api/chat/inflight?conversation=${encodeURIComponent(convoId)}`,
+          { method: "DELETE", headers },
+        );
+      }
+      return;
+    }
 
     // Already merged? Compare against last assistant message.
     const lastAssistant = [...current]
@@ -202,6 +236,46 @@ export function CommandPalette() {
   }, [open]);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // 2026-06-15 (palette-resize) — the palette is now user-resizable via a
+  // diagonal handle on the bottom-right of the messages panel. Defaults are
+  // intentionally larger than the old max-w-2xl (672px) / calc(70vh-100px)
+  // box per Yen ("再大一點"). Dimensions are clamped to the viewport so the
+  // assembly can never overflow the Tauri webview.
+  const [size, setSize] = useState<{ w: number; h: number }>(() => {
+    const vw = typeof window !== "undefined" ? window.innerWidth : 1200;
+    const vh = typeof window !== "undefined" ? window.innerHeight : 800;
+    return {
+      w: Math.min(880, vw - 64),
+      h: Math.min(620, Math.round(vh * 0.7)),
+    };
+  });
+  const [isResizing, setIsResizing] = useState(false);
+  const resizeRef = useRef<
+    { startX: number; startY: number; startW: number; startH: number } | null
+  >(null);
+  // Drag is started manually from the body (dragListener={false}) so the
+  // resize handle can suppress it with a simple stopPropagation — see the
+  // outer motion.div's onPointerDown and the handle below.
+  const dragControls = useDragControls();
+
+  // 2026-06-15 (thinking-scroll-fix) — stick-to-bottom guard. The auto-scroll
+  // effect used to fire on EVERY `messages` change, so during streaming each
+  // token yanked the view back to the bottom — making it impossible to scroll
+  // up and read earlier turns while Duffy was thinking. Now we only auto-scroll
+  // when the user is already pinned near the bottom; once they scroll up,
+  // auto-scroll pauses until they return.
+  const stickToBottomRef = useRef(true);
+  const programmaticUntilRef = useRef(0);
+  const scrollToBottom = useCallback((smooth = true) => {
+    const el = scrollRef.current;
+    if (!el) return;
+    // Suppress onScroll's bottom-detection during our own animated scroll so
+    // the programmatic motion doesn't flip the stick flag off mid-animation.
+    programmaticUntilRef.current =
+      (typeof performance !== "undefined" ? performance.now() : 0) + 700;
+    el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" });
+  }, []);
 
   // Token is fetched once on mount and stored in a ref so the transport's
   // headers function is synchronous (async headers tripped a ByteString
@@ -342,28 +416,58 @@ export function CommandPalette() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages, status]);
 
-  // Persist when streaming completes
+  // Patch C (2026-06-14) — persist messages 即時（debounced），不再等 streaming 結束。
+  //
+  // 舊版只在 status NOT streaming/submitted 時 persist。Bug B 真本體：
+  //   1. user 送訊息 → useChat push user msg → status=streaming
+  //   2. persist effect 被 streaming guard 擋住、不寫
+  //   3. Kimi 卡死 / user 關 palette 重開
+  //   4. loadFromServer 讀回 server 舊版本（user msg 從來沒存）
+  //   5. setMessages(c.messages) 蓋掉 → user 訊息消失
+  //
+  // 結構性修法：messages 一變就 persist。但要溫柔對待 next-server——
+  //
+  // Patch C+ (2026-06-14 同日) — 兩段式 debounce：
+  //   - streaming 中：1000ms debounce（5/sec → 1/sec、不再壓垮 next-server）
+  //   - status 切到非 streaming：立即 flush（cancel pending timer + 即寫）
+  //
+  // 這保證：user msg 在 send 後 1 秒內落地、stream 結束瞬間最終版本即時落地。
+  // 副作用：streaming 中切走切回最多丟最近 1 秒的 partial assistant text、
+  // 但 user msg 跟之前所有 turn 一定在。
   useEffect(() => {
     if (!convo) return;
-    if (status === "streaming" || status === "submitted") return;
     if (messages.length === 0) return;
-    const updated: Convo = {
-      ...convo,
-      messages: messages as UIMessage[],
-      title: convo.title ?? deriveTitle(messages as UIMessage[]),
-      updatedAt: Date.now(),
+
+    const doSave = () => {
+      const updated: Convo = {
+        ...convo,
+        messages: messages as UIMessage[],
+        title: convo.title ?? deriveTitle(messages as UIMessage[]),
+        updatedAt: Date.now(),
+      };
+      saveConversation(updated);
+      if (updated.title !== convo.title) setConvo(updated);
     };
-    saveConversation(updated);
-    if (updated.title !== convo.title) setConvo(updated);
+
+    const isStreaming = status === "streaming" || status === "submitted";
+    if (!isStreaming) {
+      // 邊界事件 (turn 收尾 / 剛開好 convo)：立即寫，不 debounce。
+      doSave();
+      return;
+    }
+    // streaming 中：1 秒 debounce。
+    const t = setTimeout(doSave, 1000);
+    return () => clearTimeout(t);
   }, [messages, status, convo]);
 
-  // Auto-scroll messages to bottom on new content
+  // Auto-scroll to bottom on new content — but ONLY while the user is pinned
+  // near the bottom. If they've scrolled up to read earlier turns (common
+  // while Duffy streams a long reply), don't fight them. See the messages
+  // container's onScroll for where stickToBottomRef is updated.
   useEffect(() => {
-    scrollRef.current?.scrollTo({
-      top: scrollRef.current.scrollHeight,
-      behavior: "smooth",
-    });
-  }, [messages]);
+    if (!stickToBottomRef.current) return;
+    scrollToBottom(true);
+  }, [messages, scrollToBottom]);
 
   // Slice 8.6 — broadcast Duffy's chat status to the rest of the app
   // (specifically DuffyBadge on Page A) so the badge can show
@@ -642,6 +746,13 @@ export function CommandPalette() {
       >
       <motion.div
         drag
+        // dragListener={false} + manual dragControls.start in onPointerDown:
+        // the body starts a drag, but the resize handle can suppress it with
+        // a plain stopPropagation (framer's own pointerdown listener fires
+        // before any React handler, so stopPropagation alone wouldn't stop it
+        // — manual start is the reliable way to gate drag by sub-region).
+        dragListener={false}
+        dragControls={dragControls}
         dragMomentum={false}
         dragElastic={0.05}
         dragConstraints={{ left: -400, right: 400, top: -300, bottom: 300 }}
@@ -650,17 +761,27 @@ export function CommandPalette() {
         transition={{
           opacity: { duration: leaving ? FADE_MS / 1000 : 0.3, ease: "easeOut" },
         }}
-        className="w-full max-w-2xl px-8 pointer-events-none"
+        className="px-8 pointer-events-none"
         style={{
           // Hard ceiling on the whole assembly so it can never overflow
           // the Tauri webview. Flex parent centers; assembly cap keeps
           // both edges inside the viewport at any window size.
           maxHeight: "85vh",
+          // User-resizable width (diagonal handle). maxWidth keeps it inside
+          // the webview even if size.w somehow exceeds the current viewport.
+          width: size.w,
+          maxWidth: "calc(100vw - 32px)",
           cursor: holding ? "grabbing" : "grab",
           // Wheel-tracked vertical offset, additive to motion's drag y.
           // Lives on motion.div's transform — the flex wrapper does the
           // centering, this just biases from that anchor.
           y: wheelY,
+        }}
+        onPointerDown={(e) => {
+          // Don't start a drag from inside the textarea / buttons or the
+          // resize handle (which calls stopPropagation).
+          if (isEditableTarget(e.target)) return;
+          dragControls.start(e);
         }}
         onMouseDown={() => setHolding(true)}
         onMouseUp={() => setHolding(false)}
@@ -695,9 +816,13 @@ export function CommandPalette() {
               : 3;
           const visible = messages.slice(-visibleTurns);
           return (
+            <div
+              className="mb-6 pointer-events-none"
+              style={{ position: "relative" }}
+            >
             <motion.div
               ref={scrollRef}
-              className="pointer-events-auto mb-6 hub-scrollbar"
+              className="pointer-events-auto hub-scrollbar"
               // Iris-open on first mount — messages container expands
               // from center together with the command line, only when
               // the palette itself is being summoned. The new-conversation
@@ -727,7 +852,7 @@ export function CommandPalette() {
                     : collapsed
                       ? 36
                       : userExpanded
-                        ? "calc(70vh - 100px)"
+                        ? size.h
                         : "calc(35vh - 50px)",
                 opacity:
                   leaving ||
@@ -744,13 +869,18 @@ export function CommandPalette() {
                     : 0,
               }}
               transition={{
-                duration: leaving
-                  ? 0.4
-                  : newConvoPhase === "shrinking-messages"
-                    ? 0.55
-                    : collapsed || userExpanded
-                      ? 1.2
-                      : 0.45,
+                // While the user is dragging the resize handle, the height
+                // must track the pointer with zero easing — otherwise every
+                // pointermove animates over 1.2s and the resize rubber-bands.
+                duration: isResizing
+                  ? 0
+                  : leaving
+                    ? 0.4
+                    : newConvoPhase === "shrinking-messages"
+                      ? 0.55
+                      : collapsed || userExpanded
+                        ? 1.2
+                        : 0.45,
                 ease: leaving
                   ? [0.7, 0, 0.84, 0]
                   : [0.22, 1, 0.36, 1],
@@ -773,6 +903,17 @@ export function CommandPalette() {
                 transformOrigin: "center",
               }}
               onClick={(e) => e.stopPropagation()}
+              // Track whether the user is pinned near the bottom. Once they
+              // scroll up, stickToBottomRef goes false and the auto-scroll
+              // effect stops snapping them back — the thinking-scroll fix.
+              onScroll={(e) => {
+                const now =
+                  typeof performance !== "undefined" ? performance.now() : 0;
+                if (now < programmaticUntilRef.current) return;
+                const el = e.currentTarget;
+                stickToBottomRef.current =
+                  el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+              }}
               // Wheel inside the messages container scrolls its own
               // content; don't let it bubble up to also translate the
               // whole chat assembly.
@@ -825,6 +966,82 @@ export function CommandPalette() {
                   )}
               </div>
             </motion.div>
+            {/* Diagonal resize handle (bottom-right of the messages panel).
+                Sits OUTSIDE the scroll container (as a sibling) so it stays
+                glued to the visible corner instead of scrolling away with
+                the content. Pointer drag grows width + messages height
+                together; stopPropagation stops the body's dragControls.start
+                from also kicking off a window drag. Hidden during the
+                close / new-conversation choreography so it doesn't float
+                free of the collapsing panel. */}
+            {newConvoPhase === "idle" && !leaving && (
+              <div
+                role="separator"
+                aria-orientation="horizontal"
+                title="拖曳縮放"
+                className="pointer-events-auto"
+                onPointerDown={(e) => {
+                  e.stopPropagation();
+                  e.preventDefault();
+                  resizeRef.current = {
+                    startX: e.clientX,
+                    startY: e.clientY,
+                    startW: size.w,
+                    startH: size.h,
+                  };
+                  setIsResizing(true);
+                  (e.currentTarget as HTMLElement).setPointerCapture(
+                    e.pointerId,
+                  );
+                  bump();
+                }}
+                onPointerMove={(e) => {
+                  const r = resizeRef.current;
+                  if (!r) return;
+                  const vw = window.innerWidth;
+                  const vh = window.innerHeight;
+                  setSize({
+                    w: Math.max(
+                      420,
+                      Math.min(vw - 32, r.startW + (e.clientX - r.startX)),
+                    ),
+                    h: Math.max(
+                      160,
+                      Math.min(
+                        Math.round(vh * 0.8),
+                        r.startH + (e.clientY - r.startY),
+                      ),
+                    ),
+                  });
+                }}
+                onPointerUp={(e) => {
+                  resizeRef.current = null;
+                  setIsResizing(false);
+                  (e.currentTarget as HTMLElement).releasePointerCapture(
+                    e.pointerId,
+                  );
+                }}
+                style={{
+                  position: "absolute",
+                  right: 4,
+                  bottom: 4,
+                  width: 18,
+                  height: 18,
+                  cursor: "nwse-resize",
+                  borderBottomRightRadius: 10,
+                  // Two diagonal grip strokes in the palette accent colour.
+                  backgroundImage:
+                    "repeating-linear-gradient(135deg," +
+                    " transparent 0 3px," +
+                    " rgba(var(--palette-accent-rgb),0.55) 3px 4.5px)",
+                  WebkitMaskImage:
+                    "linear-gradient(135deg, transparent 0 35%, #000 35%)",
+                  maskImage:
+                    "linear-gradient(135deg, transparent 0 35%, #000 35%)",
+                }}
+              />
+            )}
+            </div>
           );
         })()}
 
@@ -941,7 +1158,7 @@ function Turn({
   clamped,
 }: {
   role: "user" | "assistant" | "system";
-  parts: Array<{ type: string; text?: string }>;
+  parts: Array<{ type: string; text?: string; output?: unknown }>;
   clamped?: boolean;
 }) {
   const isUser = role === "user";
@@ -978,22 +1195,40 @@ function Turn({
     // Note: `matchAll` is safe on a module-scoped /g regex; `.test()` would
     // advance lastIndex and break across re-renders. Don't use it.
     if (!isUser) {
+      // Cards are driven by intents actually created this turn (propose_* tool
+      // outputs, see collectPendingIntentIds) cross-checked against the text
+      // sentinels Duffy emitted. A sentinel positions its card inline; the
+      // IntentCard itself re-validates against the store (a fabricated id 404s
+      // into the invalid-intent warning). A real pending intent the model
+      // forgot to sentinel is appended so it can't silently vanish.
+      const realPending = collectPendingIntentIds(parts);
       const matches = [...text.matchAll(INTENT_SENTINEL)];
-      if (matches.length > 0) {
+      if (matches.length > 0 || realPending.length > 0) {
         const segments: Array<
           { type: "text"; text: string } | { type: "intent"; id: string }
         > = [];
+        const placed = new Set<string>();
         let lastIndex = 0;
         for (const m of matches) {
           const idx = m.index ?? 0;
+          const id = m[1];
           if (idx > lastIndex) {
             segments.push({ type: "text", text: text.slice(lastIndex, idx) });
           }
-          segments.push({ type: "intent", id: m[1] });
-          lastIndex = idx + m[0].length;
+          lastIndex = idx + m[0].length; // strip the control token from text
+          if (!placed.has(id)) {
+            placed.add(id);
+            segments.push({ type: "intent", id });
+          }
         }
         if (lastIndex < text.length) {
           segments.push({ type: "text", text: text.slice(lastIndex) });
+        }
+        for (const id of realPending) {
+          if (!placed.has(id)) {
+            placed.add(id);
+            segments.push({ type: "intent", id });
+          }
         }
         return (
           <div className="text-[14px] leading-relaxed">
