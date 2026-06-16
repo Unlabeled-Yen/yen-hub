@@ -160,11 +160,23 @@ export function Sidebar() {
 
   // The collapse control lives next to the Duffy badge on the dashboard
   // (components/attention-grid.tsx), not in the sidebar header. It fires this
-  // event; the sidebar owns the state.
+  // event; the sidebar owns the state. ⌘S (Ctrl+S) toggles too — works in
+  // both states because this component stays mounted while collapsed (it just
+  // renders null). preventDefault stops the webview's "save page" dialog.
   useEffect(() => {
     const onToggle = () => toggle();
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        toggle();
+      }
+    };
     window.addEventListener("yen:toggle-sidebar", onToggle);
-    return () => window.removeEventListener("yen:toggle-sidebar", onToggle);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("yen:toggle-sidebar", onToggle);
+      window.removeEventListener("keydown", onKey);
+    };
   }, []);
 
   const inDuffy =

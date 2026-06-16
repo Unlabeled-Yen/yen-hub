@@ -455,7 +455,7 @@ export function AttentionGrid({
         <button
           type="button"
           aria-label="toggle sidebar"
-          title="收合 / 展開側欄"
+          title="收合 / 展開側欄 (⌘S)"
           onClick={() => window.dispatchEvent(new CustomEvent("yen:toggle-sidebar"))}
           className="-ml-4 shrink-0 rounded-md p-1 text-[var(--fg-2)] transition-colors hover:bg-white/5 hover:text-[var(--fg-0)]"
         >
