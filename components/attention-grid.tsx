@@ -448,8 +448,32 @@ export function AttentionGrid({
     >
       {/* Duffy entry — sits where the "past N days · 本週注意力" header
           used to be. Header text was removed per Yen 2026-06-02 because it
-          carried no information the chart didn't already convey. */}
-      <DuffyBadge />
+          carried no information the chart didn't already convey.
+          The sidebar collapse toggle sits to its LEFT (per Yen 2026-06-16);
+          it fires `yen:toggle-sidebar` which the sidebar listens for. */}
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          aria-label="toggle sidebar"
+          title="收合 / 展開側欄"
+          onClick={() => window.dispatchEvent(new CustomEvent("yen:toggle-sidebar"))}
+          className="-ml-4 shrink-0 rounded-md p-1 text-[var(--fg-2)] transition-colors hover:bg-white/5 hover:text-[var(--fg-0)]"
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.4"
+            aria-hidden
+          >
+            <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" />
+            <line x1="6" y1="2.5" x2="6" y2="13.5" />
+          </svg>
+        </button>
+        <DuffyBadge />
+      </div>
       <div className="flex items-end" style={{ gap: COL_GAP, paddingTop: 8 }}>
         {plotted.map((z, i) => (
           <ZoneColumn key={z.zone} z={z} scaleMax={scaleMax} index={i} />

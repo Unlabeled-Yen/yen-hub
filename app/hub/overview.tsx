@@ -14,7 +14,6 @@
 
 import { motion, useMotionValue, animate } from "motion/react";
 import { useEffect, useRef, useState } from "react";
-import { CommandPalette } from "@/components/command-palette";
 import { AttentionGrid } from "@/components/attention-grid";
 import { TodoList } from "@/components/todo-list";
 import { ReadingProgress } from "@/components/reading-progress";
@@ -222,30 +221,45 @@ export function Overview() {
   useEffect(() => {
     pageRef.current = page;
   }, [page]);
-  const [vw, setVw] = useState<number>(
-    typeof window === "undefined" ? 1200 : window.innerWidth,
-  );
+  // Page width = the CAROUSEL CONTAINER's width, NOT window.innerWidth. With
+  // the persistent sidebar (and its collapse toggle) the content area is
+  // narrower than the viewport and changes width when the sidebar hides —
+  // measuring the container keeps paging correct and lets the carousel
+  // re-expand when the sidebar collapses. Same ResizeObserver idiom as
+  // readingH above. Seeded with a reasonable fallback for first paint.
+  const carouselContainerRef = useRef<HTMLDivElement | null>(null);
+  const [containerW, setContainerW] = useState<number>(1000);
   useEffect(() => {
-    const onResize = () => setVw(window.innerWidth);
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
+    const node = carouselContainerRef.current;
+    if (!node) return;
+    const update = () => {
+      const w = node.getBoundingClientRect().width;
+      if (w > 0) setContainerW(w);
+    };
+    update();
+    const obs = new ResizeObserver(update);
+    obs.observe(node);
+    const t = window.setTimeout(update, 2500);
+    return () => {
+      obs.disconnect();
+      window.clearTimeout(t);
+    };
   }, []);
   const carouselX = useMotionValue(0);
   useEffect(() => {
-    const controls = animate(carouselX, -page * vw, {
+    const controls = animate(carouselX, -page * containerW, {
       type: "spring",
       stiffness: 220,
       damping: 28,
     });
     return () => controls.stop();
-  }, [page, vw, carouselX]);
+  }, [page, containerW, carouselX]);
 
   // Wheel-driven page change. Accumulates horizontal deltaX from the
   // carousel container; once it crosses THRESH the page flips and the
   // accumulator resets. cooldownRef debounces so one big trackpad
   // flick (which fires many wheel events in quick succession) flips
   // exactly one page, not several.
-  const carouselContainerRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const el = carouselContainerRef.current;
     if (!el) return;
@@ -338,12 +352,13 @@ export function Overview() {
         className="absolute inset-0 flex"
         style={{
           x: carouselX,
-          width: `${PAGE_COUNT * 100}vw`,
+          width: `${PAGE_COUNT * containerW}px`,
         }}
       >
         {/* Page 1 — Home (existing content) */}
         <main
-          className="shrink-0 w-screen h-full px-8 sm:px-12 py-1 overflow-y-auto hub-scrollbar"
+          className="shrink-0 h-full px-8 sm:px-12 py-1 overflow-y-auto hub-scrollbar"
+          style={{ width: containerW }}
         >
           <div className="flex flex-col gap-2 pt-0 min-h-full relative z-10">
             {/* Upper row: chart at max-content, market fills the rest.
@@ -404,7 +419,8 @@ export function Overview() {
             animation engine even while off-screen, contributing to the
             first-paint stutter on Page 1. Plain divs render instantly. */}
         <main
-          className="shrink-0 w-screen h-full px-8 sm:px-12 py-1 overflow-y-auto hub-scrollbar"
+          className="shrink-0 h-full px-8 sm:px-12 py-1 overflow-y-auto hub-scrollbar"
+          style={{ width: containerW }}
         >
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 auto-rows-[140px] gap-4">
             {MODULES.map((m) => (
@@ -447,8 +463,6 @@ export function Overview() {
         ))}
       </nav>
       </div>
-
-      <CommandPalette />
     </motion.div>
   );
 }

@@ -102,6 +102,19 @@ export function setActiveId(id: string | null): void {
   });
 }
 
+/** Permanently delete a conversation — drops it from the cache and the
+ *  server JSON store (DELETE /api/conversations/[id]). If it was the active
+ *  one, active is cleared. Irreversible. */
+export async function deleteConversation(id: string): Promise<void> {
+  cache.delete(id);
+  if (activeId === id) activeId = null;
+  try {
+    await tokenFetch(`/api/conversations/${id}`, { method: "DELETE" });
+  } catch {
+    /* silent — cache already updated; next loadFromServer reconciles */
+  }
+}
+
 export function createConversation(): Conversation {
   const id =
     typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"

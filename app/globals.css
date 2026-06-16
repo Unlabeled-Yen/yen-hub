@@ -17,11 +17,12 @@
   /* Page background alpha — used in body so the Tauri window can be
      semi-transparent (and adjustable via window-controls). 1 = opaque.
      User-controlled at runtime via localStorage `yen-hub:bg-alpha`. */
-  /* Fixed transparency — locked per Yen's call. No runtime adjuster.
-     Tuned to 0.65 — sits between original 0.60 and the 0.78 over-pass;
-     enough body to mask the desktop content but still keeps the
-     translucent layered-glass feel. */
-  --bg-alpha: 0.65;
+  /* Window transparency. Was locked at 0.65; lowered to 0.45 (2026-06-16,
+     Yen's call) so the sidebar — which has no fill of its own — shows more
+     desktop through. This is the master knob: it affects the whole window,
+     not just the sidebar. Raise back toward 0.65 if content gets hard to
+     read over a busy desktop. */
+  --bg-alpha: 0.45;
   --card-alpha: 0.75;
 
   /* Foregrounds (4 階) — bumped for higher dark-mode contrast */
@@ -176,6 +177,33 @@ textarea,
     0 1px 0 rgba(255, 255, 255, 0.04) inset,
     0 0 0 1px rgba(0, 0, 0, 0.4),
     0 24px 64px -24px rgba(0, 0, 0, 0.7);
+}
+
+/* Duffy panel — same frosted surface as the chat palette (see
+   command-palette.tsx). Used by the conversation pages so they read as the
+   same translucent material as talking to Duffy. */
+.duffy-panel {
+  background: rgba(20, 22, 28, 0.55);
+  backdrop-filter: blur(12px) saturate(0.9);
+  -webkit-backdrop-filter: blur(12px) saturate(0.9);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 8px 32px -12px rgba(0, 0, 0, 0.45);
+}
+
+/* Sidebar glass — translucent so the DESKTOP shows through like the rest of
+   the app (the chart area etc). The body already lays down rgba(0,0,0,0.65)
+   over the desktop; the sidebar must NOT add a dark fill on top or it goes
+   opaque. Instead just a faint light sheen + blur + the right border, so it
+   reads as a panel while staying as see-through as the content area. */
+.sidebar-glass {
+  /* No fill — let the window's transparency + the (now lighter) body tint
+     show the desktop through. Only a soft blur so it still reads as frosted
+     glass rather than a hole. The right border (set on the element) is the
+     only thing delineating it. */
+  background: transparent;
+  backdrop-filter: blur(10px) saturate(1.1);
+  -webkit-backdrop-filter: blur(10px) saturate(1.1);
 }
 
 /* Module card — solid rgba only, NO backdrop-filter.
