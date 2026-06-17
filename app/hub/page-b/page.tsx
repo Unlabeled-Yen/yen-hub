@@ -16,13 +16,11 @@
  * Inherits the hub layout (auth + WorldClock badge top-right).
  */
 
-import Link from "next/link";
 import { CoachCard } from "@/components/page-b/coach-card";
 import { IntentQueue } from "@/components/page-b/intent-queue";
 import { MarkHighReadOnMount } from "@/components/page-b/mark-high-read-on-mount";
 import { MemoryTabs } from "@/components/page-b/memory-tabs";
 import { SchedulesPanel } from "@/components/page-b/schedules-panel";
-import { SensorStrip } from "@/components/page-b/sensor-strip";
 import { AutoPilotToggle } from "@/components/page-b/auto-pilot-toggle";
 import { NotificationsToggle } from "@/components/page-b/notifications-toggle";
 import { TelegramToggle } from "@/components/page-b/telegram-toggle";
@@ -71,34 +69,18 @@ export default async function PageB() {
   // /api/coach. SWR pattern.
   const initialCoach = await readCoachCardFromDisk();
   return (
-    <div className="min-h-screen px-8 sm:px-12 py-14">
-      {/* ── Header — same width discipline as home (full-bleed, just inset) ── */}
-      <header className="mb-20 flex items-end justify-between">
-        <div>
-          <h1
-            className="text-[120px] leading-[0.85] tracking-tight text-[var(--fg-0)] select-none"
-            style={{ fontFamily: "var(--font-display)" }}
-          >
-            Duffy
-          </h1>
-          <p className="mt-4 text-[11px] font-mono tracking-[0.32em] uppercase text-[var(--fg-2)]">
-            你的副駕 · personal copilot
-          </p>
-        </div>
-        <Link
-          href="/hub"
-          className="text-[10px] font-mono tracking-[0.24em] uppercase text-[var(--fg-2)] hover:text-[var(--fg-0)] transition-colors"
-        >
-          ← home
-        </Link>
-      </header>
-
-      {/* ── Main — 12-col asymmetric grid, full viewport width ─────── */}
+    // Extra dark layer on top of the global body tint (--bg-alpha 0.45) so
+    // this info-dense page reads more solid than the translucent dashboard.
+    // Combined ≈ 0.63 opaque. Lower the 0.32 to make page-b more see-through.
+    <div
+      className="min-h-screen px-8 sm:px-12 py-14"
+      style={{ background: "rgba(0,0,0,0.32)" }}
+    >
+      {/* Header + Sensor strip removed per Yen 2026-06-17 — the sidebar nav
+          provides identity/return, and the giant title / sensor banner were
+          rarely used. Page now opens straight into today's content. */}
       <main>
         <MarkHighReadOnMount />
-
-        {/* Sensor strip — slim banner, unnumbered. */}
-        <SensorStrip />
 
         {/* ── Tier 1: 行動 + 對話（並排，最大視覺權重）─────────────── */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-x-8 gap-y-10 mb-14">
@@ -121,15 +103,31 @@ export default async function PageB() {
           <SchedulesPanel />
         </section>
 
-        {/* ── Tier 2.5: 信任分層（Slice 8.7B v2 + Slice 12 Phase 3+4 + 通知） */}
+        {/* ── Tier 2.5: 信任分層 — collapsed by default (set-once controls).
+             Native <details> so it stays a server component. */}
         <section className="mb-14">
-          <SectionMark num="04" name="信任分層" />
-          <TierSuggestion />
-          <TrustDial />
-          <AutoPilotToggle />
-          <NotificationsToggle />
-          <TelegramToggle />
-          <TokenUsageBar />
+          <details className="group">
+            <summary className="mb-5 flex cursor-pointer items-baseline gap-3 list-none [&::-webkit-details-marker]:hidden">
+              <span className="text-[10px] font-mono tracking-[0.32em] uppercase text-[var(--accent)]">
+                04
+              </span>
+              <span className="text-[10px] font-mono tracking-[0.32em] uppercase text-[var(--fg-2)]">
+                信任分層
+              </span>
+              <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-[var(--fg-3)] transition-transform group-open:rotate-90">
+                ›
+              </span>
+              <div className="h-px flex-1 bg-[var(--fg-3)] opacity-30" />
+            </summary>
+            <div className="pt-2">
+              <TierSuggestion />
+              <TrustDial />
+              <AutoPilotToggle />
+              <NotificationsToggle />
+              <TelegramToggle />
+              <TokenUsageBar />
+            </div>
+          </details>
         </section>
 
         {/* ── Tier 3: 記憶（合併 tabbed、預設折疊風格的低調區）────── */}

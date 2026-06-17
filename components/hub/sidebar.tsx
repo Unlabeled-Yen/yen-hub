@@ -113,6 +113,13 @@ export function Sidebar() {
           </div>
         )}
 
+        <Link
+          href="/hub/skills"
+          className={navRowCls(pathname.startsWith("/hub/skills"))}
+        >
+          Skill 管理中心
+        </Link>
+
         {/* Placeholder for the future group-management page. */}
         <span
           aria-disabled
