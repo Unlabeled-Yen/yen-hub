@@ -42,6 +42,7 @@ export type FlightEventType =
   | "tool-call"
   | "tool-result"
   | "response-finished"
+  | "self-check:unsearched-denial" // PRD v3 A1
   | "error";
 
 export function recordRuntime(

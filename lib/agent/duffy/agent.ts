@@ -39,6 +39,13 @@ import {
 } from "@/lib/agent/storage/summaries";
 import { hasAnyLLMKey, pickModel, modelLabel } from "@/lib/ai/model";
 import { recordRuntime } from "@/lib/agent/duffy/flight-recorder";
+import {
+  detectUnsearchedDenial,
+  isReadTool,
+  markPendingSelfCheck,
+  consumePendingSelfCheck,
+  SELF_CHECK_REMINDER,
+} from "@/lib/agent/duffy/self-check";
 
 export type DuffyContext = {
   /** Yen's request, with the leading "Duffy" stripped. */
@@ -58,7 +65,7 @@ export type DuffyContext = {
  * silhouette + current week summary. Pre-bootstrap (no silhouette yet) gets
  * an inline note instead, so Duffy knows to offer "introduce yourself".
  */
-async function composeSystemPrompt(): Promise<string> {
+async function composeSystemPrompt(convoId?: string): Promise<string> {
   // 5-part composition (Hermes-style frozen injection):
   //   0. TIME    — current instant (server-injected, AI never has to fetch)
   //   1. SOUL    — who Duffy is (vault-editable, personality)
@@ -77,6 +84,13 @@ async function composeSystemPrompt(): Promise<string> {
     getCurrentWeekSummary(),
   ]);
   const parts: string[] = [];
+
+  // PRD v3 A1 — one-shot self-correction reminder, if last turn denied a
+  // capability without searching. Consumed (cleared) on read; sits at the very
+  // top so it's the most salient thing this turn.
+  if (convoId && consumePendingSelfCheck(convoId)) {
+    parts.push(SELF_CHECK_REMINDER);
+  }
 
   // 0. TIME — frozen as of this prompt build.
   const now = new Date();
@@ -182,7 +196,7 @@ export async function runDuffy(ctx: DuffyContext): Promise<Response> {
   // prompt rule, especially on Kimi K2.6.
   const messages = rewriteGreetSentinel(ctx.messages);
 
-  const systemPrompt = await composeSystemPrompt();
+  const systemPrompt = await composeSystemPrompt(ctx.conversationId);
 
   // Per-turn ID. Used as the inflight key tail; client matches via
   // conversation_id but turnId helps debug "which response is this".
@@ -238,6 +252,9 @@ export async function runDuffy(ctx: DuffyContext): Promise<Response> {
   let finalized = false;
   let finalText = "";
   let finalFinishReason: string | undefined;
+  // PRD v3 A1 — did Duffy look anything up this turn? Used to detect
+  // "claimed it can't, without searching".
+  let searchedThisTurn = false;
   const ensureFinalized = async (
     reason: "onFinish" | "onError" | "stream-close",
     opts?: { text?: string; error?: string; finishReason?: string },
@@ -298,6 +315,7 @@ export async function runDuffy(ctx: DuffyContext): Promise<Response> {
     // calls get_current_time / propose_schedule / etc. or skips them.
     onStepFinish({ toolCalls, toolResults }) {
       for (const tc of toolCalls ?? []) {
+        if (isReadTool(tc.toolName)) searchedThisTurn = true; // PRD v3 A1
         recordRuntime("tool-call", {
           turnId,
           tool: tc.toolName,
@@ -324,6 +342,17 @@ export async function runDuffy(ctx: DuffyContext): Promise<Response> {
     async onFinish({ text, usage, finishReason }) {
       finalText = text;
       finalFinishReason = finishReason;
+      // PRD v3 A1 (造法二) — did Duffy claim it can't do something WITHOUT
+      // searching this turn? Text already streamed; we can't retract it, so
+      // flag a one-shot reminder for the NEXT turn to search before re-claiming.
+      if (convoId && detectUnsearchedDenial(text, searchedThisTurn)) {
+        recordRuntime("self-check:unsearched-denial", {
+          turnId,
+          convoId,
+          firstChars: text.slice(0, 200),
+        });
+        markPendingSelfCheck(convoId);
+      }
       try {
         const { recordTokenUsage } = await import(
           "@/lib/agent/storage/token-usage"
