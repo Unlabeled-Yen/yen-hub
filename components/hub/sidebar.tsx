@@ -7,7 +7,10 @@
  * When the Duffy section is active, the conversation list (ConversationListNav)
  * appears beneath it — click a row to continue, right-click for the menu.
  *
- * Collapsible: the whole column hides (state persisted in localStorage); a
+ * Collapsible: the whole column hides. Per Yen (2026-06-18) it starts
+ * COLLAPSED on every entry into the hub — toggling (⌘S / the Duffy-badge
+ * control) works within the session, but a fresh launch/reload always begins
+ * collapsed (no persisted-expanded restore). A
  * floating reopen pill sits top-left (clear of the macOS traffic lights). The
  * content area is `flex-1`, so when this column collapses the carousel /
  * page-b expand to fill — the overview carousel re-measures its width via
@@ -23,8 +26,6 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ConversationListNav } from "@/components/hub/conversation-list-nav";
 
-const COLLAPSE_KEY = "yen-hub:sidebar-collapsed";
-
 /** Shared link row styling for top-level + sub-items. */
 function navRowCls(active: boolean): string {
   return [
@@ -37,28 +38,13 @@ function navRowCls(active: boolean): string {
 
 export function Sidebar() {
   const pathname = usePathname();
-  const [collapsed, setCollapsed] = useState(false);
+  // Starts collapsed on every entry/reload (initial true also matches the SSR
+  // render → no hydration mismatch). We intentionally do NOT restore an
+  // expanded state from storage — Yen wants the hub to open with the left
+  // column tucked away each time.
+  const [collapsed, setCollapsed] = useState(true);
 
-  // Hydrate collapse state from localStorage after mount (initial false
-  // matches SSR → no hydration mismatch).
-  useEffect(() => {
-    try {
-      setCollapsed(localStorage.getItem(COLLAPSE_KEY) === "1");
-    } catch {
-      /* ignore */
-    }
-  }, []);
-
-  const toggle = () =>
-    setCollapsed((c) => {
-      const next = !c;
-      try {
-        localStorage.setItem(COLLAPSE_KEY, next ? "1" : "0");
-      } catch {
-        /* ignore */
-      }
-      return next;
-    });
+  const toggle = () => setCollapsed((c) => !c);
 
   // The collapse control lives next to the Duffy badge on the dashboard
   // (components/attention-grid.tsx), not in the sidebar header. It fires this
