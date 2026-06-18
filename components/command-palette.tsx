@@ -74,82 +74,116 @@ type NewConvoPhase =
  *    - inflight.text NOT in messages     → append as assistant turn
  *  Status 'done' / 'error' entries are cleared after consumption; 'streaming'
  *  entries are left untouched so a later poll can pick up more text.        */
+function assistantTailText(msgs: UIMessage[]): string {
+  const last = msgs[msgs.length - 1];
+  if (!last || last.role !== "assistant") return "";
+  return (last.parts ?? [])
+    .filter((p): p is { type: "text"; text: string } => p.type === "text")
+    .map((p) => p.text)
+    .join("");
+}
+
+/** Merge the server's authoritative `text` into the conversation as the
+ *  trailing assistant turn. If the last turn is already a partial assistant
+ *  message (the foreground stream died mid-thought while the window was
+ *  hidden — the client holds a prefix of what the server finished), REPLACE
+ *  it so we never end up with "partial" + "full" duplicated. Otherwise append
+ *  a fresh assistant turn. */
+function mergeInflightText(
+  msgs: UIMessage[],
+  turnId: string,
+  text: string,
+): UIMessage[] {
+  const full: UIMessage = {
+    id: turnId,
+    role: "assistant",
+    parts: [{ type: "text", text }],
+  } as UIMessage;
+  const last = msgs[msgs.length - 1];
+  if (last && last.role === "assistant") {
+    // Replace the trailing assistant turn (it's the partial we're catching up).
+    return [...msgs.slice(0, -1), full];
+  }
+  return [...msgs, full];
+}
+
+/** Slice 7.7 (reopen recovery, 2026-06-18) — pull the server-side inflight
+ *  response for this conversation and merge it back in.
+ *
+ *  Why this matters: CommandPalette is mounted in the /hub layout and never
+ *  unmounts, so closing the palette / hiding the window keeps useChat's state
+ *  but WKWebView suspends the in-flight SSE fetch. The server doesn't get the
+ *  abort (runDuffy never propagates it) and finishes the turn into the inflight
+ *  store. On reopen we replay that finished (or still-finishing) text here.
+ *
+ *  If the server is still streaming when Yen reopens, we POLL until it
+ *  finalizes so a turn reopened mid-flight catches up to completion instead of
+ *  freezing at the snapshot. Best-effort throughout — any failure is silent. */
 async function reconcileInflight(
   convoId: string,
   current: UIMessage[],
   apply: (next: UIMessage[]) => void,
-): Promise<void> {
-  try {
-    const headers: Record<string, string> = sidecarHeaders();
-    const res = await fetch(
+): Promise<boolean> {
+  const headers: Record<string, string> = sidecarHeaders();
+  const del = (): void => {
+    void fetch(
       `/api/chat/inflight?conversation=${encodeURIComponent(convoId)}`,
-      { headers },
+      { method: "DELETE", headers },
     );
-    if (!res.ok) return;
-    const data = (await res.json()) as {
-      inflight: {
-        turnId: string;
-        text: string;
-        status: "streaming" | "done" | "error";
-        error?: string;
-      } | null;
-    };
-    const inflight = data.inflight;
-    if (!inflight) return;
-    // Patch C (2026-06-14) — orphan cleanup。空文字 + done/error 表示 server
-    // 那邊（Patch A 的 stream-close watchdog）強制收尾、但 Kimi 從未產出文字。
-    // 舊版直接 return、連 DELETE 都不發、orphan entry 永遠留在 inflight.json，
-    // 每次 reopen 都重跑這條無意義路徑。先 DELETE 再 return。
-    if (!inflight.text) {
-      if (inflight.status !== "streaming") {
-        void fetch(
-          `/api/chat/inflight?conversation=${encodeURIComponent(convoId)}`,
-          { method: "DELETE", headers },
-        );
-      }
-      return;
-    }
-
-    // Already merged? Compare against last assistant message.
-    const lastAssistant = [...current]
-      .reverse()
-      .find((m) => m.role === "assistant");
-    const lastAssistantText = lastAssistant
-      ? (lastAssistant.parts ?? [])
-          .filter((p): p is { type: "text"; text: string } => p.type === "text")
-          .map((p) => p.text)
-          .join("")
-      : "";
-    if (lastAssistantText && lastAssistantText.includes(inflight.text)) {
-      // Server text is a subset of what client already has — nothing new.
-      // Still clear on done/error so subsequent reopens don't churn.
-      if (inflight.status !== "streaming") {
-        void fetch(
-          `/api/chat/inflight?conversation=${encodeURIComponent(convoId)}`,
-          { method: "DELETE", headers },
-        );
-      }
-      return;
-    }
-
-    // Append (or replace tail) — simplest correct behaviour: add a new
-    // assistant message with the full server text.
-    const newAssistant: UIMessage = {
-      id: inflight.turnId,
-      role: "assistant",
-      parts: [{ type: "text", text: inflight.text }],
-    } as UIMessage;
-    apply([...current, newAssistant]);
-
-    if (inflight.status !== "streaming") {
-      void fetch(
+  };
+  let working = current;
+  let mergedAnything = false;
+  // ~72s ceiling (120 × 600ms) — far longer than any real Duffy turn, but
+  // bounded so a wedged "streaming" entry can't poll forever.
+  for (let i = 0; i < 120; i++) {
+    let inflight:
+      | {
+          turnId: string;
+          text: string;
+          status: "streaming" | "done" | "error";
+          error?: string;
+        }
+      | null;
+    try {
+      const res = await fetch(
         `/api/chat/inflight?conversation=${encodeURIComponent(convoId)}`,
-        { method: "DELETE", headers },
+        { headers },
       );
+      if (!res.ok) return mergedAnything;
+      inflight = ((await res.json()) as { inflight: typeof inflight }).inflight;
+    } catch {
+      return mergedAnything; // best-effort
     }
-  } catch {
-    /* silent — inflight reconciliation is best-effort */
+    if (!inflight) return mergedAnything;
+
+    const stillStreaming = inflight.status === "streaming";
+
+    // Patch C (2026-06-14) — orphan cleanup。空文字 + done/error 表示 server
+    // （Patch A 的 stream-close watchdog）強制收尾、但 Kimi 從未產出文字。
+    // DELETE 掉，別讓 orphan entry 每次 reopen 都重跑。
+    if (!inflight.text) {
+      if (!stillStreaming) {
+        del();
+        return mergedAnything;
+      }
+    } else {
+      // Already have this text (or more) as the tail? Don't churn.
+      const tail = assistantTailText(working);
+      if (!tail.includes(inflight.text)) {
+        working = mergeInflightText(working, inflight.turnId, inflight.text);
+        apply(working);
+        mergedAnything = true;
+      }
+      if (!stillStreaming) {
+        del();
+        return mergedAnything;
+      }
+    }
+
+    // Server still streaming → wait, then poll again to catch up.
+    await new Promise((r) => setTimeout(r, 600));
   }
+  return mergedAnything;
 }
 
 function isEditableTarget(t: EventTarget | null): boolean {
@@ -292,28 +326,47 @@ export function CommandPalette() {
   // that Duffy finished (or is still finishing) while the palette was
   // closed. Slice 7.7 + Slice 8.7 (server-side conversations).
   useEffect(() => {
-    if (!open || convo) return;
+    if (!open) return;
     let cancelled = false;
     (async () => {
-      // Slice 8.7 — load cache from server before reading. localStorage
-      // doesn't survive port churn; the server JSON does.
-      await loadFromServer();
+      let active = convo;
+      let baseline: UIMessage[];
+      if (!active) {
+        // First open after mount — hydrate the active conversation. Slice 8.7:
+        // load cache from server first (localStorage doesn't survive port
+        // churn; the server JSON does).
+        await loadFromServer();
+        if (cancelled) return;
+        active = ensureActive();
+        setConvo(active);
+        if (active.messages.length > 0) setMessages(active.messages);
+        baseline = active.messages as UIMessage[];
+      } else {
+        // Reopen within the same session — CommandPalette lives in the /hub
+        // layout and never unmounts, so useChat still holds whatever was on
+        // screen (possibly a partial turn whose SSE fetch the OS suspended
+        // when the window was hidden). Reconcile against that live state.
+        baseline = messages as UIMessage[];
+      }
       if (cancelled) return;
-      const c = ensureActive();
-      setConvo(c);
-      if (c.messages.length > 0) setMessages(c.messages);
-      void reconcileInflight(c.id, c.messages as UIMessage[], (next) => {
+      // If the window was hidden mid-stream, useChat can be frozen at
+      // submitted/streaming on top of a dead request — that's the "Duffy
+      // stopped thinking and never replied" symptom. Reset it so the merged
+      // text takes and the thinking indicator clears, then replay the
+      // server-side inflight response (which kept running and finalized).
+      if (status === "submitted" || status === "streaming") stop();
+      const c = active;
+      void reconcileInflight(c.id, baseline, (next) => {
         setMessages(next);
-        saveConversation({
-          ...c,
-          messages: next,
-          updatedAt: Date.now(),
-        });
+        saveConversation({ ...c, messages: next, updatedAt: Date.now() });
       });
     })();
     return () => {
       cancelled = true;
     };
+    // Keyed on `open` only — reconciling on EVERY open is the whole point
+    // (recover turns suspended while hidden). Adding status/messages/convo
+    // would re-fire mid-stream and wrongly stop() a live response.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 

@@ -252,6 +252,9 @@ export async function runDuffy(ctx: DuffyContext): Promise<Response> {
   let finalized = false;
   let finalText = "";
   let finalFinishReason: string | undefined;
+  // Did any text actually stream this turn? Lets a stream-close fallback keep
+  // the accumulated inflight text instead of wiping it to "".
+  let sawText = false;
   // PRD v3 A1 — did Duffy look anything up this turn? Used to detect
   // "claimed it can't, without searching".
   let searchedThisTurn = false;
@@ -261,21 +264,29 @@ export async function runDuffy(ctx: DuffyContext): Promise<Response> {
   ): Promise<void> => {
     if (finalized) return;
     finalized = true;
-    const text = opts?.text ?? finalText;
+    // Authoritative text only comes from onFinish. For onError / stream-close
+    // we pass NO finalText, so finalizeInflight keeps whatever appendInflight
+    // already accumulated — otherwise a late close would blank a reply that
+    // actually streamed (the "close palette mid-thought → reply lost" bug).
+    const text = opts?.text;
+    const hasText = text != null ? text.length > 0 : sawText;
+    const status: "done" | "error" =
+      opts?.error && !hasText ? "error" : "done";
     recordRuntime("response-finished", {
       turnId,
-      chars: text.length,
-      firstChars: text.slice(0, 500),
+      chars: text?.length ?? null,
+      firstChars: text?.slice(0, 500) ?? null,
       closeReason: reason,
       finishReason: opts?.finishReason ?? finalFinishReason ?? null,
       error: opts?.error ?? null,
+      sawText,
     });
     if (!convoId) return;
     await finalizeInflight({
       conversationId: convoId,
-      status: opts?.error ? "error" : "done",
+      status,
       finalText: text,
-      error: opts?.error,
+      error: status === "error" ? opts?.error : undefined,
     });
   };
 
@@ -306,9 +317,9 @@ export async function runDuffy(ctx: DuffyContext): Promise<Response> {
     // Slice 7.7: as Kimi emits text deltas, mirror them into the inflight
     // store so we can recover the response if the client disconnects.
     onChunk({ chunk }) {
-      if (!convoId) return;
       if (chunk.type === "text-delta") {
-        void appendInflight(convoId, chunk.text);
+        sawText = true;
+        if (convoId) void appendInflight(convoId, chunk.text);
       }
     },
     // Flight recorder — log every tool call so we can see if Duffy actually
@@ -376,49 +387,35 @@ export async function runDuffy(ctx: DuffyContext): Promise<Response> {
     },
   });
 
-  const httpResponse = result.toUIMessageStreamResponse({
+  // Slice 7.7 fix (2026-06-18) — drive generation to completion on the SERVER,
+  // decoupled from the HTTP client.
+  //
+  // The old approach wrapped the HTTP response stream and treated its close as
+  // the authoritative "turn done" signal. But closing the palette cancels that
+  // stream → nobody drains streamText's output → backpressure pauses the model
+  // → onChunk/onFinish never complete → the turn was finalized empty and the
+  // reply was LOST. That's the "close the box mid-thought and Duffy never
+  // replies" bug.
+  //
+  // consumeStream() pulls the model stream server-side regardless of whether
+  // the webview stays connected, so appendInflight (per delta) and onFinish
+  // (full text) run to completion even after Yen closes the palette. The client
+  // re-merges the finished text from the inflight store on reopen
+  // (reconcileInflight in command-palette.tsx). The .then/.catch is a
+  // belt-and-braces finalizer for the SDK/Kimi finish_reason-mismatch case
+  // where onFinish never fires — it keeps the accumulated text (see
+  // ensureFinalized) instead of blanking it.
+  void result.consumeStream().then(
+    () => ensureFinalized("stream-close", {}),
+    (err: unknown) =>
+      ensureFinalized("onError", {
+        error: err instanceof Error ? err.message : String(err),
+      }),
+  );
+
+  return result.toUIMessageStreamResponse({
     onError(error) {
       return error instanceof Error ? error.message : String(error);
     },
-  });
-
-  // Patch A — HTTP stream-close watchdog。
-  // 包一層 ReadableStream、把 finally 當成「stream 真的關了」的權威訊號。
-  // 不論 onFinish/onError 有沒有跑、stream 關了就強制走 ensureFinalized()。
-  // idempotent 保證不會跟正常路徑打架。
-  const upstream = httpResponse.body;
-  if (!upstream) {
-    await ensureFinalized("stream-close", {
-      error: "no response body — streamText returned without stream",
-    });
-    return httpResponse;
-  }
-  const wrapped = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      const reader = upstream.getReader();
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          controller.enqueue(value);
-        }
-        controller.close();
-      } catch (err) {
-        controller.error(err);
-      } finally {
-        if (!finalized) {
-          await ensureFinalized("stream-close", {
-            error:
-              "stream closed without onFinish/onError — likely SDK/model finish_reason mismatch",
-          });
-        }
-      }
-    },
-  });
-
-  return new Response(wrapped, {
-    status: httpResponse.status,
-    statusText: httpResponse.statusText,
-    headers: httpResponse.headers,
   });
 }
