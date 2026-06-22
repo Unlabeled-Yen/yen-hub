@@ -18,6 +18,37 @@ import { IntentCard } from "@/components/agent/intent-card";
  *  See `lib/agent/duffy/prompt.ts` and `lib/agent/duffy/agent.ts`. */
 export const INTENT_SENTINEL = /<<INTENT:(int_[A-Za-z0-9-]+)>>/g;
 
+const MODE_NAMES = ["coach", "do", "watch", "pair"];
+
+/**
+ * Hide the leading `[coach]` / `[do (locked)]` mode tag from Duffy's reply.
+ *
+ * Duffy still EMITS the tag — it's load-bearing for his internal stance and the
+ * `@mode` override, and the Telegram surface strips it the same way
+ * (telegram-poller.stripModeTag). Yen just doesn't want to SEE it in the .app
+ * chat, so we drop it at render only; the stored history keeps the full text
+ * for context continuity.
+ *
+ * Handles the mid-stream case: while the tag is still typing (`[co`…) we hold
+ * back the unclosed prefix if it could become a real mode tag, so it never
+ * flashes on screen before the closing `]` arrives.
+ */
+function stripLeadingModeTag(raw: string): string {
+  const closed = raw.match(/^(\s*)\[([^\]]*)\]\s*\n?([\s\S]*)$/);
+  if (closed) {
+    const inner = closed[2].trim().replace(/\s*\(locked\)$/i, "").toLowerCase();
+    return MODE_NAMES.includes(inner) ? closed[3] : raw;
+  }
+  // No closing ']' yet — if what streamed so far is a viable prefix of
+  // "[<mode>", suppress it until we know whether it's really a tag.
+  const open = raw.match(/^\s*\[([a-z]*)$/i);
+  if (open) {
+    const sofar = open[1].toLowerCase();
+    if (MODE_NAMES.some((m) => m.startsWith(sofar))) return "";
+  }
+  return raw;
+}
+
 /** Root fix (2026-06-15): approval cards are driven by intents Duffy ACTUALLY
  *  created this turn — the `status: "pending"` outputs of propose_* tool calls
  *  carried in the assistant message's parts — not by trusting the model's
@@ -49,10 +80,14 @@ export function Turn({
   clamped?: boolean;
 }) {
   const isUser = role === "user";
-  const text = parts
+  const rawText = parts
     .filter((p) => p.type === "text")
     .map((p) => p.text ?? "")
     .join("");
+  // Assistant replies open with a `[mode]` tag Duffy emits for his own stance;
+  // hide it from the .app chat (mirrors the Telegram surface). User text is
+  // never touched.
+  const text = isUser ? rawText : stripLeadingModeTag(rawText);
 
   // In clamped (peek) mode: hide role label and clamp text to one line.
   // The label is animated out via motion's height tween implicitly through
