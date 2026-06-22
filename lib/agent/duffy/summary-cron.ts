@@ -27,6 +27,7 @@ import {
   type SummaryKeyNumber,
   isoWeek,
 } from "@/lib/agent/storage/types";
+import { taipeiWallClock } from "@/lib/agent/duffy/tz";
 
 const POLL_INTERVAL_MS = 30 * 60 * 1000; // 30 min
 
@@ -59,9 +60,9 @@ const state: State = {
 };
 
 function shouldFireNow(now: Date): boolean {
-  const dow = now.getDay(); // 0 = Sunday
-  const hour = now.getHours();
-  return dow === 0 && hour >= 20;
+  // Sunday >= 20:00 in Asia/Taipei (not system local).
+  const wc = taipeiWallClock(now.getTime());
+  return wc.dow === 0 && wc.hour >= 20;
 }
 
 async function alreadyCoveredOrPending(week: string): Promise<boolean> {

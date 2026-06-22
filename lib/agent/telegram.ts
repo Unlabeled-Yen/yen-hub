@@ -12,6 +12,19 @@ const API = "https://api.telegram.org";
 const SEND_TIMEOUT_MS = 10_000;
 const LONG_POLL_TIMEOUT_S = 25; // Telegram caps at 50; 25 keeps reactivity.
 
+/**
+ * Thrown by `getTelegramUpdates` on HTTP 429 so the poll loop can honour
+ * Telegram's rate limit instead of spinning. Before this, a 429 fell into the
+ * generic `!res.ok → return []` path and read as "no updates" — the long poll
+ * returns instantly on 429, so the loop hammered the API in a tight loop.
+ */
+export class TelegramRateLimitError extends Error {
+  constructor(public readonly retryAfterMs: number) {
+    super(`telegram rate-limited; retry after ${Math.round(retryAfterMs / 1000)}s`);
+    this.name = "TelegramRateLimitError";
+  }
+}
+
 /** Telegram has a 4096-char limit per message. Longer text is chunked. */
 const TG_MAX_TEXT = 4000;
 
@@ -126,7 +139,25 @@ export async function getTelegramUpdates(args: {
   try {
     const res = await fetch(url, { signal: ctrl.signal });
     clearTimeout(t);
-    if (!res.ok) return [];
+    if (!res.ok) {
+      if (res.status === 429) {
+        // retry_after (seconds) comes in the JSON body's `parameters`, or the
+        // Retry-After header as a fallback. Surface it so the loop backs off.
+        let retryAfterS = Number(res.headers.get("retry-after")) || 0;
+        try {
+          const body = (await res.json()) as {
+            parameters?: { retry_after?: number };
+          };
+          if (body?.parameters?.retry_after) {
+            retryAfterS = body.parameters.retry_after;
+          }
+        } catch {
+          /* body may be empty / non-JSON — header fallback already read */
+        }
+        throw new TelegramRateLimitError(Math.max(1, retryAfterS) * 1000);
+      }
+      return [];
+    }
     const data = (await res.json()) as {
       ok: boolean;
       result?: Array<{
@@ -211,7 +242,11 @@ export async function getTelegramUpdates(args: {
       });
     }
     return out;
-  } catch {
+  } catch (e) {
+    clearTimeout(t);
+    // Let the rate-limit signal propagate so the poll loop can back off;
+    // swallow everything else (transient network blips → treat as "no updates").
+    if (e instanceof TelegramRateLimitError) throw e;
     return [];
   }
 }

@@ -13,6 +13,7 @@
 import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { persistJson, withStoreLock } from "./atomic-write";
 import { type Schedule, newScheduleId } from "./types";
 
 const DIR = join(homedir(), "Library", "Application Support", "com.yen.hub");
@@ -37,12 +38,13 @@ async function load(): Promise<ScheduleMap> {
   return mem;
 }
 
+// Atomic + observable persist of `mem`. Call only inside a withStoreLock(FILE,
+// …) section — the scheduler's overlapping/initial ticks can otherwise
+// load-mutate-write concurrently and clobber a markFired (the dedupe relies on
+// markFired landing).
 async function persist(): Promise<void> {
   if (!mem) return;
-  await fs.mkdir(DIR, { recursive: true });
-  const tmp = FILE + ".tmp-" + Date.now();
-  await fs.writeFile(tmp, JSON.stringify(mem, null, 2), "utf8");
-  await fs.rename(tmp, FILE);
+  await persistJson(FILE, mem);
 }
 
 export async function listSchedules(opts?: {
@@ -72,7 +74,6 @@ export async function createSchedule(input: {
   one_shot?: boolean;
   not_before?: number;
 }): Promise<Schedule> {
-  const map = await load();
   const now = Date.now();
   const s: Schedule = {
     id: newScheduleId(),
@@ -89,18 +90,23 @@ export async function createSchedule(input: {
     one_shot: input.one_shot,
     not_before: input.not_before,
   };
-  map[s.id] = s;
-  await persist();
+  await withStoreLock(FILE, async () => {
+    const map = await load();
+    map[s.id] = s;
+    await persist();
+  });
   return s;
 }
 
 export async function setEnabled(id: string, enabled: boolean): Promise<Schedule | null> {
-  const map = await load();
-  const s = map[id];
-  if (!s) return null;
-  s.enabled = enabled;
-  await persist();
-  return s;
+  return withStoreLock(FILE, async () => {
+    const map = await load();
+    const s = map[id];
+    if (!s) return null;
+    s.enabled = enabled;
+    await persist();
+    return s;
+  });
 }
 
 /** Hard-delete a schedule from the store. Used by the panel's manual
@@ -108,18 +114,22 @@ export async function setEnabled(id: string, enabled: boolean): Promise<Schedule
  *  unlike setEnabled(false), the row is gone, not just dimmed. Returns
  *  true if a row was removed. */
 export async function deleteSchedule(id: string): Promise<boolean> {
-  const map = await load();
-  if (!map[id]) return false;
-  delete map[id];
-  await persist();
-  return true;
+  return withStoreLock(FILE, async () => {
+    const map = await load();
+    if (!map[id]) return false;
+    delete map[id];
+    await persist();
+    return true;
+  });
 }
 
 export async function markFired(id: string, when: number): Promise<void> {
-  const map = await load();
-  const s = map[id];
-  if (!s) return;
-  s.last_fired_at = when;
-  s.fire_count += 1;
-  await persist();
+  await withStoreLock(FILE, async () => {
+    const map = await load();
+    const s = map[id];
+    if (!s) return;
+    s.last_fired_at = when;
+    s.fire_count += 1;
+    await persist();
+  });
 }

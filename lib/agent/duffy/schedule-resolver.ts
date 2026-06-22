@@ -8,7 +8,13 @@
  * touches epoch ms or 5-field cron syntax.
  *
  * All functions are pure (modulo the `now` parameter you can inject for tests).
+ *
+ * All wall-clock interpretation is anchored to Asia/Taipei (see tz.ts), NOT the
+ * system timezone — so "tomorrow 09:00" and `once`'s HH:MM cron resolve to the
+ * same instant in dev/CI (usually UTC) as in production.
  */
+
+import { fromTaipeiShifted, taipeiShifted, taipeiWallClock } from "./tz";
 
 /** Day-of-week to cron-DOW number. cron-DOW: 0=Sunday … 6=Saturday. */
 const WEEKDAY_MAP: Record<string, number> = {
@@ -57,10 +63,12 @@ export function parseRelativeTime(input: string, now: Date = new Date()): number
     if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
       throw new Error(`out-of-range time: ${hour}:${minute}`);
     }
-    const target = new Date(now);
-    target.setDate(target.getDate() + dayOffset);
-    target.setHours(hour, minute, 0, 0);
-    return target.getTime();
+    // Interpret day + HH:MM in Asia/Taipei: shift into the Taipei frame, mutate
+    // with setUTC* (rollover-safe), shift back.
+    const target = taipeiShifted(now.getTime());
+    target.setUTCDate(target.getUTCDate() + dayOffset);
+    target.setUTCHours(hour, minute, 0, 0);
+    return fromTaipeiShifted(target);
   }
 
   // this-{weekday} / next-{weekday} + HH:MM
@@ -69,7 +77,7 @@ export function parseRelativeTime(input: string, now: Date = new Date()): number
   );
   if (wkMatch) {
     const targetDow = WEEKDAY_MAP[wkMatch[2]];
-    const currentDow = now.getDay();
+    const currentDow = taipeiWallClock(now.getTime()).dow;
     let dayOffset = (targetDow - currentDow + 7) % 7;
     if (dayOffset === 0 && wkMatch[1] === "next") dayOffset = 7;
     const hour = parseInt(wkMatch[3], 10);
@@ -77,10 +85,10 @@ export function parseRelativeTime(input: string, now: Date = new Date()): number
     if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
       throw new Error(`out-of-range time: ${hour}:${minute}`);
     }
-    const target = new Date(now);
-    target.setDate(target.getDate() + dayOffset);
-    target.setHours(hour, minute, 0, 0);
-    return target.getTime();
+    const target = taipeiShifted(now.getTime());
+    target.setUTCDate(target.getUTCDate() + dayOffset);
+    target.setUTCHours(hour, minute, 0, 0);
+    return fromTaipeiShifted(target);
   }
 
   throw new Error(
@@ -105,7 +113,10 @@ export function parseRecurrence(input: string, refTime: Date = new Date()): stri
   if (!trimmed) throw new Error("recurrence empty");
 
   if (trimmed === "once") {
-    return `${refTime.getMinutes()} ${refTime.getHours()} * * *`;
+    // HH:MM in Asia/Taipei — the cron matcher (cron-utils) also evaluates in
+    // Taipei, so these must agree.
+    const wc = taipeiWallClock(refTime.getTime());
+    return `${wc.minute} ${wc.hour} * * *`;
   }
 
   const dailyMatch = trimmed.match(/^daily\s+(\d{1,2}):(\d{2})$/);

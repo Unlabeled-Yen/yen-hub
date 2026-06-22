@@ -31,6 +31,7 @@ import type {
   Observation,
   ObservationPayload,
 } from "@/lib/agent/storage/types";
+import { taipeiDateStr, taipeiWallClock } from "@/lib/agent/duffy/tz";
 
 const POLL_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
 const STALE_DAYS = 7;
@@ -68,10 +69,9 @@ const state: State = {
 };
 
 function localDateStr(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+  // Asia/Taipei calendar day (see tz.ts) — keeps the once-per-day gate honest
+  // regardless of the process's system timezone.
+  return taipeiDateStr(d.getTime());
 }
 
 function isStale(obs: Observation, nowMs: number): boolean {
@@ -152,7 +152,7 @@ async function draftNudge(source: Observation): Promise<{
 async function tryFire(): Promise<void> {
   if (!hasAnyLLMKey()) return;
   const now = new Date();
-  if (now.getHours() < NUDGE_HOUR) return;
+  if (taipeiWallClock(now.getTime()).hour < NUDGE_HOUR) return;
   const today = localDateStr(now);
   if (state.lastFiredDate === today) return;
 

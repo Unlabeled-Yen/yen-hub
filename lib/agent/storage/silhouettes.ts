@@ -17,6 +17,7 @@
 import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { persistJson, withStoreLock } from "./atomic-write";
 import {
   type Silhouette,
   type SilhouetteField,
@@ -49,14 +50,13 @@ async function load(): Promise<SilhouetteMap> {
   return mem;
 }
 
+// Raw atomic persist of `mem`; observable on failure. Call only inside a
+// withStoreLock(FILE, …) section. The lock also makes the old stale-`mem`
+// workaround below (computing `current` from the just-loaded `m` instead of
+// re-entering getCurrentSilhouette) belt-and-braces rather than load-bearing.
 async function save(): Promise<void> {
   if (!mem) return;
-  try {
-    await fs.mkdir(DIR, { recursive: true });
-    await fs.writeFile(FILE, JSON.stringify(mem, null, 2), "utf8");
-  } catch {
-    /* swallow */
-  }
+  await persistJson(FILE, mem);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -98,6 +98,7 @@ export async function createSilhouetteFromIntent(args: {
   reason: string;
   payload: SilhouetteUpdatePayload;
 }): Promise<Silhouette> {
+  return withStoreLock(FILE, async () => {
   const m = await load();
   // Bug fix（2026-06-12）：不能呼叫 getCurrentSilhouette() — 它內部 await load()
   // 會把 module-level mem 換成新物件，但 m 還指著舊物件。後面對 m 的寫入跑進
@@ -155,6 +156,7 @@ export async function createSilhouetteFromIntent(args: {
   m[sil.id] = sil;
   await save();
   return sil;
+  });
 }
 
 /**
@@ -174,6 +176,7 @@ export async function recordSilhouetteFromVault(args: {
   confidence: "low" | "medium" | "high";
   reason: string;
 }): Promise<Silhouette> {
+  return withStoreLock(FILE, async () => {
   const m = await load();
   // Same fix as createSilhouetteFromIntent — avoid stale-reference.
   const allCurrent = Object.values(m);
@@ -197,6 +200,7 @@ export async function recordSilhouetteFromVault(args: {
   m[sil.id] = sil;
   await save();
   return sil;
+  });
 }
 
 /** Test helper. */

@@ -15,6 +15,7 @@ import {
   downloadTelegramFile,
   getTelegramUpdates,
   sendTelegram,
+  TelegramRateLimitError,
   type TgMessage,
 } from "@/lib/agent/telegram";
 import { transcribeAudio } from "@/lib/agent/voice/transcribe";
@@ -28,7 +29,12 @@ import {
 } from "@/lib/agent/storage/telegram-chats";
 import { runDuffyHeadless } from "@/lib/agent/duffy/headless";
 import { withTelegramTurn } from "@/lib/agent/duffy/telegram-mutex";
-import { getIntent, decideIntent } from "@/lib/agent/storage/intents";
+import {
+  getIntent,
+  tryClaimIntentApproval,
+  revertIntentToPending,
+  finalizeApproval,
+} from "@/lib/agent/storage/intents";
 import { materializeIntent } from "@/lib/agent/intent-materialize";
 import {
   getPendingSkillSession,
@@ -40,7 +46,8 @@ type State = { started: boolean; loopActive: boolean };
 const state: State = { started: false, loopActive: false };
 
 const IDLE_DELAY_MS = 30_000; // when disabled, recheck config every 30s
-const ERROR_BACKOFF_MS = 10_000;
+const ERROR_BACKOFF_MS = 10_000; // base backoff after a transient loop error
+const MAX_BACKOFF_MS = 5 * 60_000; // cap exponential backoff at 5 min
 
 /** Strip the mandatory `[mode]` tag from Duffy's first line before sending
  *  to Telegram. The tag is useful in the .app chat surface (will be styled
@@ -176,18 +183,25 @@ async function tryApproveJournalIntent(
 
   const intent = await getIntent(intentId);
   if (!intent) return null;
-  if (intent.status !== "pending") return null;
+  if (intent.status !== "pending") return null; // fast pre-check
   if (intent.kind !== "file_create") return null;
 
   const path = (intent.payload as { path?: unknown }).path;
   if (typeof path !== "string" || !JOURNAL_PATH_RE.test(path)) return null;
 
-  // Window confirmed — approve in-process, mirroring app/api/intents/[id]/decide.
-  const r = await materializeIntent(intent);
+  // Atomically claim the approval BEFORE materializing — closes the race with
+  // the in-app approve button (both used to pass the pending check and both
+  // materialize). If we lose the claim, someone already approved it: fall
+  // through (return null) and let Duffy handle the bare token.
+  const claimed = await tryClaimIntentApproval(intentId, "user");
+  if (!claimed) return null;
+
+  const r = await materializeIntent(claimed);
   if (!r.ok) {
+    await revertIntentToPending(intentId); // undo the claim so it can retry
     return `⚠️ 存檔失敗：${r.error.message}（請開 Yen.app 手動處理）`;
   }
-  await decideIntent(intent.id, "approved", r.resulted_in, "user");
+  await finalizeApproval(intentId, r.resulted_in, "user");
   return `✅ 已存到 ${path}`;
 }
 
@@ -403,6 +417,9 @@ async function loop(): Promise<void> {
   if (state.loopActive) return;
   state.loopActive = true;
   let iterCount = 0;
+  // Consecutive loop errors drive exponential backoff; reset on any successful
+  // fetch so a single blip doesn't keep us slow.
+  let consecutiveErrors = 0;
   while (state.started) {
     iterCount++;
     try {
@@ -422,6 +439,7 @@ async function loop(): Promise<void> {
         token: cfg.telegram_bot_token,
         offset,
       });
+      consecutiveErrors = 0; // a fetch returned — clear backoff
       if (updates.length === 0) {
         console.log(`[telegram-poller] iter=${iterCount} empty (long-poll timeout)`);
         continue;
@@ -447,8 +465,28 @@ async function loop(): Promise<void> {
       }
       await setTelegramLastUpdateId(maxId);
     } catch (e) {
-      console.warn("[telegram-poller] loop error:", e);
-      await new Promise((r) => setTimeout(r, ERROR_BACKOFF_MS));
+      consecutiveErrors++;
+      let waitMs: number;
+      if (e instanceof TelegramRateLimitError) {
+        // Honour Telegram's own retry_after, but never less than the base
+        // backoff. Don't grow this one exponentially — the server told us how
+        // long to wait.
+        waitMs = Math.max(e.retryAfterMs, ERROR_BACKOFF_MS);
+        console.warn(
+          `[telegram-poller] rate-limited; backing off ${Math.round(waitMs / 1000)}s`,
+        );
+      } else {
+        // Exponential backoff for generic errors (network, API hiccup), capped.
+        waitMs = Math.min(
+          ERROR_BACKOFF_MS * 2 ** Math.min(consecutiveErrors - 1, 5),
+          MAX_BACKOFF_MS,
+        );
+        console.warn(
+          `[telegram-poller] loop error (#${consecutiveErrors}); backing off ${Math.round(waitMs / 1000)}s:`,
+          e,
+        );
+      }
+      await new Promise((r) => setTimeout(r, waitMs));
     }
   }
   state.loopActive = false;

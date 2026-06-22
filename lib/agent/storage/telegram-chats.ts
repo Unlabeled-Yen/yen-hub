@@ -14,6 +14,7 @@
 import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { persistJson, withStoreLock } from "./atomic-write";
 
 const DIR = join(homedir(), "Library", "Application Support", "com.yen.hub");
 const FILE = join(DIR, "telegram-chats.json");
@@ -39,25 +40,28 @@ async function load(): Promise<ChatMap> {
   return mem;
 }
 
+// Raw atomic persist of `mem`; observable on failure. Call only inside a
+// withStoreLock(FILE, …) section.
 async function save(): Promise<void> {
   if (!mem) return;
-  await fs.mkdir(DIR, { recursive: true });
-  await fs.writeFile(FILE, JSON.stringify(mem, null, 2), "utf8");
+  await persistJson(FILE, mem);
 }
 
 export async function appendTelegramMessage(
   chat_id: number,
   msg: TgChatMessage,
 ): Promise<void> {
-  const m = await load();
-  const key = String(chat_id);
-  const arr = m[key] ?? [];
-  arr.push(msg);
-  if (arr.length > MAX_MESSAGES_PER_CHAT) {
-    arr.splice(0, arr.length - MAX_MESSAGES_PER_CHAT);
-  }
-  m[key] = arr;
-  await save();
+  await withStoreLock(FILE, async () => {
+    const m = await load();
+    const key = String(chat_id);
+    const arr = m[key] ?? [];
+    arr.push(msg);
+    if (arr.length > MAX_MESSAGES_PER_CHAT) {
+      arr.splice(0, arr.length - MAX_MESSAGES_PER_CHAT);
+    }
+    m[key] = arr;
+    await save();
+  });
 }
 
 export async function readTelegramHistory(

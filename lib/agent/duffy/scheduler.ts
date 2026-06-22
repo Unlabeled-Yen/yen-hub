@@ -77,13 +77,26 @@ async function tick(): Promise<void> {
     }
 
     console.log(`[scheduler] firing ${s.id} (${s.name})`);
+    // Claim the fire BEFORE running the action. Recording the fire window up
+    // front makes a fire idempotent across a crash/restart: if the process dies
+    // during runScheduleAction, last_fired_at has already advanced past this
+    // window, so the next boot's catch-up tick won't run it again and
+    // double-write its observation. Trade-off: a crash mid-action loses THIS
+    // run's effect (no retry) — for reminders/observations a missed one-off
+    // beats a duplicate that reappears on every unlucky restart. Mark the fire
+    // WINDOW (prev), not now, so the next tick's `prev <= last` dedupe is exact.
     try {
-      await runScheduleAction(s);
-      await markFired(s.id, now.getTime());
+      await markFired(s.id, prev.getTime());
       if (s.one_shot) {
         await setEnabled(s.id, false);
         console.log(`[scheduler] ${s.id} one_shot fired — disabling`);
       }
+    } catch (e) {
+      console.error(`[scheduler] ${s.id} claim failed, not firing:`, e);
+      continue;
+    }
+    try {
+      await runScheduleAction(s);
     } catch (e) {
       console.error(`[scheduler] ${s.id} action failed:`, e);
     }

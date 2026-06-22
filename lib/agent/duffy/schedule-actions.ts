@@ -17,6 +17,7 @@ import { createObservationFromIntent } from "@/lib/agent/storage/observations";
 import { createIntent } from "@/lib/agent/storage/intents";
 import { decideIntent } from "@/lib/agent/storage/intents";
 import { vaultPath } from "@/lib/vault/reader";
+import { taipeiDateStr } from "@/lib/agent/duffy/tz";
 import type {
   Schedule,
   ObservationPayload,
@@ -458,10 +459,10 @@ function stripModeTagForTelegram(text: string): string {
 }
 
 function formatLocalDate(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+  // Asia/Taipei calendar day (see tz.ts). MUST match the [今天日期] block Duffy
+  // reads from its prompt (also Taipei) so the journal file name agrees with
+  // the date Duffy writes inside it — the 2026-06-13 date-mismatch incident.
+  return taipeiDateStr(d.getTime());
 }
 
 /* -------------------------------------------------------------------------- */

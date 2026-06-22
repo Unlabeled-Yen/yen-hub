@@ -22,6 +22,10 @@ const MAX_READ_LINES = 200;
 export type AutoPilotAction = {
   ts: number;
   kind: string;
+  /** Phase 4b — zone for path-bearing kinds ("workspace" | "vault"); omitted
+   *  for zoneless kinds. Lets the audit log + cooldown distinguish
+   *  file_create@workspace from file_create@vault. */
+  zone?: "workspace" | "vault";
   from_tier: "L0" | "L1" | "L2";
   to_tier: "L0" | "L1" | "L2";
   direction: "upgrade" | "downgrade";
@@ -90,6 +94,20 @@ export async function lastActionForKind(kind: string): Promise<number | null> {
   const all = await readRecentActions(MAX_READ_LINES);
   for (const a of all) {
     if (a.kind === kind) return a.ts;
+  }
+  return null;
+}
+
+/** Phase 4b — most recent action for a (kind, zone) bucket. Zone null matches
+ *  zoneless actions (no `zone` field). Drives the per-bucket cooldown so a
+ *  workspace promotion doesn't also freeze the vault bucket. */
+export async function lastActionForBucket(
+  kind: string,
+  zone: "workspace" | "vault" | null,
+): Promise<number | null> {
+  const all = await readRecentActions(MAX_READ_LINES);
+  for (const a of all) {
+    if (a.kind === kind && (a.zone ?? null) === zone) return a.ts;
   }
   return null;
 }

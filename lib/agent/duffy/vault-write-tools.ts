@@ -16,6 +16,7 @@
 import { tool } from "ai";
 import { z } from "zod";
 import { createIntent } from "@/lib/agent/storage/intents";
+import { isInDuffyWorkspace } from "@/lib/agent/storage/trust-zones";
 import type {
   EvidenceRef,
   Importance,
@@ -40,16 +41,8 @@ import type {
  * auto-approved intents (createIntent flips status to "approved" before the
  * client ever sees it). See prompt.ts autonomy section.
  */
-const DUFFY_WORKSPACE_PREFIX = "06 - AI Data/Duffy Workspace/";
-
-function isInDuffyWorkspace(path: string): boolean {
-  // Normalise: strip leading slash, no '..' escapes (defense-in-depth; the
-  // materialiser also has a path-traversal guard).
-  const p = path.replace(/^\/+/, "");
-  if (p.includes("..")) return false;
-  return p.startsWith(DUFFY_WORKSPACE_PREFIX);
-}
-
+// Workspace detection now lives in storage/trust-zones.ts (single source of
+// truth — auto-pilot's per-zone learning keys off the same prefix).
 function tierForPath(path: string): TrustTier | undefined {
   return isInDuffyWorkspace(path) ? "L0" : undefined;
 }

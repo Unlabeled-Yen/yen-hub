@@ -12,7 +12,11 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
-import { setKindOverride } from "@/lib/agent/storage/trust-config";
+import {
+  setKindOverride,
+  setZoneOverride,
+} from "@/lib/agent/storage/trust-config";
+import { trustBucketKey } from "@/lib/agent/storage/trust-zones";
 
 export const dynamic = "force-dynamic";
 
@@ -61,10 +65,21 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Path-bearing kinds (file_create / file_edit) are governed PER ZONE since
+  // Phase 4b — the workspace is already L0 statically, so an explicit manual
+  // "trust this kind" applies to the gated main-vault zone. Persist the
+  // functional override there; also mirror to kind_overrides so the banner's
+  // "already promoted" check + the UI reflect the decision (the kind-level
+  // value is display-only for path kinds — tierForIntent ignores it).
+  const isPathKind = kind === "file_create" || kind === "file_edit";
+  if (isPathKind) {
+    await setZoneOverride(trustBucketKey(kind, "vault"), tier);
+  }
   const updated = await setKindOverride(kind, tier);
   return NextResponse.json({
     kind,
     tier,
     kind_overrides: updated.kind_overrides ?? {},
+    zone_overrides: updated.zone_overrides ?? {},
   });
 }

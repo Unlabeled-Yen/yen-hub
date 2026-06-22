@@ -14,6 +14,7 @@
 import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { persistJson, withStoreLock } from "./atomic-write";
 import {
   type EvidenceRef,
   type Importance,
@@ -49,14 +50,12 @@ async function load(): Promise<IntentMap> {
   return mem;
 }
 
+// Raw persist of the current `mem`. Atomic (temp+rename) and observable on
+// failure. MUST be called inside a withStoreLock(FILE, …) section — it relies
+// on the lock to guarantee `mem` isn't reassigned by a concurrent load().
 async function save(): Promise<void> {
   if (!mem) return;
-  try {
-    await fs.mkdir(DIR, { recursive: true });
-    await fs.writeFile(FILE, JSON.stringify(mem, null, 2), "utf8");
-  } catch {
-    /* swallow — overlay write failures shouldn't break the app */
-  }
+  await persistJson(FILE, mem);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -93,7 +92,6 @@ export async function createIntent(args: {
    *  for the standard mapping (see types.ts#defaultTrustTier). */
   trust_tier?: TrustTier;
 }): Promise<Intent> {
-  const m = await load();
   const intent: Intent = {
     id: newIntentId(),
     kind: args.kind,
@@ -106,8 +104,14 @@ export async function createIntent(args: {
     importance: args.importance ?? "medium",
     trust_tier: args.trust_tier ?? defaultTrustTier(args.kind),
   };
-  m[intent.id] = intent;
-  await save();
+  // Short critical section: load → insert → persist. Lock held only here, NOT
+  // across the materialize call below (which locks other stores — nesting the
+  // intents lock around it could AB-BA deadlock).
+  await withStoreLock(FILE, async () => {
+    const m = await load();
+    m[intent.id] = intent;
+    await save();
+  });
 
   // Slice 8.7B v2 — L0 auto-execute path.
   // Under "balanced" mode, L0 intents materialise immediately and skip the
@@ -129,8 +133,14 @@ export async function createIntent(args: {
         intent.decided_at = Date.now();
         intent.decided_by = "auto";
         if (r.resulted_in) intent.resulted_in = r.resulted_in;
-        m[intent.id] = intent;
-        await save();
+        // Re-acquire the lock for the status write. We force our `intent`
+        // object into the freshly-loaded map so the persisted state reflects
+        // the approval even though `mem` may have been reloaded meanwhile.
+        await withStoreLock(FILE, async () => {
+          const m = await load();
+          m[intent.id] = intent;
+          await save();
+        });
         // Slice 12 Phase 2 — record the auto-approval as a trust signal.
         try {
           const { recordDecision } = await import("./trust-signals");
@@ -172,41 +182,121 @@ export async function decideIntent(
   resulted_in?: string,
   decided_by: "user" | "auto" = "user",
 ): Promise<Intent | undefined> {
-  const m = await load();
-  const intent = m[id];
+  const { intent, transitioned } = await withStoreLock(FILE, async () => {
+    const m = await load();
+    const intent = m[id];
+    if (!intent) return { intent: undefined, transitioned: false };
+    if (intent.status !== "pending") return { intent, transitioned: false }; // idempotent
+    intent.status = status;
+    intent.decided_at = Date.now();
+    intent.decided_by = decided_by;
+    if (resulted_in) intent.resulted_in = resulted_in;
+    await save();
+    return { intent, transitioned: true };
+  });
   if (!intent) return undefined;
-  if (intent.status !== "pending") return intent; // idempotent — don't re-decide
-  intent.status = status;
-  intent.decided_at = Date.now();
-  intent.decided_by = decided_by;
-  if (resulted_in) intent.resulted_in = resulted_in;
-  await save();
 
   // Slice 12 Phase 2 — append a trust signal. Best-effort: never blocks
-  // the decision flow on a signal-log failure.
-  try {
-    const { recordDecision } = await import("./trust-signals");
-    await recordDecision({
-      intent,
-      decision: status === "approved" ? "approved" : "rejected",
-      decided_by,
-    });
-  } catch (e) {
-    console.warn("[decideIntent] signal append failed:", e);
+  // the decision flow on a signal-log failure. Only on a real transition —
+  // an idempotent re-decide shouldn't double-log. Outside the lock: it writes
+  // a different file (trust-signals).
+  if (transitioned) {
+    try {
+      const { recordDecision } = await import("./trust-signals");
+      await recordDecision({
+        intent,
+        decision: status === "approved" ? "approved" : "rejected",
+        decided_by,
+      });
+    } catch (e) {
+      console.warn("[decideIntent] signal append failed:", e);
+    }
   }
 
   return intent;
+}
+
+/**
+ * Atomically claim a pending intent for approval. Flips pending→approved
+ * inside the store lock and returns the intent IFF this caller won the race;
+ * returns null if it was already decided (another surface got there first).
+ *
+ * Closes the check-then-act TOCTOU where two surfaces — a Telegram "存" reply
+ * and the in-app approve button — both pass a `status === "pending"` check and
+ * then BOTH run `materializeIntent`, double-applying side effects. Callers
+ * materialize AFTER a successful claim; on materialize failure they call
+ * `revertIntentToPending(id)`, and on success `finalizeApproval(id, …)` to
+ * stamp `resulted_in` and log the trust signal. No signal is recorded here so a
+ * materialize failure + revert leaves no spurious "approved" in trust stats.
+ */
+export async function tryClaimIntentApproval(
+  id: string,
+  decided_by: "user" | "auto" = "user",
+): Promise<Intent | null> {
+  return withStoreLock(FILE, async () => {
+    const m = await load();
+    const intent = m[id];
+    if (!intent || intent.status !== "pending") return null;
+    intent.status = "approved";
+    intent.decided_at = Date.now();
+    intent.decided_by = decided_by;
+    await save();
+    return intent;
+  });
+}
+
+/** Undo a claim when materialization fails — back to pending so it can be
+ *  re-approved later. Clears the decision stamps set by the claim. */
+export async function revertIntentToPending(id: string): Promise<void> {
+  await withStoreLock(FILE, async () => {
+    const m = await load();
+    const intent = m[id];
+    if (!intent) return;
+    intent.status = "pending";
+    delete intent.decided_at;
+    delete intent.decided_by;
+    delete intent.resulted_in;
+    await save();
+  });
+}
+
+/** Finish a claimed approval after a successful materialize: stamp
+ *  `resulted_in` and append the (single) "approved" trust signal. */
+export async function finalizeApproval(
+  id: string,
+  resulted_in: string | undefined,
+  decided_by: "user" | "auto" = "user",
+): Promise<void> {
+  const intent = await withStoreLock(FILE, async () => {
+    const m = await load();
+    const intent = m[id];
+    if (!intent) return undefined;
+    if (resulted_in) intent.resulted_in = resulted_in;
+    await save();
+    return intent;
+  });
+  if (!intent) return;
+  try {
+    const { recordDecision } = await import("./trust-signals");
+    await recordDecision({ intent, decision: "approved", decided_by });
+  } catch (e) {
+    console.warn("[finalizeApproval] signal append failed:", e);
+  }
 }
 
 /** Slice 8.7B v2 — used by undo endpoint. Marks an auto-executed intent as
  *  undone. Doesn't itself perform the side-effect reversal — that's the
  *  endpoint's job; this just records the fact. */
 export async function markUndone(id: string): Promise<Intent | undefined> {
-  const m = await load();
-  const intent = m[id];
+  const intent = await withStoreLock(FILE, async () => {
+    const m = await load();
+    const intent = m[id];
+    if (!intent) return undefined;
+    intent.undone_at = Date.now();
+    await save();
+    return intent;
+  });
   if (!intent) return undefined;
-  intent.undone_at = Date.now();
-  await save();
 
   // Slice 12 Phase 2 — undo is a negative signal: Yen had to fix something
   // that auto-executed. Phase 3 banner uses this to suggest tier downgrades.

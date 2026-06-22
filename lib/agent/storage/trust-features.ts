@@ -17,6 +17,7 @@ import type {
   FileEditPayload,
   TodoPlanPayload,
 } from "./types";
+import { type TrustZone, zoneForIntent } from "./trust-zones";
 
 export type PayloadFeatures = {
   has_evidence: boolean;
@@ -26,10 +27,16 @@ export type PayloadFeatures = {
   /** Rough size proxy. Strings are summed; objects → JSON.stringify length.
    *  Useful for catching "Duffy proposes giant edits I reject" patterns. */
   payload_size: number;
+  /** Phase 4b: coarse risk zone for path-bearing kinds (file_create /
+   *  file_edit) — "workspace" vs "vault". Omitted for kinds with no path, and
+   *  absent on signals written before Phase 4b (treated as zone-less). Lets
+   *  auto-pilot learn sandbox vs main-vault trust separately. */
+  zone?: TrustZone;
 };
 
 export function extractFeatures(intent: Intent): PayloadFeatures {
   const has_evidence = intent.evidence.length > 0;
+  const zone = zoneForIntent(intent) ?? undefined;
 
   let has_nudge = false;
   let payload_size = 0;
@@ -69,5 +76,5 @@ export function extractFeatures(intent: Intent): PayloadFeatures {
       }
   }
 
-  return { has_evidence, has_nudge, payload_size };
+  return { has_evidence, has_nudge, payload_size, ...(zone ? { zone } : {}) };
 }

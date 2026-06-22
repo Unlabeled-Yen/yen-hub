@@ -15,6 +15,7 @@ import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { UIMessage } from "ai";
+import { persistJson, withStoreLock } from "./atomic-write";
 
 const DIR = join(homedir(), "Library", "Application Support", "com.yen.hub");
 const FILE = join(DIR, "conversations.json");
@@ -57,14 +58,11 @@ async function load(): Promise<StoreShape> {
   return mem;
 }
 
+// Raw atomic persist of `mem`; observable on failure. Call only inside a
+// withStoreLock(FILE, …) section.
 async function save(): Promise<void> {
   if (!mem) return;
-  try {
-    await fs.mkdir(DIR, { recursive: true });
-    await fs.writeFile(FILE, JSON.stringify(mem, null, 2), "utf8");
-  } catch {
-    /* silent — overlay write failures don't take the app down */
-  }
+  await persistJson(FILE, mem);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -84,18 +82,22 @@ export async function getConversation(id: string): Promise<Conversation | undefi
 }
 
 export async function saveConversation(c: Conversation): Promise<void> {
-  const s = await load();
-  s.conversations[c.id] = c;
-  await save();
+  await withStoreLock(FILE, async () => {
+    const s = await load();
+    s.conversations[c.id] = c;
+    await save();
+  });
 }
 
 export async function deleteConversation(id: string): Promise<boolean> {
-  const s = await load();
-  if (!s.conversations[id]) return false;
-  delete s.conversations[id];
-  if (s.active_id === id) s.active_id = null;
-  await save();
-  return true;
+  return withStoreLock(FILE, async () => {
+    const s = await load();
+    if (!s.conversations[id]) return false;
+    delete s.conversations[id];
+    if (s.active_id === id) s.active_id = null;
+    await save();
+    return true;
+  });
 }
 
 export async function getActiveId(): Promise<string | null> {
@@ -104,9 +106,11 @@ export async function getActiveId(): Promise<string | null> {
 }
 
 export async function setActiveId(id: string | null): Promise<void> {
-  const s = await load();
-  s.active_id = id;
-  await save();
+  await withStoreLock(FILE, async () => {
+    const s = await load();
+    s.active_id = id;
+    await save();
+  });
 }
 
 /* -------------------------------------------------------------------------- */

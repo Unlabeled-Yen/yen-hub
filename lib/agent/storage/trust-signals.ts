@@ -24,6 +24,7 @@ import type {
   TrustTier,
 } from "./types";
 import { extractFeatures, type PayloadFeatures } from "./trust-features";
+import type { TrustZone } from "./trust-zones";
 
 const DIR = join(homedir(), "Library", "Application Support", "com.yen.hub");
 const FILE = join(DIR, "trust-signals.jsonl");
@@ -202,4 +203,67 @@ export async function statsByKindAndProposer(opts?: {
   return Array.from(buckets.values()).sort(
     (a, b) => b.total_decided - a.total_decided,
   );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Per-(kind, zone) stats — Phase 4b auto-pilot                                */
+/* -------------------------------------------------------------------------- */
+
+export type ZoneGroupStat = {
+  kind: IntentKind;
+  /** "workspace" | "vault" for path kinds; null for zoneless kinds. */
+  zone: TrustZone | null;
+  approved: number;
+  rejected: number;
+  auto_approved: number;
+  auto_undone: number;
+  total_decided: number;
+};
+
+/** Like statsByKindAndProposer, but bucketed by (kind, zone). Signals written
+ *  before Phase 4b carry no zone — for path kinds they bucket as zone=null and
+ *  are simply ignored by the zone-keyed auto-pilot (they never accumulate to a
+ *  zone bucket), so old data can't mislead a per-zone promotion. */
+export async function statsByKindAndZone(opts?: {
+  since?: number;
+}): Promise<ZoneGroupStat[]> {
+  const sigs = await readRecentSignals({ since: opts?.since });
+  const buckets = new Map<string, ZoneGroupStat>();
+
+  for (const s of sigs) {
+    const zone = s.payload_features?.zone ?? null;
+    const key = `${s.kind}|${zone ?? ""}`;
+    let g = buckets.get(key);
+    if (!g) {
+      g = {
+        kind: s.kind,
+        zone,
+        approved: 0,
+        rejected: 0,
+        auto_approved: 0,
+        auto_undone: 0,
+        total_decided: 0,
+      };
+      buckets.set(key, g);
+    }
+    switch (s.decision) {
+      case "approved":
+        g.approved++;
+        g.total_decided++;
+        break;
+      case "rejected":
+        g.rejected++;
+        g.total_decided++;
+        break;
+      case "auto_approved":
+        g.auto_approved++;
+        g.total_decided++;
+        break;
+      case "auto_undone":
+        g.auto_undone++;
+        break;
+    }
+  }
+
+  return Array.from(buckets.values());
 }

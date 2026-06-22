@@ -12,6 +12,7 @@
 import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { persistJson, withStoreLock } from "./atomic-write";
 import {
   type Summary,
   type SummaryPayload,
@@ -41,14 +42,11 @@ async function load(): Promise<SummaryMap> {
   return mem;
 }
 
+// Raw atomic persist of `mem`; observable on failure. Call only inside a
+// withStoreLock(FILE, …) section.
 async function save(): Promise<void> {
   if (!mem) return;
-  try {
-    await fs.mkdir(DIR, { recursive: true });
-    await fs.writeFile(FILE, JSON.stringify(mem, null, 2), "utf8");
-  } catch {
-    /* swallow */
-  }
+  await persistJson(FILE, mem);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -88,7 +86,6 @@ export async function createSummaryFromIntent(args: {
   source_agent_id: string;
   payload: SummaryPayload;
 }): Promise<Summary> {
-  const m = await load();
   const sum: Summary = {
     id: newSummaryId(),
     week: args.payload.week,
@@ -102,8 +99,11 @@ export async function createSummaryFromIntent(args: {
     source_agent_id: args.source_agent_id,
     created_at: Date.now(),
   };
-  m[sum.id] = sum;
-  await save();
+  await withStoreLock(FILE, async () => {
+    const m = await load();
+    m[sum.id] = sum;
+    await save();
+  });
   return sum;
 }
 

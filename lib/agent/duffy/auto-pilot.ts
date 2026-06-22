@@ -23,16 +23,18 @@
 import {
   getTrustConfig,
   setKindOverride,
+  setZoneOverride,
   markAutoPilotRun,
   type TrustConfig,
 } from "@/lib/agent/storage/trust-config";
-import { statsByKindAndProposer } from "@/lib/agent/storage/trust-signals";
+import { statsByKindAndZone } from "@/lib/agent/storage/trust-signals";
 import {
   appendAutoPilotAction,
-  lastActionForKind,
+  lastActionForBucket,
   type AutoPilotAction,
 } from "@/lib/agent/storage/auto-pilot-log";
 import { defaultTrustTier } from "@/lib/agent/storage/types";
+import { type TrustZone, trustBucketKey } from "@/lib/agent/storage/trust-zones";
 import type { IntentKind, TrustTier } from "@/lib/agent/storage/types";
 
 const EVAL_COOLDOWN_MS = 24 * 60 * 60 * 1000;
@@ -47,8 +49,10 @@ const DEMOTE_MIN_AUTO_N = 4;
 const DEMOTE_UNDO_RATE = 0.3;
 const DEMOTE_REJECT_RATE = 0.5;
 
+// A trust bucket: a kind, plus a zone for path-bearing kinds (null otherwise).
 type KindAgg = {
   kind: IntentKind;
+  zone: TrustZone | null;
   approved: number;
   rejected: number;
   auto_approved: number;
@@ -59,18 +63,37 @@ type KindAgg = {
   reject_rate: number;
 };
 
-function currentTier(cfg: TrustConfig, kind: IntentKind): TrustTier {
-  return cfg.kind_overrides?.[kind] ?? defaultTrustTier(kind);
+/** The STATIC path-aware tier for a zone bucket — mirrors vault-write-tools'
+ *  tierForPath: anything in the workspace is L0, the main vault inherits the
+ *  kind default (file_create=L1, file_edit=L2). */
+function staticZoneTier(kind: IntentKind, zone: TrustZone): TrustTier {
+  return zone === "workspace" ? "L0" : defaultTrustTier(kind);
+}
+
+/** Effective current tier for a bucket. Path kinds resolve via zone_overrides
+ *  then the static path-aware tier; zoneless kinds via kind_overrides then the
+ *  kind default. Mirrors trust-config.tierForIntent so auto-pilot decides on
+ *  the same tier the runtime will actually apply. */
+function currentTier(cfg: TrustConfig, a: KindAgg): TrustTier {
+  if (a.zone) {
+    return (
+      cfg.zone_overrides?.[trustBucketKey(a.kind, a.zone)] ??
+      staticZoneTier(a.kind, a.zone)
+    );
+  }
+  return cfg.kind_overrides?.[a.kind] ?? defaultTrustTier(a.kind);
 }
 
 async function aggregateByKind(since: number): Promise<KindAgg[]> {
-  const groups = await statsByKindAndProposer({ since });
-  const byKind = new Map<IntentKind, KindAgg>();
+  const groups = await statsByKindAndZone({ since });
+  const buckets = new Map<string, KindAgg>();
   for (const g of groups) {
-    let a = byKind.get(g.kind);
+    const key = trustBucketKey(g.kind, g.zone);
+    let a = buckets.get(key);
     if (!a) {
       a = {
         kind: g.kind,
+        zone: g.zone,
         approved: 0,
         rejected: 0,
         auto_approved: 0,
@@ -80,7 +103,7 @@ async function aggregateByKind(since: number): Promise<KindAgg[]> {
         undo_rate: 0,
         reject_rate: 0,
       };
-      byKind.set(g.kind, a);
+      buckets.set(key, a);
     }
     a.approved += g.approved;
     a.rejected += g.rejected;
@@ -88,22 +111,22 @@ async function aggregateByKind(since: number): Promise<KindAgg[]> {
     a.auto_undone += g.auto_undone;
     a.total_decided += g.total_decided;
   }
-  for (const a of byKind.values()) {
+  for (const a of buckets.values()) {
     const total = a.total_decided || 1;
     a.approve_rate = (a.approved + a.auto_approved) / total;
     a.reject_rate = a.rejected / total;
     a.undo_rate = a.auto_approved > 0 ? a.auto_undone / a.auto_approved : 0;
   }
-  return Array.from(byKind.values());
+  return Array.from(buckets.values());
 }
 
-/** Evaluate one kind. Returns the action to take (or null). */
+/** Evaluate one bucket. Returns the action to take (or null). */
 function decide(a: KindAgg, cfg: TrustConfig): {
   to_tier: TrustTier;
   direction: "upgrade" | "downgrade";
   reason: string;
 } | null {
-  const cur = currentTier(cfg, a.kind);
+  const cur = currentTier(cfg, a);
 
   // Promotion: current is L1 (not L2 — never auto-promote to L0 from L2,
   // those are irreversible kinds) and stats clear the bar.
@@ -166,20 +189,28 @@ export async function evaluateAndApply(force: boolean = false): Promise<{
   let actionsTaken = 0;
 
   for (const a of aggs) {
-    // Per-kind cooldown
-    const last = await lastActionForKind(a.kind);
+    const bucketLabel = trustBucketKey(a.kind, a.zone);
+
+    // Per-bucket cooldown — a workspace change must not freeze the vault bucket.
+    const last = await lastActionForBucket(a.kind, a.zone);
     if (last && Date.now() - last < PER_KIND_COOLDOWN_MS) continue;
 
     const decision = decide(a, cfg);
     if (!decision) continue;
 
-    const fromTier = currentTier(cfg, a.kind);
+    const fromTier = currentTier(cfg, a);
     if (fromTier === decision.to_tier) continue; // no-op
 
-    await setKindOverride(a.kind, decision.to_tier);
+    // Path kinds persist a zone override; zoneless kinds the legacy kind override.
+    if (a.zone) {
+      await setZoneOverride(bucketLabel, decision.to_tier);
+    } else {
+      await setKindOverride(a.kind, decision.to_tier);
+    }
     const action: AutoPilotAction = {
       ts: Date.now(),
       kind: a.kind,
+      ...(a.zone ? { zone: a.zone } : {}),
       from_tier: fromTier,
       to_tier: decision.to_tier,
       direction: decision.direction,
@@ -197,7 +228,7 @@ export async function evaluateAndApply(force: boolean = false): Promise<{
     await appendAutoPilotAction(action);
     actionsTaken++;
     console.log(
-      `[auto-pilot] ${decision.direction} ${a.kind} ${fromTier} → ${decision.to_tier} (${decision.reason})`,
+      `[auto-pilot] ${decision.direction} ${bucketLabel} ${fromTier} → ${decision.to_tier} (${decision.reason})`,
     );
   }
 

@@ -12,6 +12,11 @@
  *  - IntentKind extended to support silhouette_update + summary proposals
  */
 
+// tz.ts is a dependency-free leaf module (no imports), so referencing it from
+// this low-level types module introduces no cycle. ISO-week keying must agree
+// with the Asia/Taipei Sunday trigger in summary-cron.
+import { taipeiWallClock } from "@/lib/agent/duffy/tz";
+
 /* -------------------------------------------------------------------------- */
 /*  Provenance + Evidence (unchanged)                                         */
 /* -------------------------------------------------------------------------- */
@@ -382,8 +387,10 @@ export function newScheduleId(): string {
 
 /** ISO-week label for a Date, e.g. 2026-W23. */
 export function isoWeek(d: Date = new Date()): string {
-  // Copy date so we don't mutate; set to nearest Thursday (ISO week defn).
-  const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  // Anchor the calendar day to Asia/Taipei (not system local), then set to the
+  // nearest Thursday per the ISO week definition.
+  const wc = taipeiWallClock(d.getTime());
+  const t = new Date(Date.UTC(wc.year, wc.month - 1, wc.dom));
   const dayNum = t.getUTCDay() || 7;
   t.setUTCDate(t.getUTCDate() + 4 - dayNum);
   const yearStart = new Date(Date.UTC(t.getUTCFullYear(), 0, 1));

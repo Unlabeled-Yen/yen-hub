@@ -12,6 +12,7 @@
 import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { persistJson, withStoreLock } from "./atomic-write";
 import {
   type EvidenceRef,
   type Importance,
@@ -42,14 +43,11 @@ async function load(): Promise<ObservationMap> {
   return mem;
 }
 
+// Raw atomic persist of `mem`; observable on failure. Call only inside a
+// withStoreLock(FILE, …) section (relies on the lock to keep `mem` stable).
 async function save(): Promise<void> {
   if (!mem) return;
-  try {
-    await fs.mkdir(DIR, { recursive: true });
-    await fs.writeFile(FILE, JSON.stringify(mem, null, 2), "utf8");
-  } catch {
-    /* swallow — overlay write failures shouldn't break the app */
-  }
+  await persistJson(FILE, mem);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -99,14 +97,16 @@ export async function supersedeObservation(
   oldId: string,
   newId: string,
 ): Promise<Observation | undefined> {
-  const m = await load();
-  const o = m[oldId];
-  if (!o) return undefined;
-  if (o.superseded_by) return o; // idempotent
-  o.superseded_by = newId;
-  o.archived_at = Date.now();
-  await save();
-  return o;
+  return withStoreLock(FILE, async () => {
+    const m = await load();
+    const o = m[oldId];
+    if (!o) return undefined;
+    if (o.superseded_by) return o; // idempotent
+    o.superseded_by = newId;
+    o.archived_at = Date.now();
+    await save();
+    return o;
+  });
 }
 
 export async function getObservation(
@@ -134,7 +134,6 @@ export async function createObservationFromIntent(args: {
   nudge_for?: string;         // Slice 8
   valid_until?: number;       // v2 Gap A
 }): Promise<Observation> {
-  const m = await load();
   const obs: Observation = {
     id: newObservationId(),
     source_intent: args.intent_id,
@@ -152,8 +151,11 @@ export async function createObservationFromIntent(args: {
     nudge_for: args.nudge_for,
     valid_until: args.valid_until,
   };
-  m[obs.id] = obs;
-  await save();
+  await withStoreLock(FILE, async () => {
+    const m = await load();
+    m[obs.id] = obs;
+    await save();
+  });
   return obs;
 }
 
@@ -162,12 +164,14 @@ export async function createObservationFromIntent(args: {
  * re-mentions an intention so it stops being "stale". Idempotent.
  */
 export async function touchIntention(id: string): Promise<Observation | undefined> {
-  const m = await load();
-  const obs = m[id];
-  if (!obs || !obs.intention) return undefined;
-  obs.intention = { ...obs.intention, last_touched_at: Date.now() };
-  await save();
-  return obs;
+  return withStoreLock(FILE, async () => {
+    const m = await load();
+    const obs = m[id];
+    if (!obs || !obs.intention) return undefined;
+    obs.intention = { ...obs.intention, last_touched_at: Date.now() };
+    await save();
+    return obs;
+  });
 }
 
 /**
@@ -178,12 +182,14 @@ export async function touchIntention(id: string): Promise<Observation | undefine
  * undo endpoint surfaces this caveat to the caller.
  */
 export async function deleteObservation(id: string): Promise<Observation | undefined> {
-  const m = await load();
-  const obs = m[id];
-  if (!obs) return undefined;
-  delete m[id];
-  await save();
-  return obs;
+  return withStoreLock(FILE, async () => {
+    const m = await load();
+    const obs = m[id];
+    if (!obs) return undefined;
+    delete m[id];
+    await save();
+    return obs;
+  });
 }
 
 /** List observations that carry an open/in_progress intention. */
@@ -198,13 +204,15 @@ export async function listIntentionObservations(): Promise<Observation[]> {
 
 /** Mark an observation as read (clears the unread-HIGH badge). */
 export async function markObservationRead(id: string): Promise<Observation | undefined> {
-  const m = await load();
-  const obs = m[id];
-  if (!obs) return undefined;
-  if (obs.read_at) return obs; // idempotent
-  obs.read_at = Date.now();
-  await save();
-  return obs;
+  return withStoreLock(FILE, async () => {
+    const m = await load();
+    const obs = m[id];
+    if (!obs) return undefined;
+    if (obs.read_at) return obs; // idempotent
+    obs.read_at = Date.now();
+    await save();
+    return obs;
+  });
 }
 
 /**

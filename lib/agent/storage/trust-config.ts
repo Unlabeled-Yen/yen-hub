@@ -36,8 +36,18 @@ export type TrustConfig = {
   updated_at: number;
   /** Slice 12 Phase 3 — per-kind tier promotions accepted by the user from
    *  the suggestion banner. Overrides the kind's static defaultTrustTier.
-   *  Map: IntentKind → promoted TrustTier (typically "L0"). */
+   *  Map: IntentKind → promoted TrustTier (typically "L0").
+   *
+   *  Phase 4b: for path-bearing kinds (file_create / file_edit) this no longer
+   *  applies — those resolve via `zone_overrides` so the sandbox and the main
+   *  vault are trusted separately. Still authoritative for zoneless kinds
+   *  (observation / schedule / summary / todo_plan…). */
   kind_overrides?: Record<string, "L0" | "L1" | "L2">;
+  /** Phase 4b — per-(kind,zone) tier overrides for path-bearing kinds. Key is
+   *  `${kind}@${zone}` (see trust-zones.trustBucketKey), e.g.
+   *  `file_create@workspace`. Takes precedence over the static path-aware tier
+   *  for file kinds; absent → fall back to the intent's static tier. */
+  zone_overrides?: Record<string, "L0" | "L1" | "L2">;
   /** Slice 12 Phase 4 — Auto-pilot Trust. When on, the runner upgrades /
    *  downgrades kinds automatically based on observed signals (no banner
    *  needed). Every change is written to auto-pilot-log.jsonl. Off by
@@ -98,6 +108,10 @@ async function load(): Promise<TrustConfig> {
       kind_overrides:
         parsed.kind_overrides && typeof parsed.kind_overrides === "object"
           ? (parsed.kind_overrides as Record<string, "L0" | "L1" | "L2">)
+          : undefined,
+      zone_overrides:
+        parsed.zone_overrides && typeof parsed.zone_overrides === "object"
+          ? (parsed.zone_overrides as Record<string, "L0" | "L1" | "L2">)
           : undefined,
       auto_pilot: parsed.auto_pilot === true,
       auto_pilot_last_run:
@@ -162,6 +176,25 @@ export async function setKindOverride(
     delete current.kind_overrides[kind];
   } else {
     current.kind_overrides[kind] = tier;
+  }
+  current.updated_at = Date.now();
+  await save();
+  return { ...current };
+}
+
+/** Phase 4b — set (or clear) a per-(kind,zone) override. `bucketKey` is
+ *  `${kind}@${zone}` from trust-zones.trustBucketKey. Pass null to revert that
+ *  bucket to the intent's static path-aware tier. */
+export async function setZoneOverride(
+  bucketKey: string,
+  tier: "L0" | "L1" | "L2" | null,
+): Promise<TrustConfig> {
+  const current = await load();
+  if (!current.zone_overrides) current.zone_overrides = {};
+  if (tier === null) {
+    delete current.zone_overrides[bucketKey];
+  } else {
+    current.zone_overrides[bucketKey] = tier;
   }
   current.updated_at = Date.now();
   await save();
@@ -242,6 +275,7 @@ export async function setDailyTokenBudget(budget: number | null): Promise<TrustC
 /* -------------------------------------------------------------------------- */
 
 import type { Intent, TrustTier } from "./types";
+import { trustBucketKey, zoneForIntent } from "./trust-zones";
 
 export type EffectiveAction = "auto" | "approve" | "approve_with_confirm";
 
@@ -265,9 +299,23 @@ export function effectiveAction(
   return "auto";
 }
 
-/** Slice 12 Phase 3 — compute the effective tier for an intent, factoring
- *  in the user's per-kind overrides on top of the intent's static tier. */
+/** Compute the effective tier for an intent, factoring in the user's learned
+ *  overrides on top of the intent's static tier.
+ *
+ *  Phase 4b: path-bearing kinds (file_create / file_edit) resolve PER ZONE so
+ *  the sandbox and the main vault are trusted independently:
+ *    - a zone-specific override (`file_create@workspace`) wins if present;
+ *    - otherwise the intent's STATIC, path-aware tier stands (workspace=L0,
+ *      vault=L1) — a blunt kind-level override does NOT leak across zones,
+ *      which was the "promote file_create → auto-execute config files too" bug.
+ *  Zoneless kinds keep the legacy kind-level override behavior. */
 export function tierForIntent(intent: Intent, cfg: TrustConfig): TrustTier {
+  const zone = zoneForIntent(intent);
+  if (zone) {
+    const zoneOverride = cfg.zone_overrides?.[trustBucketKey(intent.kind, zone)];
+    if (zoneOverride) return zoneOverride;
+    return intent.trust_tier ?? "L1";
+  }
   const override = cfg.kind_overrides?.[intent.kind];
   if (override) return override;
   return intent.trust_tier ?? "L1";

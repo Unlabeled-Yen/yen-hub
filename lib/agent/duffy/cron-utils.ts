@@ -15,6 +15,8 @@
  * Day-of-month and day-of-week: standard cron OR semantics (either matches).
  */
 
+import { taipeiWallClock } from "./tz";
+
 type FieldName = "minute" | "hour" | "dom" | "month" | "dow";
 
 const FIELD_BOUNDS: Record<FieldName, { min: number; max: number }> = {
@@ -111,27 +113,35 @@ export function parseCron(expr: string): ParsedCron {
   };
 }
 
-function matches(p: ParsedCron, d: Date): boolean {
-  if (!p.minutes.has(d.getMinutes())) return false;
-  if (!p.hours.has(d.getHours())) return false;
-  if (!p.months.has(d.getMonth() + 1)) return false;
-  const dom = p.doms.has(d.getDate());
-  const dow = p.dows.has(d.getDay());
+// Cron fields are matched against the Asia/Taipei wall clock (see tz.ts), NOT
+// the system timezone. This keeps fire times stable across travel and makes
+// dev/CI (usually UTC) agree with production.
+function matches(p: ParsedCron, epochMs: number): boolean {
+  const wc = taipeiWallClock(epochMs);
+  if (!p.minutes.has(wc.minute)) return false;
+  if (!p.hours.has(wc.hour)) return false;
+  if (!p.months.has(wc.month)) return false;
+  const dom = p.doms.has(wc.dom);
+  const dow = p.dows.has(wc.dow);
   // Standard cron OR semantics: if either dom or dow is "*", AND-match;
   // if both restricted, OR-match (so "0 8 1 * 1" fires on the 1st OR on Mondays).
   return p.domDowAnd ? dom || dow : dom && dow;
 }
 
+// Iterate by absolute epoch ms (not Date.setMinutes, which moves in SYSTEM
+// local time and can skip/repeat across a system-local DST seam). Taipei has a
+// whole-hour offset, so a minute boundary in UTC is also a minute boundary in
+// Taipei — flooring to 60_000 ms aligns both.
+const MINUTE_MS = 60_000;
+const MAX_ITER = 366 * 24 * 60;
+
 /** Next fire strictly after `from`. Throws if none within 1 year. */
 export function nextFire(p: ParsedCron, from: Date): Date {
-  const d = new Date(from);
-  d.setSeconds(0, 0);
-  d.setMinutes(d.getMinutes() + 1);
-
-  const MAX_ITER = 366 * 24 * 60;
+  // Next whole-minute boundary strictly after `from`.
+  let t = Math.floor(from.getTime() / MINUTE_MS) * MINUTE_MS + MINUTE_MS;
   for (let i = 0; i < MAX_ITER; i++) {
-    if (matches(p, d)) return new Date(d);
-    d.setMinutes(d.getMinutes() + 1);
+    if (matches(p, t)) return new Date(t);
+    t += MINUTE_MS;
   }
   throw new Error(`no fire time within 1 year for "${p.expr}"`);
 }
@@ -139,13 +149,11 @@ export function nextFire(p: ParsedCron, from: Date): Date {
 /** Last fire at-or-before `at`. Used by scheduler to detect missed fires
  *  (laptop slept, server crashed). Throws if none in last year. */
 export function prevFire(p: ParsedCron, at: Date): Date {
-  const d = new Date(at);
-  d.setSeconds(0, 0);
-
-  const MAX_ITER = 366 * 24 * 60;
+  // Current whole-minute boundary at-or-before `at`.
+  let t = Math.floor(at.getTime() / MINUTE_MS) * MINUTE_MS;
   for (let i = 0; i < MAX_ITER; i++) {
-    if (matches(p, d)) return new Date(d);
-    d.setMinutes(d.getMinutes() - 1);
+    if (matches(p, t)) return new Date(t);
+    t -= MINUTE_MS;
   }
   throw new Error(`no fire time within last year for "${p.expr}"`);
 }
