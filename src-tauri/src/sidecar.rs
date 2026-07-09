@@ -190,6 +190,14 @@ pub fn launch(app: &AppHandle, window: WebviewWindow) -> Result<String, String> 
     let duffy_provider = env_get("DUFFY_PROVIDER");
     let duffy_model = env_get("DUFFY_MODEL");
     let twelve_data_key = env_get("TWELVE_DATA_KEY");
+    let github_token = env_get("GITHUB_TOKEN");
+    let ibm_think_hub_url = env_get("IBM_THINK_HUB_URL");
+    let signals_enrich_concurrency = env_get("SIGNALS_ENRICH_CONCURRENCY");
+    let signals_gh_keywords = env_get("SIGNALS_GH_KEYWORDS");
+    let signals_translate_attempt_ms = env_get("SIGNALS_TRANSLATE_ATTEMPT_MS");
+    let signals_translate_chunk = env_get("SIGNALS_TRANSLATE_CHUNK");
+    let signals_translate_model = env_get("SIGNALS_TRANSLATE_MODEL");
+    let signals_translate_retries = env_get("SIGNALS_TRANSLATE_RETRIES");
 
     log::info!(
         "yen sidecar: env loaded from file ({} keys); td={}, kimi={}, anthropic={}, duffy={}",
@@ -229,6 +237,30 @@ pub fn launch(app: &AppHandle, window: WebviewWindow) -> Result<String, String> 
     }
     if !twelve_data_key.is_empty() {
         sidecar = sidecar.env("TWELVE_DATA_KEY", twelve_data_key);
+    }
+    if !github_token.is_empty() {
+        sidecar = sidecar.env("GITHUB_TOKEN", github_token);
+    }
+    if !ibm_think_hub_url.is_empty() {
+        sidecar = sidecar.env("IBM_THINK_HUB_URL", ibm_think_hub_url);
+    }
+    if !signals_enrich_concurrency.is_empty() {
+        sidecar = sidecar.env("SIGNALS_ENRICH_CONCURRENCY", signals_enrich_concurrency);
+    }
+    if !signals_gh_keywords.is_empty() {
+        sidecar = sidecar.env("SIGNALS_GH_KEYWORDS", signals_gh_keywords);
+    }
+    if !signals_translate_attempt_ms.is_empty() {
+        sidecar = sidecar.env("SIGNALS_TRANSLATE_ATTEMPT_MS", signals_translate_attempt_ms);
+    }
+    if !signals_translate_chunk.is_empty() {
+        sidecar = sidecar.env("SIGNALS_TRANSLATE_CHUNK", signals_translate_chunk);
+    }
+    if !signals_translate_model.is_empty() {
+        sidecar = sidecar.env("SIGNALS_TRANSLATE_MODEL", signals_translate_model);
+    }
+    if !signals_translate_retries.is_empty() {
+        sidecar = sidecar.env("SIGNALS_TRANSLATE_RETRIES", signals_translate_retries);
     }
 
     let (mut rx, _child) = sidecar.spawn().map_err(|e| format!("spawn: {e}"))?;
