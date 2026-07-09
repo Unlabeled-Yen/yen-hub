@@ -1,20 +1,21 @@
 /**
- * Intent store — JSON overlay at
- * `~/Library/Application Support/com.yen.hub/intents.json`.
+ * Intent store — SQLite table `intents` in
+ * `~/Library/Application Support/com.yen.hub/yen-hub.db`.
  *
- * Sibling to `lib/vault/done-store.ts`. Same in-memory-load-once + write-on-
- * mutation pattern. No external deps; tiny enough that re-writing the whole
- * file per mutation is fine at Slice 6 scale (< low thousands of intents).
- *
- * When the volume justifies it, swap this module for a SQLite-backed one —
- * the shape of the public API (list / get / create / decide) is what matters
- * to callers, not the storage.
+ * SPEC-01 (2026-07) — migrated off the intents.json overlay. Public API
+ * signatures are unchanged (D4). `node:sqlite` is synchronous, so the
+ * check-then-act sequences below (tryClaimIntentApproval / decideIntent /
+ * revertIntentToPending / finalizeApproval) run as back-to-back prepared
+ * statements with no `await` between the read and the write — nothing else
+ * in this process can interleave in that gap, which is the same atomicity
+ * the JSON version got from `withStoreLock`. Async work (trust-config,
+ * materializeIntent, trust-signals) still happens between separate SQL
+ * statements exactly like it did between separate lock sections before.
  */
 
-import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { persistJson, withStoreLock } from "./atomic-write";
+import { getDb, importJsonOnce } from "./db";
 import {
   type EvidenceRef,
   type Importance,
@@ -28,34 +29,98 @@ import {
 } from "./types";
 
 const DIR = join(homedir(), "Library", "Application Support", "com.yen.hub");
-const FILE = join(DIR, "intents.json");
+const LEGACY_JSON = join(DIR, "intents.json");
 
-type IntentMap = Record<string, Intent>;
+const COLUMNS = [
+  "id",
+  "kind",
+  "payload",
+  "proposed_by",
+  "proposed_at",
+  "status",
+  "rationale",
+  "evidence",
+  "importance",
+  "decided_at",
+  "decided_by",
+  "resulted_in",
+  "trust_tier",
+  "undone_at",
+];
 
-let mem: IntentMap | null = null;
+type IntentRow = {
+  id: string;
+  kind: string;
+  payload: string;
+  proposed_by: string;
+  proposed_at: number;
+  status: string;
+  rationale: string;
+  evidence: string;
+  importance: string;
+  decided_at: number | null;
+  decided_by: string | null;
+  resulted_in: string | null;
+  trust_tier: string | null;
+  undone_at: number | null;
+};
 
-// Always re-read from disk — no forever-cache. Real bug (2026-06-10, see
-// schedules.ts): in Next standalone, API routes and instrumentation.ts
-// bundle SEPARATE instances of this module. summary-cron / stale-intentions
-// / schedule-actions create intents on the cron side; routes display them
-// (and vice versa for decide). A boot-time cache lets each side silently
-// miss the other's writes until restart. The file is small, mutations are
-// rare, and the disk read is free.
-async function load(): Promise<IntentMap> {
-  try {
-    mem = JSON.parse(await fs.readFile(FILE, "utf8")) as IntentMap;
-  } catch {
-    mem = mem ?? {};
-  }
-  return mem;
+function rowToIntent(row: IntentRow): Intent {
+  return {
+    id: row.id,
+    kind: row.kind as IntentKind,
+    payload: JSON.parse(row.payload) as IntentPayload,
+    proposed_by: row.proposed_by,
+    proposed_at: row.proposed_at,
+    status: row.status as IntentStatus,
+    rationale: row.rationale,
+    evidence: JSON.parse(row.evidence) as EvidenceRef[],
+    importance: row.importance as Importance,
+    decided_at: row.decided_at ?? undefined,
+    decided_by: (row.decided_by as "user" | "auto" | null) ?? undefined,
+    resulted_in: row.resulted_in ?? undefined,
+    trust_tier: (row.trust_tier as TrustTier | null) ?? undefined,
+    undone_at: row.undone_at ?? undefined,
+  };
 }
 
-// Raw persist of the current `mem`. Atomic (temp+rename) and observable on
-// failure. MUST be called inside a withStoreLock(FILE, …) section — it relies
-// on the lock to guarantee `mem` isn't reassigned by a concurrent load().
-async function save(): Promise<void> {
-  if (!mem) return;
-  await persistJson(FILE, mem);
+function intentToRow(i: Intent): (string | number | null)[] {
+  return [
+    i.id,
+    i.kind,
+    JSON.stringify(i.payload),
+    i.proposed_by,
+    i.proposed_at,
+    i.status,
+    i.rationale ?? "",
+    JSON.stringify(i.evidence ?? []),
+    // Pre-Slice-7A legacy records predate this field; the JSON store
+    // tolerated the missing key (plain undefined property read), but a
+    // SQLite bind rejects `undefined` outright. Default it the same way
+    // createIntent does for new records.
+    i.importance ?? "medium",
+    i.decided_at ?? null,
+    i.decided_by ?? null,
+    i.resulted_in ?? null,
+    i.trust_tier ?? null,
+    i.undone_at ?? null,
+  ];
+}
+
+let migrated = false;
+function ensureMigrated(): void {
+  if (migrated) return;
+  // Only latch on success — a failed import (e.g. a bad legacy record) must
+  // be retryable on the next call within this process, not stuck until
+  // restart.
+  importJsonOnce({
+    table: "intents",
+    jsonPath: LEGACY_JSON,
+    columns: COLUMNS,
+    parseEntries: (raw) => Object.values(JSON.parse(raw) as Record<string, Intent>),
+    mapRow: (entry) => intentToRow(entry as Intent),
+  });
+  migrated = true;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -67,18 +132,36 @@ export async function listIntents(filter?: {
   kind?: IntentKind;
   proposed_by?: string;
 }): Promise<Intent[]> {
-  const m = await load();
-  let items = Object.values(m);
-  if (filter?.status) items = items.filter((i) => i.status === filter.status);
-  if (filter?.kind) items = items.filter((i) => i.kind === filter.kind);
-  if (filter?.proposed_by)
-    items = items.filter((i) => i.proposed_by === filter.proposed_by);
-  return items.sort((a, b) => b.proposed_at - a.proposed_at);
+  ensureMigrated();
+  const database = getDb();
+  const clauses: string[] = [];
+  const params: (string | number)[] = [];
+  if (filter?.status) {
+    clauses.push("status = ?");
+    params.push(filter.status);
+  }
+  if (filter?.kind) {
+    clauses.push("kind = ?");
+    params.push(filter.kind);
+  }
+  if (filter?.proposed_by) {
+    clauses.push("proposed_by = ?");
+    params.push(filter.proposed_by);
+  }
+  const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+  const rows = database
+    .prepare(`SELECT * FROM intents ${where} ORDER BY proposed_at DESC`)
+    .all(...params) as unknown as IntentRow[];
+  return rows.map(rowToIntent);
 }
 
 export async function getIntent(id: string): Promise<Intent | undefined> {
-  const m = await load();
-  return m[id];
+  ensureMigrated();
+  const database = getDb();
+  const row = database
+    .prepare("SELECT * FROM intents WHERE id = ?")
+    .get(id) as IntentRow | undefined;
+  return row ? rowToIntent(row) : undefined;
 }
 
 export async function createIntent(args: {
@@ -92,6 +175,7 @@ export async function createIntent(args: {
    *  for the standard mapping (see types.ts#defaultTrustTier). */
   trust_tier?: TrustTier;
 }): Promise<Intent> {
+  ensureMigrated();
   const intent: Intent = {
     id: newIntentId(),
     kind: args.kind,
@@ -104,14 +188,11 @@ export async function createIntent(args: {
     importance: args.importance ?? "medium",
     trust_tier: args.trust_tier ?? defaultTrustTier(args.kind),
   };
-  // Short critical section: load → insert → persist. Lock held only here, NOT
-  // across the materialize call below (which locks other stores — nesting the
-  // intents lock around it could AB-BA deadlock).
-  await withStoreLock(FILE, async () => {
-    const m = await load();
-    m[intent.id] = intent;
-    await save();
-  });
+  const database = getDb();
+  const placeholders = COLUMNS.map(() => "?").join(", ");
+  database
+    .prepare(`INSERT INTO intents (${COLUMNS.join(", ")}) VALUES (${placeholders})`)
+    .run(...intentToRow(intent));
 
   // Slice 8.7B v2 — L0 auto-execute path.
   // Under "balanced" mode, L0 intents materialise immediately and skip the
@@ -133,14 +214,17 @@ export async function createIntent(args: {
         intent.decided_at = Date.now();
         intent.decided_by = "auto";
         if (r.resulted_in) intent.resulted_in = r.resulted_in;
-        // Re-acquire the lock for the status write. We force our `intent`
-        // object into the freshly-loaded map so the persisted state reflects
-        // the approval even though `mem` may have been reloaded meanwhile.
-        await withStoreLock(FILE, async () => {
-          const m = await load();
-          m[intent.id] = intent;
-          await save();
-        });
+        database
+          .prepare(
+            "UPDATE intents SET status = ?, decided_at = ?, decided_by = ?, resulted_in = ? WHERE id = ?",
+          )
+          .run(
+            intent.status,
+            intent.decided_at,
+            intent.decided_by,
+            intent.resulted_in ?? null,
+            intent.id,
+          );
         // Slice 12 Phase 2 — record the auto-approval as a trust signal.
         try {
           const { recordDecision } = await import("./trust-signals");
@@ -182,24 +266,36 @@ export async function decideIntent(
   resulted_in?: string,
   decided_by: "user" | "auto" = "user",
 ): Promise<Intent | undefined> {
-  const { intent, transitioned } = await withStoreLock(FILE, async () => {
-    const m = await load();
-    const intent = m[id];
-    if (!intent) return { intent: undefined, transitioned: false };
-    if (intent.status !== "pending") return { intent, transitioned: false }; // idempotent
+  ensureMigrated();
+  const database = getDb();
+  const row = database
+    .prepare("SELECT * FROM intents WHERE id = ?")
+    .get(id) as IntentRow | undefined;
+  if (!row) return undefined;
+  const intent = rowToIntent(row);
+  let transitioned = false;
+  if (intent.status === "pending") {
     intent.status = status;
     intent.decided_at = Date.now();
     intent.decided_by = decided_by;
     if (resulted_in) intent.resulted_in = resulted_in;
-    await save();
-    return { intent, transitioned: true };
-  });
-  if (!intent) return undefined;
+    database
+      .prepare(
+        "UPDATE intents SET status = ?, decided_at = ?, decided_by = ?, resulted_in = ? WHERE id = ?",
+      )
+      .run(
+        intent.status,
+        intent.decided_at,
+        intent.decided_by,
+        intent.resulted_in ?? null,
+        id,
+      );
+    transitioned = true;
+  } // else: idempotent, already decided
 
   // Slice 12 Phase 2 — append a trust signal. Best-effort: never blocks
   // the decision flow on a signal-log failure. Only on a real transition —
-  // an idempotent re-decide shouldn't double-log. Outside the lock: it writes
-  // a different file (trust-signals).
+  // an idempotent re-decide shouldn't double-log.
   if (transitioned) {
     try {
       const { recordDecision } = await import("./trust-signals");
@@ -218,8 +314,9 @@ export async function decideIntent(
 
 /**
  * Atomically claim a pending intent for approval. Flips pending→approved
- * inside the store lock and returns the intent IFF this caller won the race;
- * returns null if it was already decided (another surface got there first).
+ * inside a single synchronous read-then-write and returns the intent IFF
+ * this caller won the race; returns null if it was already decided
+ * (another surface got there first).
  *
  * Closes the check-then-act TOCTOU where two surfaces — a Telegram "存" reply
  * and the in-app approve button — both pass a `status === "pending"` check and
@@ -233,31 +330,39 @@ export async function tryClaimIntentApproval(
   id: string,
   decided_by: "user" | "auto" = "user",
 ): Promise<Intent | null> {
-  return withStoreLock(FILE, async () => {
-    const m = await load();
-    const intent = m[id];
-    if (!intent || intent.status !== "pending") return null;
-    intent.status = "approved";
-    intent.decided_at = Date.now();
-    intent.decided_by = decided_by;
-    await save();
-    return intent;
-  });
+  ensureMigrated();
+  const database = getDb();
+  const row = database
+    .prepare("SELECT * FROM intents WHERE id = ?")
+    .get(id) as IntentRow | undefined;
+  if (!row) return null;
+  const intent = rowToIntent(row);
+  if (intent.status !== "pending") return null;
+  intent.status = "approved";
+  intent.decided_at = Date.now();
+  intent.decided_by = decided_by;
+  database
+    .prepare(
+      "UPDATE intents SET status = ?, decided_at = ?, decided_by = ? WHERE id = ?",
+    )
+    .run(intent.status, intent.decided_at, intent.decided_by, id);
+  return intent;
 }
 
 /** Undo a claim when materialization fails — back to pending so it can be
  *  re-approved later. Clears the decision stamps set by the claim. */
 export async function revertIntentToPending(id: string): Promise<void> {
-  await withStoreLock(FILE, async () => {
-    const m = await load();
-    const intent = m[id];
-    if (!intent) return;
-    intent.status = "pending";
-    delete intent.decided_at;
-    delete intent.decided_by;
-    delete intent.resulted_in;
-    await save();
-  });
+  ensureMigrated();
+  const database = getDb();
+  const row = database
+    .prepare("SELECT * FROM intents WHERE id = ?")
+    .get(id) as IntentRow | undefined;
+  if (!row) return;
+  database
+    .prepare(
+      "UPDATE intents SET status = 'pending', decided_at = NULL, decided_by = NULL, resulted_in = NULL WHERE id = ?",
+    )
+    .run(id);
 }
 
 /** Finish a claimed approval after a successful materialize: stamp
@@ -267,15 +372,19 @@ export async function finalizeApproval(
   resulted_in: string | undefined,
   decided_by: "user" | "auto" = "user",
 ): Promise<void> {
-  const intent = await withStoreLock(FILE, async () => {
-    const m = await load();
-    const intent = m[id];
-    if (!intent) return undefined;
-    if (resulted_in) intent.resulted_in = resulted_in;
-    await save();
-    return intent;
-  });
-  if (!intent) return;
+  ensureMigrated();
+  const database = getDb();
+  const row = database
+    .prepare("SELECT * FROM intents WHERE id = ?")
+    .get(id) as IntentRow | undefined;
+  if (!row) return;
+  const intent = rowToIntent(row);
+  if (resulted_in) {
+    intent.resulted_in = resulted_in;
+    database
+      .prepare("UPDATE intents SET resulted_in = ? WHERE id = ?")
+      .run(resulted_in, id);
+  }
   try {
     const { recordDecision } = await import("./trust-signals");
     await recordDecision({ intent, decision: "approved", decided_by });
@@ -288,15 +397,17 @@ export async function finalizeApproval(
  *  undone. Doesn't itself perform the side-effect reversal — that's the
  *  endpoint's job; this just records the fact. */
 export async function markUndone(id: string): Promise<Intent | undefined> {
-  const intent = await withStoreLock(FILE, async () => {
-    const m = await load();
-    const intent = m[id];
-    if (!intent) return undefined;
-    intent.undone_at = Date.now();
-    await save();
-    return intent;
-  });
-  if (!intent) return undefined;
+  ensureMigrated();
+  const database = getDb();
+  const row = database
+    .prepare("SELECT * FROM intents WHERE id = ?")
+    .get(id) as IntentRow | undefined;
+  if (!row) return undefined;
+  const intent = rowToIntent(row);
+  intent.undone_at = Date.now();
+  database
+    .prepare("UPDATE intents SET undone_at = ? WHERE id = ?")
+    .run(intent.undone_at, id);
 
   // Slice 12 Phase 2 — undo is a negative signal: Yen had to fix something
   // that auto-executed. Phase 3 banner uses this to suggest tier downgrades.
@@ -316,6 +427,6 @@ export async function markUndone(id: string): Promise<Intent | undefined> {
 
 /** Test helper — wipe everything. Not exposed in API routes. */
 export async function _clearAll(): Promise<void> {
-  mem = {};
-  await save();
+  ensureMigrated();
+  getDb().prepare("DELETE FROM intents").run();
 }
