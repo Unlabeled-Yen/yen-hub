@@ -1,24 +1,27 @@
 /**
- * Conversation store — JSON file at
- * `~/Library/Application Support/com.yen.hub/conversations.json`.
+ * Conversation store — SQLite table `conversations` in
+ * `~/Library/Application Support/com.yen.hub/yen-hub.db`. `active_id` lives
+ * in the shared `meta` table (key `active_id`) per SPEC-01 D3.
  *
- * Slice 8.7 (2026-06-03): moved from client-side localStorage to server-side
- * JSON because each .app launch picks a new ephemeral port → localStorage
- * is scoped per-origin → conversations were effectively lost on every
- * restart. Server-side persistence survives port churn.
+ * SPEC-01 (2026-07) — migrated off the conversations.json overlay. Public API
+ * signatures are unchanged. `group` (a reserved word in SQL) is stored as
+ * column `grp`; the public `Conversation.group` field name is untouched.
  *
- * Migration path: when SQLite/Turso lands, swap the JSON read/write for
- * a real DB; call signatures stay the same.
+ * One-time import is bespoke here (not `importJsonOnce` from db.ts) because
+ * the legacy file holds two destinations — the conversations map AND
+ * `active_id` — where the generic helper assumes one table per file. Same D5
+ * contract: single transaction, post-import count check that throws on
+ * mismatch, rename (never delete) the source file as the rollback point.
  */
 
-import { promises as fs } from "node:fs";
+import { existsSync, readFileSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { UIMessage } from "ai";
-import { persistJson, withStoreLock } from "./atomic-write";
+import { getDb } from "./db";
 
 const DIR = join(homedir(), "Library", "Application Support", "com.yen.hub");
-const FILE = join(DIR, "conversations.json");
+const LEGACY_JSON = join(DIR, "conversations.json");
 
 export type Conversation = {
   id: string;
@@ -32,37 +35,97 @@ export type Conversation = {
   group?: string | null;
 };
 
-type StoreShape = {
+type ConversationRow = {
+  id: string;
+  title: string | null;
+  messages: string;
+  created_at: number;
+  updated_at: number;
+  pinned: number;
+  grp: string | null;
+};
+
+type LegacyStoreShape = {
   conversations: Record<string, Conversation>;
   active_id: string | null;
 };
 
-let mem: StoreShape | null = null;
-
-// Always re-read from disk — no forever-cache. Real bug (2026-06-10, see
-// schedules.ts): in Next standalone, API routes and instrumentation.ts
-// bundle SEPARATE instances of this module. Conversations are written by
-// the chat route; Duffy's read_conversation_history tool reads them from
-// both the chat route AND from headless.ts (Telegram poller path on the
-// cron side). A boot-time cache hides newly-saved conversations from the
-// poller until restart.
-async function load(): Promise<StoreShape> {
-  try {
-    mem = JSON.parse(await fs.readFile(FILE, "utf8")) as StoreShape;
-    // Backwards-compat for older shapes
-    if (!mem.conversations) mem.conversations = {};
-    if (mem.active_id === undefined) mem.active_id = null;
-  } catch {
-    mem = mem ?? { conversations: {}, active_id: null };
-  }
-  return mem;
+function rowToConversation(row: ConversationRow): Conversation {
+  return {
+    id: row.id,
+    title: row.title,
+    messages: JSON.parse(row.messages) as UIMessage[],
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    pinned: row.pinned === 1,
+    group: row.grp,
+  };
 }
 
-// Raw atomic persist of `mem`; observable on failure. Call only inside a
-// withStoreLock(FILE, …) section.
-async function save(): Promise<void> {
-  if (!mem) return;
-  await persistJson(FILE, mem);
+function conversationToRow(c: Conversation): (string | number | null)[] {
+  return [
+    c.id,
+    c.title,
+    JSON.stringify(c.messages ?? []),
+    c.createdAt,
+    c.updatedAt,
+    c.pinned ? 1 : 0,
+    c.group ?? null,
+  ];
+}
+
+let migrated = false;
+function ensureMigrated(): void {
+  if (migrated) return;
+  // Only latch on success — a failed import must be retryable on the next
+  // call within this process, not stuck until restart.
+
+  const database = getDb();
+  const existing = database
+    .prepare("SELECT COUNT(*) as c FROM conversations")
+    .get() as { c: number };
+  if (existing.c > 0) {
+    migrated = true;
+    return;
+  }
+  if (!existsSync(LEGACY_JSON)) {
+    migrated = true;
+    return;
+  }
+
+  const raw = readFileSync(LEGACY_JSON, "utf8");
+  const parsed = JSON.parse(raw) as Partial<LegacyStoreShape>;
+  const entries = Object.values(parsed.conversations ?? {});
+
+  const insert = database.prepare(
+    "INSERT INTO conversations (id, title, messages, created_at, updated_at, pinned, grp) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  );
+
+  database.exec("BEGIN");
+  try {
+    for (const c of entries) insert.run(...conversationToRow(c));
+    if (parsed.active_id != null) {
+      database
+        .prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('active_id', ?)")
+        .run(parsed.active_id);
+    }
+    database.exec("COMMIT");
+  } catch (err) {
+    database.exec("ROLLBACK");
+    throw err;
+  }
+
+  const after = database
+    .prepare("SELECT COUNT(*) as c FROM conversations")
+    .get() as { c: number };
+  if (after.c !== entries.length) {
+    throw new Error(
+      `[conversations] import mismatch: expected ${entries.length} rows from ${LEGACY_JSON}, got ${after.c}`,
+    );
+  }
+
+  renameSync(LEGACY_JSON, `${LEGACY_JSON}.migrated`);
+  migrated = true;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -70,47 +133,75 @@ async function save(): Promise<void> {
 /* -------------------------------------------------------------------------- */
 
 export async function listConversations(): Promise<Conversation[]> {
-  const s = await load();
-  return Object.values(s.conversations).sort(
-    (a, b) => b.updatedAt - a.updatedAt,
-  );
+  ensureMigrated();
+  const database = getDb();
+  const rows = database
+    .prepare("SELECT * FROM conversations ORDER BY updated_at DESC")
+    .all() as unknown as ConversationRow[];
+  return rows.map(rowToConversation);
 }
 
 export async function getConversation(id: string): Promise<Conversation | undefined> {
-  const s = await load();
-  return s.conversations[id];
+  ensureMigrated();
+  const database = getDb();
+  const row = database
+    .prepare("SELECT * FROM conversations WHERE id = ?")
+    .get(id) as ConversationRow | undefined;
+  return row ? rowToConversation(row) : undefined;
 }
 
 export async function saveConversation(c: Conversation): Promise<void> {
-  await withStoreLock(FILE, async () => {
-    const s = await load();
-    s.conversations[c.id] = c;
-    await save();
-  });
+  ensureMigrated();
+  const database = getDb();
+  database
+    .prepare(
+      `INSERT INTO conversations (id, title, messages, created_at, updated_at, pinned, grp)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         title = excluded.title,
+         messages = excluded.messages,
+         created_at = excluded.created_at,
+         updated_at = excluded.updated_at,
+         pinned = excluded.pinned,
+         grp = excluded.grp`,
+    )
+    .run(...conversationToRow(c));
 }
 
 export async function deleteConversation(id: string): Promise<boolean> {
-  return withStoreLock(FILE, async () => {
-    const s = await load();
-    if (!s.conversations[id]) return false;
-    delete s.conversations[id];
-    if (s.active_id === id) s.active_id = null;
-    await save();
-    return true;
-  });
+  ensureMigrated();
+  const database = getDb();
+  const row = database
+    .prepare("SELECT id FROM conversations WHERE id = ?")
+    .get(id) as { id: string } | undefined;
+  if (!row) return false;
+  database.prepare("DELETE FROM conversations WHERE id = ?").run(id);
+  const active = database
+    .prepare("SELECT value FROM meta WHERE key = 'active_id'")
+    .get() as { value: string } | undefined;
+  if (active?.value === id) {
+    database
+      .prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('active_id', NULL)")
+      .run();
+  }
+  return true;
 }
 
 export async function getActiveId(): Promise<string | null> {
-  const s = await load();
-  return s.active_id;
+  ensureMigrated();
+  const database = getDb();
+  const row = database
+    .prepare("SELECT value FROM meta WHERE key = 'active_id'")
+    .get() as { value: string | null } | undefined;
+  return row?.value ?? null;
 }
 
 export async function setActiveId(id: string | null): Promise<void> {
-  await withStoreLock(FILE, async () => {
-    const s = await load();
-    s.active_id = id;
-    await save();
-  });
+  ensureMigrated();
+  const database = getDb();
+  database
+    .prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('active_id', ?)")
+    .run(id);
 }
 
 /* -------------------------------------------------------------------------- */
