@@ -18,126 +18,10 @@ import { AttentionGrid } from "@/components/attention-grid";
 import { TodoList } from "@/components/todo-list";
 import { ReadingProgress } from "@/components/reading-progress";
 import { MarketMonitor } from "@/components/market-monitor";
+import { SignalWarroom } from "@/components/signal-warroom";
 import { WorldClock } from "@/components/world-clock";
 import type { AttentionResponse } from "@/lib/vault/attention-types";
 import { tokenFetch } from "@/lib/security/sidecar-token";
-
-type Span = { cols?: number; rows?: number };
-type ModuleDef = {
-  title: string;
-  hint: string;
-  span: Span;
-  flip: { rotateX?: number; rotateY?: number; delay: number; originX?: string; originY?: string };
-};
-
-/**
- * Bento layout target — 6 cols × 4 rows on lg+
- * (Visual rhythm; tweak as real modules land.)
- *
- *   +---------+----+--------+
- *   | Vault   | P  | Mirror |     (row 1-2)
- *   |  H      | I  |        |
- *   +---------+ P  +--------+
- *   | Signals | E  | Open L |     (row 3)
- *   +---------+ L  +--------+
- *   |  Attention Map         |    (row 4 - wide)
- *   +-------------------------+
- */
-// "Door swing" entry angles — close to ±90° so each card opens like a
-// hinged panel from its respective edge. Delays are randomized on mount
-// (see useState initializer below) so the order shuffles each load.
-const MODULES: ModuleDef[] = [
-  {
-    title: "Vault Health",
-    hint: "筆記總數 / 草稿堆積 / 健康分數",
-    span: { cols: 2, rows: 2 },
-    flip: { rotateY: -88, delay: 0, originX: "0%" }, // hinge LEFT
-  },
-  {
-    title: "Pipelines",
-    hint: "寫作 / 投資 / 學習 / 專案 進度與停滯",
-    span: { cols: 2, rows: 3 },
-    flip: { rotateX: -85, delay: 0, originY: "0%" }, // hinge TOP
-  },
-  {
-    title: "Mirror",
-    hint: "AI 對 Yen 的假設檔 · 可 ✓ / ✗",
-    span: { cols: 2, rows: 2 },
-    flip: { rotateX: 85, delay: 0, originY: "100%" }, // hinge BOTTOM
-  },
-  {
-    title: "Signals",
-    hint: "地緣政治 / 訂閱 / 過濾後的外部訊號",
-    span: { cols: 2, rows: 1 },
-    flip: { rotateY: 88, delay: 0, originX: "100%" }, // hinge RIGHT
-  },
-  {
-    title: "Open Loops",
-    hint: "未完成承諾 · 從 Vault / 對話抓出",
-    span: { cols: 2, rows: 1 },
-    flip: { rotateX: -85, delay: 0, originY: "0%" }, // hinge TOP
-  },
-  {
-    title: "Attention Map",
-    hint: "本週時間實際花在哪 vs. 自評",
-    span: { cols: 6, rows: 1 },
-    flip: { rotateY: -88, delay: 0, originX: "0%" }, // hinge LEFT
-  },
-];
-
-const SLICE_OF = {
-  "vault health": "5",
-  pipelines: "6",
-  mirror: "7",
-  signals: "8",
-  "open loops": "9",
-  "attention map": "10",
-} as const;
-
-function ModuleCard({ title, hint }: { title: string; hint: string }) {
-  return (
-    <div className="module-card group relative flex h-full flex-col rounded-2xl p-6">
-      <div className="mb-3 flex items-center justify-between">
-        <span className="text-[12px] font-mono tracking-[0.30em] text-[var(--fg-0)] uppercase">
-          {title}
-        </span>
-        <span className="text-[11px] font-mono tracking-[0.30em] text-[var(--fg-2)] uppercase">
-          —
-        </span>
-      </div>
-      <p className="text-[13px] font-mono text-[var(--fg-1)] leading-relaxed">
-        {hint}
-      </p>
-      <div className="mt-auto pt-8">
-        <div className="text-[11px] font-mono tracking-[0.30em] text-[var(--fg-2)] uppercase">
-          placeholder · slice {SLICE_OF[title.toLowerCase() as keyof typeof SLICE_OF] ?? "?"}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/** Build inline grid-area string from span (responsive — only applied at md+). */
-function spanCls(span: Span): string {
-  const c = span.cols ?? 1;
-  const r = span.rows ?? 1;
-  // Tailwind v4 still needs explicit utility classes for grid spans
-  const colMap: Record<number, string> = {
-    1: "md:col-span-1",
-    2: "md:col-span-2",
-    3: "md:col-span-3",
-    4: "md:col-span-4",
-    5: "md:col-span-5",
-    6: "md:col-span-6",
-  };
-  const rowMap: Record<number, string> = {
-    1: "md:row-span-1",
-    2: "md:row-span-2",
-    3: "md:row-span-3",
-    4: "md:row-span-4",
-  };
-  return `${colMap[c] ?? ""} ${rowMap[r] ?? ""}`.trim();
-}
 
 /** Shared timing — outer page-level fade-in. */
 const RISE_DURATION = 1.1;
@@ -414,21 +298,14 @@ export function Overview() {
           </div>
         </main>
 
-        {/* Page 2 — Bento modules. No entry animation: the 6 motion.div
-            + perspective + willChange:transform combo was running its
-            animation engine even while off-screen, contributing to the
-            first-paint stutter on Page 1. Plain divs render instantly. */}
+        {/* Page 2 — AI 訊號戰情室（WorldMonitor 風）. 狀態列 + 力導向
+            熱詞氣泡圖 + 底部三欄（IBM 新聞 / GitHub 新星 / 熱詞排行）。
+            取代原本的雜誌卡片網格 per Yen 2026-06-24. */}
         <main
-          className="shrink-0 h-full px-8 sm:px-12 py-1 overflow-y-auto hub-scrollbar"
+          className="shrink-0 h-full px-4 sm:px-6 py-4 overflow-y-auto hub-scrollbar"
           style={{ width: containerW }}
         >
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 auto-rows-[140px] gap-4">
-            {MODULES.map((m) => (
-              <div key={m.title} className={spanCls(m.span)}>
-                <ModuleCard title={m.title} hint={m.hint} />
-              </div>
-            ))}
-          </div>
+          <SignalWarroom />
         </main>
       </motion.div>
       {/* Page indicator dots — click to jump. Sits centered at the

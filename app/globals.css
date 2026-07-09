@@ -243,6 +243,118 @@ textarea,
 }
 .hairline-pulse { animation: hairline 2.4s ease-in-out infinite; }
 
+/* ── Signal war-room "scanning" effect ──────────────────────────────────
+   Shown over a panel while its translation is still in flight, masking the
+   raw-English / loading state with an ops-console scan sweep. The overlay
+   sits absolute-inset-0 (pointer-events:none); the moving line + faint
+   scanline texture read as "processing". */
+.scan-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  border-radius: inherit;
+  /* faint horizontal CRT scanlines */
+  background-image: repeating-linear-gradient(
+    0deg,
+    rgba(0, 229, 180, 0.035) 0px,
+    rgba(0, 229, 180, 0.035) 1px,
+    transparent 1px,
+    transparent 4px
+  );
+  z-index: 5;
+}
+.scan-overlay::before {
+  /* the sweeping scan line */
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 56px;
+  top: -56px;
+  background: linear-gradient(
+    180deg,
+    transparent 0%,
+    rgba(0, 229, 180, 0.05) 40%,
+    rgba(0, 229, 180, 0.22) 50%,
+    rgba(0, 229, 180, 0.05) 60%,
+    transparent 100%
+  );
+  box-shadow: 0 0 18px 2px rgba(0, 229, 180, 0.18);
+  animation: scan-sweep 1.9s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+@keyframes scan-sweep {
+  0%   { top: -56px; opacity: 0; }
+  8%   { opacity: 1; }
+  92%  { opacity: 1; }
+  100% { top: 100%; opacity: 0; }
+}
+.scan-overlay[data-variant="github"] {
+  background-image: repeating-linear-gradient(
+    0deg,
+    rgba(90, 160, 235, 0.04) 0px,
+    rgba(90, 160, 235, 0.04) 1px,
+    transparent 1px,
+    transparent 4px
+  );
+}
+.scan-overlay[data-variant="github"]::before {
+  background: linear-gradient(
+    180deg,
+    transparent 0%,
+    rgba(90, 160, 235, 0.06) 40%,
+    rgba(90, 160, 235, 0.24) 50%,
+    rgba(90, 160, 235, 0.06) 60%,
+    transparent 100%
+  );
+  box-shadow: 0 0 18px 2px rgba(90, 160, 235, 0.18);
+}
+/* radar sweep for the bubble field — a rotating conic wedge */
+@keyframes radar-spin {
+  0%   { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+.radar-sweep {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  background: conic-gradient(
+    from 0deg,
+    rgba(0, 229, 180, 0.16) 0deg,
+    rgba(0, 229, 180, 0.04) 26deg,
+    transparent 60deg,
+    transparent 360deg
+  );
+  animation: radar-spin 2.8s linear infinite;
+  z-index: 4;
+}
+/* skeleton placeholder bars shown WHILE scanning (English is never revealed —
+   we only show these + the scan sweep until 繁中 is confirmed ready) */
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 0.18; }
+  50%      { opacity: 0.4; }
+}
+.skeleton-bar {
+  background: var(--fg-3);
+  border-radius: 4px;
+  animation: skeleton-pulse 1.6s ease-in-out infinite;
+}
+/* one-shot "scan reveal" — content wipes in from the top like the scanner
+   is painting the translated text. Plays once when the real content mounts. */
+@keyframes scan-reveal {
+  0%   { clip-path: inset(0 0 100% 0); opacity: 0.25; }
+  100% { clip-path: inset(0 0 0 0); opacity: 1; }
+}
+.scan-reveal { animation: scan-reveal 0.75s cubic-bezier(0.4, 0, 0.2, 1); }
+
+@media (prefers-reduced-motion: reduce) {
+  .scan-overlay::before,
+  .radar-sweep,
+  .skeleton-bar,
+  .scan-reveal { animation: none; }
+}
+
 /* Thinking pulse — applied to the whole command-line input box while
    the AI is generating. Pulses the border + a warm outer glow so the
    entire bar appears to breathe, replacing the previous thin hairline
@@ -371,4 +483,80 @@ textarea,
   width: 0;
   height: 0;
   display: none;
+}
+
+/* ===========================================================
+   Signal War-room redesign additions (2026-06-24)
+   Append these to app/globals.css — they add the new card / row
+   styles and the staggered item-reveal animation the redesigned
+   SignalWarroom relies on. Existing scan-overlay / skeleton-bar /
+   radar-sweep rules are reused as-is and do NOT need changing.
+   =========================================================== */
+
+/* Staggered per-item fade-in. Replaces the old one-shot clip-path
+   "scan-reveal" wipe — each card/row sets its own animation-delay
+   inline so the list paints in like a rolling scan. */
+@keyframes item-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.item-reveal {
+  animation: item-in 0.38s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* IBM news reading card */
+.news-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid var(--border-subtle);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 160ms var(--ease), background 160ms var(--ease);
+}
+.news-card:hover {
+  background: rgba(255, 255, 255, 0.045);
+  border-color: var(--border-default);
+}
+.news-card:hover .news-title {
+  color: var(--accent);
+}
+
+/* GitHub repo row */
+.repo-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  transition: background 140ms var(--ease);
+}
+.repo-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* Topic chip — IBM news category tags */
+.topic-chip {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 99px;
+  font-size: 10px;
+  font-family: var(--font-mono), monospace;
+  letter-spacing: 0.04em;
+  background: rgba(0, 229, 180, 0.08);
+  color: var(--accent);
+  border: 1px solid rgba(0, 229, 180, 0.18);
+}
+
+/* Honour reduced-motion alongside the existing scan rules */
+@media (prefers-reduced-motion: reduce) {
+  .item-reveal { animation: none; }
 }
