@@ -127,7 +127,13 @@ export function SkillCenter() {
   // ── Detail / editor view ───────────────────────────────────────────────
   if (selected) {
     return (
-      <main className="flex h-screen flex-1 flex-col overflow-hidden pt-12">
+      <main
+      className="flex h-screen flex-1 flex-col overflow-hidden pt-12"
+      // Extra dark layer on top of the global body tint so the transparent
+      // Tauri window doesn't show the desktop through the skill center —
+      // matches /hub/page-b's backdrop (2026-06-18).
+      style={{ background: "rgba(0,0,0,0.5)" }}
+    >
         <div className="flex items-center justify-between gap-4 px-8 pb-4">
           <div className="flex min-w-0 items-center gap-4">
             <button
@@ -236,7 +242,13 @@ export function SkillCenter() {
 
   // ── Grid view ────────────────────────────────────────────────────────────
   return (
-    <main className="flex h-screen flex-1 flex-col overflow-hidden pt-12">
+    <main
+      className="flex h-screen flex-1 flex-col overflow-hidden pt-12"
+      // Extra dark layer on top of the global body tint so the transparent
+      // Tauri window doesn't show the desktop through the skill center —
+      // matches /hub/page-b's backdrop (2026-06-18).
+      style={{ background: "rgba(0,0,0,0.5)" }}
+    >
       <div className="px-8 pb-4">
         <div className="mb-3 flex items-center gap-3">
           <span className="text-[10px] font-mono uppercase tracking-[0.32em] text-[var(--accent)]">
@@ -280,7 +292,7 @@ export function SkillCenter() {
                 key={s.slug}
                 type="button"
                 onClick={() => open(s.slug)}
-                className="group flex flex-col rounded-xl border border-[var(--border-subtle)] bg-black/20 p-4 text-left transition-colors hover:border-[var(--border-default)] hover:bg-white/[0.03]"
+                className="group flex flex-col rounded-xl border border-[var(--border-default)] bg-black/30 p-4 text-left transition-colors hover:border-[var(--border-strong)] hover:bg-white/[0.04]"
               >
                 <div className="mb-1 flex items-center justify-between gap-2">
                   <span className="truncate text-[14px] text-[var(--fg-0)]">
