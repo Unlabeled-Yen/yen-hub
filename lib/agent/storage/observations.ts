@@ -1,18 +1,22 @@
 /**
- * Observation store — JSON overlay at
- * `~/Library/Application Support/com.yen.hub/observations.json`.
+ * Observation store — SQLite table `observations` in
+ * `~/Library/Application Support/com.yen.hub/yen-hub.db`.
  *
  * Observations are the *result* of an approved observation-intent.
  * They're append-only at Slice 6 (no edit / no delete in API). If Yen wants
  * to retract one, that becomes a follow-up intent in a later slice.
  *
- * Sibling shape to `intents.ts` so the future SQLite migration is uniform.
+ * SPEC-01 (2026-07) — migrated off the observations.json overlay. Public API
+ * signatures are unchanged (D4); see db.ts for the schema + one-time JSON
+ * import. `node:sqlite` is synchronous and single-threaded, so a same-process
+ * read-modify-write (e.g. supersedeObservation, touchIntention) never
+ * interleaves with another call the way the old JSON load/mutate/save did —
+ * no store lock needed here.
  */
 
-import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { persistJson, withStoreLock } from "./atomic-write";
+import { getDb, importJsonOnce } from "./db";
 import {
   type EvidenceRef,
   type Importance,
@@ -22,32 +26,114 @@ import {
 } from "./types";
 
 const DIR = join(homedir(), "Library", "Application Support", "com.yen.hub");
-const FILE = join(DIR, "observations.json");
+const LEGACY_JSON = join(DIR, "observations.json");
 
-type ObservationMap = Record<string, Observation>;
+const COLUMNS = [
+  "id",
+  "source_intent",
+  "title",
+  "body",
+  "zone",
+  "window_days",
+  "evidence",
+  "source",
+  "source_agent_id",
+  "reason",
+  "created_at",
+  "importance",
+  "read_at",
+  "intention",
+  "nudge_for",
+  "valid_until",
+  "superseded_by",
+  "archived_at",
+];
 
-let mem: ObservationMap | null = null;
+type ObservationRow = {
+  id: string;
+  source_intent: string;
+  title: string;
+  body: string;
+  zone: string | null;
+  window_days: number | null;
+  evidence: string;
+  source: string;
+  source_agent_id: string | null;
+  reason: string;
+  created_at: number;
+  importance: string;
+  read_at: number | null;
+  intention: string | null;
+  nudge_for: string | null;
+  valid_until: number | null;
+  superseded_by: string | null;
+  archived_at: number | null;
+};
 
-// Always re-read from disk — no forever-cache. Real bug (2026-06-10, see
-// schedules.ts): in Next standalone, API routes and instrumentation.ts
-// bundle SEPARATE instances of this module. Observations are written from
-// the cron side (intent-materialize via schedule-actions / summary-cron)
-// and read+mutated from routes (undo, mark-high-read). A boot-time cache
-// lets each side silently miss the other's writes until restart.
-async function load(): Promise<ObservationMap> {
-  try {
-    mem = JSON.parse(await fs.readFile(FILE, "utf8")) as ObservationMap;
-  } catch {
-    mem = mem ?? {};
-  }
-  return mem;
+function rowToObservation(row: ObservationRow): Observation {
+  return {
+    id: row.id,
+    source_intent: row.source_intent,
+    title: row.title,
+    body: row.body,
+    zone: row.zone ?? undefined,
+    window: row.window_days != null ? { days: row.window_days } : undefined,
+    evidence: JSON.parse(row.evidence) as EvidenceRef[],
+    source: row.source as Observation["source"],
+    source_agent_id: row.source_agent_id ?? undefined,
+    reason: row.reason,
+    created_at: row.created_at,
+    importance: row.importance as Importance,
+    read_at: row.read_at ?? undefined,
+    intention: row.intention
+      ? (JSON.parse(row.intention) as IntentionMeta)
+      : undefined,
+    nudge_for: row.nudge_for ?? undefined,
+    valid_until: row.valid_until ?? undefined,
+    superseded_by: row.superseded_by ?? undefined,
+    archived_at: row.archived_at ?? undefined,
+  };
 }
 
-// Raw atomic persist of `mem`; observable on failure. Call only inside a
-// withStoreLock(FILE, …) section (relies on the lock to keep `mem` stable).
-async function save(): Promise<void> {
-  if (!mem) return;
-  await persistJson(FILE, mem);
+function observationToRow(o: Observation): (string | number | null)[] {
+  return [
+    o.id,
+    o.source_intent,
+    o.title,
+    o.body,
+    o.zone ?? null,
+    o.window?.days ?? null,
+    JSON.stringify(o.evidence ?? []),
+    o.source,
+    o.source_agent_id ?? null,
+    // Legacy pre-Slice-7A records may lack these — the JSON store tolerated
+    // the missing key, but a SQLite bind rejects `undefined` outright.
+    o.reason ?? "",
+    o.created_at,
+    o.importance ?? "medium",
+    o.read_at ?? null,
+    o.intention ? JSON.stringify(o.intention) : null,
+    o.nudge_for ?? null,
+    o.valid_until ?? null,
+    o.superseded_by ?? null,
+    o.archived_at ?? null,
+  ];
+}
+
+let migrated = false;
+function ensureMigrated(): void {
+  if (migrated) return;
+  // Only latch on success — a failed import (e.g. a bad legacy record) must
+  // be retryable on the next call within this process, not stuck until
+  // restart.
+  importJsonOnce({
+    table: "observations",
+    jsonPath: LEGACY_JSON,
+    columns: COLUMNS,
+    parseEntries: (raw) => Object.values(JSON.parse(raw) as Record<string, Observation>),
+    mapRow: (entry) => observationToRow(entry as Observation),
+  });
+  migrated = true;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -74,17 +160,32 @@ export async function listObservations(filter?: {
    *  active memory. Pass true for audit/admin views. */
   includeArchived?: boolean;
 }): Promise<Observation[]> {
-  const m = await load();
-  let items = Object.values(m);
-  if (filter?.agent)
-    items = items.filter((o) => o.source_agent_id === filter.agent);
-  if (filter?.zone) items = items.filter((o) => o.zone === filter.zone);
-  if (filter?.since) items = items.filter((o) => o.created_at >= filter.since!);
+  ensureMigrated();
+  const database = getDb();
+  const clauses: string[] = [];
+  const params: (string | number)[] = [];
+  if (filter?.agent) {
+    clauses.push("source_agent_id = ?");
+    params.push(filter.agent);
+  }
+  if (filter?.zone) {
+    clauses.push("zone = ?");
+    params.push(filter.zone);
+  }
+  if (filter?.since) {
+    clauses.push("created_at >= ?");
+    params.push(filter.since);
+  }
+  const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+  const rows = database
+    .prepare(`SELECT * FROM observations ${where} ORDER BY created_at DESC`)
+    .all(...params) as unknown as ObservationRow[];
+  let items = rows.map(rowToObservation);
   if (!filter?.includeArchived) {
     const now = Date.now();
     items = items.filter((o) => isActive(o, now));
   }
-  return items.sort((a, b) => b.created_at - a.created_at);
+  return items;
 }
 
 /**
@@ -97,23 +198,33 @@ export async function supersedeObservation(
   oldId: string,
   newId: string,
 ): Promise<Observation | undefined> {
-  return withStoreLock(FILE, async () => {
-    const m = await load();
-    const o = m[oldId];
-    if (!o) return undefined;
-    if (o.superseded_by) return o; // idempotent
-    o.superseded_by = newId;
-    o.archived_at = Date.now();
-    await save();
-    return o;
-  });
+  ensureMigrated();
+  const database = getDb();
+  const row = database
+    .prepare("SELECT * FROM observations WHERE id = ?")
+    .get(oldId) as ObservationRow | undefined;
+  if (!row) return undefined;
+  const obs = rowToObservation(row);
+  if (obs.superseded_by) return obs; // idempotent
+  obs.superseded_by = newId;
+  obs.archived_at = Date.now();
+  database
+    .prepare(
+      "UPDATE observations SET superseded_by = ?, archived_at = ? WHERE id = ?",
+    )
+    .run(obs.superseded_by, obs.archived_at, oldId);
+  return obs;
 }
 
 export async function getObservation(
   id: string,
 ): Promise<Observation | undefined> {
-  const m = await load();
-  return m[id];
+  ensureMigrated();
+  const database = getDb();
+  const row = database
+    .prepare("SELECT * FROM observations WHERE id = ?")
+    .get(id) as ObservationRow | undefined;
+  return row ? rowToObservation(row) : undefined;
 }
 
 /**
@@ -134,6 +245,7 @@ export async function createObservationFromIntent(args: {
   nudge_for?: string;         // Slice 8
   valid_until?: number;       // v2 Gap A
 }): Promise<Observation> {
+  ensureMigrated();
   const obs: Observation = {
     id: newObservationId(),
     source_intent: args.intent_id,
@@ -151,11 +263,13 @@ export async function createObservationFromIntent(args: {
     nudge_for: args.nudge_for,
     valid_until: args.valid_until,
   };
-  await withStoreLock(FILE, async () => {
-    const m = await load();
-    m[obs.id] = obs;
-    await save();
-  });
+  const database = getDb();
+  const placeholders = COLUMNS.map(() => "?").join(", ");
+  database
+    .prepare(
+      `INSERT INTO observations (${COLUMNS.join(", ")}) VALUES (${placeholders})`,
+    )
+    .run(...observationToRow(obs));
   return obs;
 }
 
@@ -164,14 +278,19 @@ export async function createObservationFromIntent(args: {
  * re-mentions an intention so it stops being "stale". Idempotent.
  */
 export async function touchIntention(id: string): Promise<Observation | undefined> {
-  return withStoreLock(FILE, async () => {
-    const m = await load();
-    const obs = m[id];
-    if (!obs || !obs.intention) return undefined;
-    obs.intention = { ...obs.intention, last_touched_at: Date.now() };
-    await save();
-    return obs;
-  });
+  ensureMigrated();
+  const database = getDb();
+  const row = database
+    .prepare("SELECT * FROM observations WHERE id = ?")
+    .get(id) as ObservationRow | undefined;
+  if (!row) return undefined;
+  const obs = rowToObservation(row);
+  if (!obs.intention) return undefined;
+  obs.intention = { ...obs.intention, last_touched_at: Date.now() };
+  database
+    .prepare("UPDATE observations SET intention = ? WHERE id = ?")
+    .run(JSON.stringify(obs.intention), id);
+  return obs;
 }
 
 /**
@@ -182,37 +301,47 @@ export async function touchIntention(id: string): Promise<Observation | undefine
  * undo endpoint surfaces this caveat to the caller.
  */
 export async function deleteObservation(id: string): Promise<Observation | undefined> {
-  return withStoreLock(FILE, async () => {
-    const m = await load();
-    const obs = m[id];
-    if (!obs) return undefined;
-    delete m[id];
-    await save();
-    return obs;
-  });
+  ensureMigrated();
+  const database = getDb();
+  const row = database
+    .prepare("SELECT * FROM observations WHERE id = ?")
+    .get(id) as ObservationRow | undefined;
+  if (!row) return undefined;
+  database.prepare("DELETE FROM observations WHERE id = ?").run(id);
+  return rowToObservation(row);
 }
 
 /** List observations that carry an open/in_progress intention. */
 export async function listIntentionObservations(): Promise<Observation[]> {
-  const m = await load();
-  return Object.values(m).filter(
-    (o) =>
-      o.intention &&
-      (o.intention.status === "open" || o.intention.status === "in_progress"),
-  );
+  ensureMigrated();
+  const database = getDb();
+  const rows = database
+    .prepare("SELECT * FROM observations WHERE intention IS NOT NULL")
+    .all() as unknown as ObservationRow[];
+  return rows
+    .map(rowToObservation)
+    .filter(
+      (o) =>
+        o.intention &&
+        (o.intention.status === "open" || o.intention.status === "in_progress"),
+    );
 }
 
 /** Mark an observation as read (clears the unread-HIGH badge). */
 export async function markObservationRead(id: string): Promise<Observation | undefined> {
-  return withStoreLock(FILE, async () => {
-    const m = await load();
-    const obs = m[id];
-    if (!obs) return undefined;
-    if (obs.read_at) return obs; // idempotent
-    obs.read_at = Date.now();
-    await save();
-    return obs;
-  });
+  ensureMigrated();
+  const database = getDb();
+  const row = database
+    .prepare("SELECT * FROM observations WHERE id = ?")
+    .get(id) as ObservationRow | undefined;
+  if (!row) return undefined;
+  const obs = rowToObservation(row);
+  if (obs.read_at) return obs; // idempotent
+  obs.read_at = Date.now();
+  database
+    .prepare("UPDATE observations SET read_at = ? WHERE id = ?")
+    .run(obs.read_at, id);
+  return obs;
 }
 
 /**
@@ -240,13 +369,21 @@ export function isFreshUnreadHigh(o: Observation, now: number = Date.now()): boo
 /** Count of un-read HIGH-importance observations within the freshness window.
  *  Used by Page A badge. */
 export async function countUnreadHighImportance(): Promise<number> {
-  const m = await load();
+  ensureMigrated();
+  const database = getDb();
+  const rows = database
+    .prepare(
+      "SELECT * FROM observations WHERE importance = 'high' AND read_at IS NULL",
+    )
+    .all() as unknown as ObservationRow[];
   const now = Date.now();
-  return Object.values(m).filter((o) => isFreshUnreadHigh(o, now)).length;
+  return rows
+    .map(rowToObservation)
+    .filter((o) => isFreshUnreadHigh(o, now)).length;
 }
 
 /** Test helper — wipe everything. Not exposed in API routes. */
 export async function _clearAll(): Promise<void> {
-  mem = {};
-  await save();
+  ensureMigrated();
+  getDb().prepare("DELETE FROM observations").run();
 }
