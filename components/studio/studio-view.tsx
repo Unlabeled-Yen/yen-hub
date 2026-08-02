@@ -104,7 +104,7 @@ export function StudioView() {
   );
 }
 
-type KnobKind = "project" | "checkpoint";
+type KnobKind = "project" | "checkpoint" | "reentry";
 
 async function pullKnob(project: string, kind: KnobKind): Promise<string | null> {
   try {
@@ -120,6 +120,28 @@ async function pullKnob(project: string, kind: KnobKind): Promise<string | null>
     return null;
   } catch (e) {
     return e instanceof Error ? e.message : String(e);
+  }
+}
+
+type ReentryBrief = { brief: string; model?: string; no_llm_key?: boolean };
+
+async function pullReentry(
+  project: string,
+): Promise<{ ok: ReentryBrief } | { err: string }> {
+  try {
+    const res = await tokenFetch("/api/studio/reentry", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ project }),
+    });
+    if (!res.ok) {
+      const j = (await res.json().catch(() => ({}))) as { error?: string };
+      return { err: j.error ?? `HTTP ${res.status}` };
+    }
+    const data = (await res.json()) as ReentryBrief;
+    return { ok: data };
+  } catch (e) {
+    return { err: e instanceof Error ? e.message : String(e) };
   }
 }
 
@@ -162,12 +184,25 @@ function ProjectCard({
   const [busy, setBusy] = useState<KnobKind | null>(null);
   const [knobError, setKnobError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
+  const [brief, setBrief] = useState<ReentryBrief | null>(null);
   const pull = async (kind: KnobKind) => {
     setBusy(kind);
     setKnobError(null);
     const err = await pullKnob(p.name, kind);
     setBusy(null);
     if (err) setKnobError(err);
+  };
+  const reentry = async () => {
+    setBusy("reentry");
+    setKnobError(null);
+    const r = await pullReentry(p.name);
+    setBusy(null);
+    if ("err" in r) {
+      setKnobError(r.err);
+    } else {
+      setBrief(r.ok);
+      setExpanded(true); // pop the card open so Yen sees the brief
+    }
   };
   const firstCommit = p.recentCommits[0];
   const restCount = Math.max(0, p.recentCommits.length - 1);
@@ -217,6 +252,11 @@ function ProjectCard({
         )}
         <span className="ml-auto flex items-center gap-2">
           <Knob
+            label={brief ? "接回來 ↻" : "接回來 ↺"}
+            busy={busy === "reentry"}
+            onClick={() => void reentry()}
+          />
+          <Knob
             label="open ↗"
             busy={busy === "project"}
             onClick={() => void pull("project")}
@@ -262,6 +302,23 @@ function ProjectCard({
               有 memo
             </span>
           )}
+        </div>
+      )}
+
+      {expanded && brief && (
+        <div className="mt-3">
+          <div className="mb-1 flex items-baseline gap-2 font-mono text-[9px] uppercase tracking-[0.24em] text-[var(--fg-3)]">
+            <span>接回來 · Duffy 合成</span>
+            {brief.no_llm_key && (
+              <span className="text-[var(--warn)]">無 LLM key,拼湊版</span>
+            )}
+            {brief.model && !brief.no_llm_key && (
+              <span>{brief.model}</span>
+            )}
+          </div>
+          <pre className="whitespace-pre-wrap font-sans text-[13px] leading-relaxed text-[var(--fg-0)]">
+            {brief.brief}
+          </pre>
         </div>
       )}
 
