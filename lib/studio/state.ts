@@ -44,7 +44,62 @@ export type ProjectState = {
   checkpointName: string | null;
   checkpointExcerpt: string | null;
   error: string | null;
+  /** Deterministic "should I move on this today?" score. Higher = more
+   *  worth attention today. Signal, not command — Yen may override for
+   *  any project (e.g. yen-hub scores high with 31 uncommitted but is
+   *  in retirement, so he'd skip it). */
+  score: number;
+  /** Short zh-TW phrase explaining the score's biggest driver. */
+  reason: string | null;
 };
+
+/**
+ * scoreProject — deterministic ranking heuristic. Signals used:
+ *   - uncommitted work (highest priority: close the loop)
+ *   - recency (hot → keep going; medium → still catchable; cold → warning;
+ *     very cold → maybe park it)
+ *   - a checkpoint memo exists (a written next-step is a lower-friction start)
+ *
+ * The single dominant reason is returned in `reason`. Ties broken by
+ * lastCommit downstream.
+ */
+function scoreProject(
+  daysCold: number | null,
+  uncommitted: number,
+  hasCheckpoint: boolean,
+): { score: number; reason: string | null } {
+  let score = 0;
+  let reason: string | null = null;
+
+  if (uncommitted > 0) {
+    if (daysCold != null && daysCold <= 1) {
+      score += 40;
+      reason = `WIP 熱 · ${uncommitted} 未提交`;
+    } else {
+      score += 30;
+      reason = `WIP 過期 · ${uncommitted} 未提交待收`;
+    }
+  } else if (daysCold != null) {
+    if (daysCold <= 3) {
+      score += 15;
+      reason = `熱 · 冷 ${daysCold} 天`;
+    } else if (daysCold <= 7) {
+      score += 10;
+      reason = `跟得住 · 冷 ${daysCold} 天`;
+    } else if (daysCold <= 14) {
+      score += 5;
+      reason = `警戒 · 冷 ${daysCold} 天,再不動就冷透`;
+    } else if (daysCold <= 30) {
+      score -= 5;
+      reason = `冷透 · ${daysCold} 天,該重啟或明確擱置`;
+    } else {
+      score -= 10;
+      reason = `久冷 · ${daysCold} 天,考慮放`;
+    }
+  }
+  if (hasCheckpoint) score += 3;
+  return { score, reason };
+}
 
 function git(path: string, args: string[]): string {
   return execFileSync("git", ["-C", path, ...args], {
@@ -121,6 +176,8 @@ export function readStudioState(): ProjectState[] {
       checkpointName: null,
       checkpointExcerpt: null,
       error: null,
+      score: 0,
+      reason: null,
     };
     try {
       const lastCommit = git(p.path, [
@@ -149,10 +206,15 @@ export function readStudioState(): ProjectState[] {
       base.checkpointName = cp.name;
       base.checkpointExcerpt = cp.excerpt;
     }
+    const s = scoreProject(base.daysCold, base.uncommitted, cp != null);
+    base.score = s.score;
+    base.reason = s.reason;
     return base;
   });
-  // Freshest first; unknown dates sink to the bottom.
+  // Score DESC (what to move on today); tiebreak by lastCommit DESC so ties
+  // still feel like a dashboard, not random. Unknown dates sink last.
   out.sort((a, b) => {
+    if (a.score !== b.score) return b.score - a.score;
     if (a.lastCommit && b.lastCommit)
       return a.lastCommit < b.lastCommit ? 1 : -1;
     if (a.lastCommit) return -1;

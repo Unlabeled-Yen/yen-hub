@@ -23,6 +23,8 @@ type ProjectState = {
   checkpointName: string | null;
   checkpointExcerpt: string | null;
   error: string | null;
+  score: number;
+  reason: string | null;
 };
 
 type State =
@@ -64,7 +66,7 @@ export function StudioView() {
 
   return (
     <div className="mx-auto w-full max-w-4xl px-6 py-10">
-      <div className="mb-6 flex items-baseline justify-between">
+      <div className="mb-2 flex items-baseline justify-between">
         <h1 className="font-mono text-[11px] uppercase tracking-[0.32em] text-[var(--warn)]">
           工作室 · 跨專案工作狀態
         </h1>
@@ -72,6 +74,16 @@ export function StudioView() {
           git + checkpoint · 即時
         </span>
       </div>
+      {state.kind === "loaded" && state.projects[0]?.reason && (
+        <div className="mb-6 font-mono text-[11px] tracking-[0.08em] text-[var(--warn)]">
+          今日推 →{" "}
+          <span className="text-[var(--fg-0)]">{state.projects[0].name}</span>
+          <span className="text-[var(--fg-2)]"> · {state.projects[0].reason}</span>
+          <span className="ml-2 text-[9px] uppercase tracking-[0.18em] text-[var(--fg-3)]">
+            訊號,非命令
+          </span>
+        </div>
+      )}
 
       {state.kind === "loading" && (
         <div className="text-[14px] text-[var(--fg-3)]">loading…</div>
@@ -84,7 +96,7 @@ export function StudioView() {
       {state.kind === "loaded" && (
         <div className="flex flex-col gap-4">
           {state.projects.map((p, i) => (
-            <ProjectCard key={p.name} p={p} index={i} />
+            <ProjectCard key={p.name} p={p} index={i} isTop={i === 0} />
           ))}
         </div>
       )}
@@ -137,7 +149,15 @@ function Knob({
   );
 }
 
-function ProjectCard({ p, index }: { p: ProjectState; index: number }) {
+function ProjectCard({
+  p,
+  index,
+  isTop,
+}: {
+  p: ProjectState;
+  index: number;
+  isTop: boolean;
+}) {
   const cold = p.daysCold != null && p.daysCold > 7;
   const [busy, setBusy] = useState<KnobKind | null>(null);
   const [knobError, setKnobError] = useState<string | null>(null);
@@ -158,12 +178,24 @@ function ProjectCard({ p, index }: { p: ProjectState; index: number }) {
       transition={{ duration: 0.4, ease: "easeOut", delay: index * 0.05 }}
       className="rounded-2xl p-5"
       style={{
-        background: "rgba(255,255,255,0.04)",
-        border: "1px solid var(--accent)",
+        background: isTop
+          ? "rgba(255,255,255,0.06)"
+          : "rgba(255,255,255,0.04)",
+        border: isTop
+          ? "1px solid var(--warn)"
+          : "1px solid var(--accent)",
         boxShadow: "0 1px 0 rgba(255,255,255,0.04) inset",
       }}
     >
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        {isTop && (
+          <span
+            className="font-mono text-[10px] uppercase tracking-[0.18em]"
+            style={{ color: "var(--warn)" }}
+          >
+            ★ 今日
+          </span>
+        )}
         <span className="text-[16px] text-[var(--fg-0)]">{p.name}</span>
         {p.lastCommit && (
           <span
