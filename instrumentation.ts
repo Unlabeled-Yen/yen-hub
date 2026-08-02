@@ -6,6 +6,17 @@
 
 export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
+    // Quiet mode — used by `pnpm dev` for the studio-web face so a local
+    // preview does not send Telegram, fire nudges, run the scheduler, or
+    // write summaries into the real user data. Ship builds never set this,
+    // so production behaviour is unchanged. One knob instead of remembering
+    // four; each individual *_DISABLED env still works for finer control.
+    if (process.env.YEN_HUB_QUIET === "1") {
+      console.log(
+        "[instrumentation] quiet mode: cron/poller/scheduler/telegram not started (YEN_HUB_QUIET=1)",
+      );
+      return;
+    }
     const { startSummaryCron } = await import(
       "@/lib/agent/duffy/summary-cron"
     );
