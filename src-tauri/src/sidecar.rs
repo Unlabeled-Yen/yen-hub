@@ -263,7 +263,24 @@ pub fn launch(app: &AppHandle, window: WebviewWindow) -> Result<String, String> 
         sidecar = sidecar.env("SIGNALS_TRANSLATE_RETRIES", signals_translate_retries);
     }
 
-    let (mut rx, _child) = sidecar.spawn().map_err(|e| format!("spawn: {e}"))?;
+    let (mut rx, child) = sidecar.spawn().map_err(|e| format!("spawn: {e}"))?;
+
+    // Park the child handle in Tauri state so RunEvent::Exit (lib.rs) can
+    // kill it. Dropping the handle here would leave the process unkillable
+    // by us — quit the app and node lives on as an orphan.
+    match app.try_state::<crate::SidecarChild>() {
+        Some(state) => match state.0.lock() {
+            Ok(mut guard) => *guard = Some(child),
+            Err(e) => log::error!(
+                "yen sidecar: child-state lock poisoned, cannot store handle \
+                 — sidecar will NOT be killed on quit: {e}"
+            ),
+        },
+        None => log::error!(
+            "yen sidecar: SidecarChild state missing, cannot store handle \
+             — sidecar will NOT be killed on quit"
+        ),
+    }
 
     // Drain stdout/stderr in the background so the child doesn't block on
     // a full pipe, and so we get logs in the Tauri console.
@@ -296,6 +313,15 @@ pub fn launch(app: &AppHandle, window: WebviewWindow) -> Result<String, String> 
                 ),
                 CommandEvent::Terminated(payload) => {
                     log::error!("[next] terminated: {:?}", payload);
+                    // Child is gone — drop the parked handle so the exit
+                    // handler doesn't kill() a PID the OS may have reused.
+                    if let Some(state) =
+                        app_handle.try_state::<crate::SidecarChild>()
+                    {
+                        if let Ok(mut guard) = state.0.lock() {
+                            *guard = None;
+                        }
+                    }
                     break;
                 }
                 _ => {}
@@ -324,6 +350,31 @@ pub fn launch(app: &AppHandle, window: WebviewWindow) -> Result<String, String> 
     window.navigate(url).map_err(|e| format!("navigate: {e}"))?;
 
     Ok(sidecar_token)
+}
+
+/// Kill the spawned sidecar if we still hold its handle. Called from the
+/// `RunEvent::Exit` handler in lib.rs. Loud either way (per silent-failure
+/// zero tolerance): logs the kill, the failure, or the absence of a child.
+pub fn kill(app: &AppHandle) {
+    let Some(state) = app.try_state::<crate::SidecarChild>() else {
+        log::error!("yen sidecar: SidecarChild state missing at exit");
+        return;
+    };
+    let child = match state.0.lock() {
+        Ok(mut guard) => guard.take(),
+        Err(e) => {
+            log::error!("yen sidecar: child-state lock poisoned at exit: {e}");
+            None
+        }
+    };
+    match child {
+        Some(child) => match child.kill() {
+            Ok(()) => log::info!("yen sidecar: node killed on app exit"),
+            Err(e) => log::error!("yen sidecar: kill on exit FAILED: {e}"),
+        },
+        // Dev mode (no sidecar spawned) or the child already terminated.
+        None => log::info!("yen sidecar: no live child at exit, nothing to kill"),
+    }
 }
 
 /// Parse a `[NOTIFY]{...}` payload from sidecar stdout and fire a native

@@ -4,6 +4,7 @@ mod sidecar;
 use std::sync::Mutex;
 
 use tauri::{Manager, RunEvent, State, WindowEvent};
+use tauri_plugin_shell::process::CommandChild;
 
 /// Per-startup token shared with the Node sidecar (passed via env
 /// `YEN_HUB_TOKEN`). The webview fetches it via the `get_sidecar_token`
@@ -11,6 +12,15 @@ use tauri::{Manager, RunEvent, State, WindowEvent};
 /// the sidecar launch completes; the webview retries on empty.
 #[derive(Default)]
 pub struct SidecarToken(pub Mutex<String>);
+
+/// Handle to the spawned Node sidecar. Populated by `sidecar::launch()`,
+/// taken and killed in the `RunEvent::Exit` handler below — children are
+/// NOT reaped with their parent on Unix, so without this the bundled
+/// next-server outlives the app as an orphan (PPID 1) spinning on a dead
+/// stdout pipe. Cleared by the stdout-drain task when the child terminates
+/// on its own, so we never kill() a since-reused PID.
+#[derive(Default)]
+pub struct SidecarChild(pub Mutex<Option<CommandChild>>);
 
 /// Tauri command — native Touch ID prompt on macOS.
 ///
@@ -55,6 +65,7 @@ pub fn run() {
                 .build(),
         )
         .manage(SidecarToken::default())
+        .manage(SidecarChild::default())
         .setup(|app| {
             // macOS-standard window behaviour (2026-06-03):
             // - Cmd+W / red traffic-light = hide the window, keep app alive
@@ -148,7 +159,14 @@ pub fn run() {
                     let _ = window.set_focus();
                 }
             }
-            #[cfg(not(target_os = "macos"))]
-            let _ = (app_handle, event);
+
+            // App is actually exiting (Cmd+Q or programmatic quit): take the
+            // sidecar out of state and kill it. This is the ONLY place the
+            // child dies with us — skipping it orphaned a next-server at
+            // ~99% CPU for ten days (2026-09-11 → 09-21). Doesn't cover
+            // force-quit/crash, which no in-process handler can.
+            if let RunEvent::Exit = event {
+                sidecar::kill(app_handle);
+            }
         });
 }
